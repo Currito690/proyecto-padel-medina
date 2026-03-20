@@ -106,7 +106,10 @@ CREATE POLICY "Admins modifican pistas" ON courts FOR ALL USING (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- bookings: clientes ven las suyas, admins ven todas
+-- bookings: todos ven las confirmadas (para saber disponibilidad), cada uno ve las suyas, admins ven todas
+CREATE POLICY "Todos ven reservas confirmadas" ON bookings FOR SELECT USING (
+  status = 'confirmed'
+);
 CREATE POLICY "Usuarios ven sus reservas" ON bookings FOR SELECT USING (
   auth.uid() = user_id OR
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
