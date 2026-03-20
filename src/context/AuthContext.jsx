@@ -48,12 +48,13 @@ export function AuthProvider({ children }) {
   };
 
   const signupWithEmail = async (email, password, name) => {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { name } },
     });
     if (error) throw error;
+    return { needsConfirmation: !data.session };
   };
 
   const logout = async () => {

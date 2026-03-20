@@ -9,19 +9,24 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [confirmationSent, setConfirmationSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setConfirmationSent(false);
     try {
       if (isLogin) {
         await loginWithEmail(email, password);
       } else {
-        await signupWithEmail(email, password, name);
+        const result = await signupWithEmail(email, password, name);
+        if (result?.needsConfirmation) {
+          setConfirmationSent(true);
+        }
       }
-    } catch {
-      setError(isLogin ? 'Error al iniciar sesión' : 'Error al crear cuenta');
+    } catch (err) {
+      setError(err.message || (isLogin ? 'Error al iniciar sesión' : 'Error al crear cuenta'));
     } finally {
       setLoading(false);
     }
@@ -319,6 +324,16 @@ const Login = () => {
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
                 {error}
+              </div>
+            )}
+
+            {/* Confirmación de email */}
+            {confirmationSent && (
+              <div style={{ background: '#F0FDF4', color: '#15803D', padding: '0.875rem 1rem', borderRadius: '0.625rem', marginBottom: '1rem', fontSize: '0.875rem', fontWeight: 500, border: '1px solid #BBF7D0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                Cuenta creada. Revisa tu email y confirma tu dirección para poder entrar.
               </div>
             )}
 

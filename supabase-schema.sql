@@ -72,14 +72,14 @@ BEGIN
     COALESCE(NEW.raw_user_meta_data->>'name', SPLIT_PART(NEW.email, '@', 1)),
     CASE
       WHEN NEW.email ILIKE '%admin%' THEN 'admin'
-      WHEN NEW.email = 'astorgacilefrancisco@gmail.com' THEN 'admin'
+      WHEN NEW.email = 'admin@padelmedina.com' THEN 'admin'
       ELSE 'client'
     END
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
