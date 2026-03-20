@@ -20,6 +20,8 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  const ADMIN_EMAILS = ['admin@padelmedina.com'];
+
   const fetchProfile = async (authUser) => {
     const { data: profile } = await supabase
       .from('profiles')
@@ -27,11 +29,14 @@ export function AuthProvider({ children }) {
       .eq('id', authUser.id)
       .single();
 
+    const role = profile?.role
+      || (ADMIN_EMAILS.includes(authUser.email) ? 'admin' : 'client');
+
     setUser({
       id: authUser.id,
       email: authUser.email,
       name: profile?.name || authUser.user_metadata?.name || authUser.email.split('@')[0],
-      role: profile?.role || 'client',
+      role,
     });
   };
 
@@ -59,6 +64,7 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     await supabase.auth.signOut();
+    setUser(null);
   };
 
   if (loading) {
