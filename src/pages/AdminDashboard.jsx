@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
 
@@ -24,11 +24,7 @@ const AdminDashboard = () => {
   const [slots, setSlots] = useState({});
   const [activeSlot, setActiveSlot] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  const loadCourts = useCallback(async () => {
-    const { data } = await supabase.from('courts').select('*').order('name');
-    if (data) setCourts(data);
-  }, []);
+  const courtsRef = useRef([]);
 
   const loadSlots = useCallback(async (date) => {
     const [{ data: bookings }, { data: blocked }] = await Promise.all([
@@ -36,7 +32,7 @@ const AdminDashboard = () => {
       supabase.from('blocked_slots').select('*').eq('date', date),
     ]);
     const newSlots = {};
-    courts.forEach(court => {
+    courtsRef.current.forEach(court => {
       newSlots[court.id] = {};
       TIMES.forEach(time => { newSlots[court.id][time] = { status: 'available' }; });
     });
@@ -51,17 +47,29 @@ const AdminDashboard = () => {
       }
     });
     setSlots(newSlots);
-  }, [courts]);
+  }, []);
 
+  // Carga inicial: siempre llama a setLoading(false) pase lo que pase
   useEffect(() => {
-    loadCourts();
-  }, [loadCourts]);
-
-  useEffect(() => {
-    if (courts.length > 0) {
-      loadSlots(selectedDate).finally(() => setLoading(false));
+    async function init() {
+      try {
+        const { data } = await supabase.from('courts').select('*').order('name');
+        const loaded = data || [];
+        courtsRef.current = loaded;
+        setCourts(loaded);
+        if (loaded.length > 0) await loadSlots(selectedDate);
+      } finally {
+        setLoading(false);
+      }
     }
-  }, [courts, selectedDate, loadSlots]);
+    init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Recarga slots cuando cambia la fecha
+  useEffect(() => {
+    if (courtsRef.current.length > 0) loadSlots(selectedDate);
+  }, [selectedDate, loadSlots]);
 
   const handleAction = async (action) => {
     const { courtId, time } = activeSlot;
@@ -87,7 +95,9 @@ const AdminDashboard = () => {
   const toggleCourt = async (courtId) => {
     const court = courts.find(c => c.id === courtId);
     await supabase.from('courts').update({ active: !court.active }).eq('id', courtId);
-    setCourts(prev => prev.map(c => c.id === courtId ? { ...c, active: !c.active } : c));
+    const updated = courts.map(c => c.id === courtId ? { ...c, active: !c.active } : c);
+    courtsRef.current = updated;
+    setCourts(updated);
   };
 
   const handleDateChange = (e) => {
