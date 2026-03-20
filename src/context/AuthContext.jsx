@@ -28,17 +28,26 @@ export function AuthProvider({ children }) {
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    // Carga inicial: lee la sesión de localStorage, no necesita red
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       try {
-        if (session?.user) {
-          await fetchProfile(session.user);
-        } else {
-          setUser(null);
-        }
+        if (session?.user) await fetchProfile(session.user);
+        else setUser(null);
       } catch {
         setUser(null);
       } finally {
         setLoading(false);
+      }
+    });
+
+    // Escucha cambios posteriores: login, logout, refresco de token
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'INITIAL_SESSION') return; // ya lo maneja getSession
+      try {
+        if (session?.user) await fetchProfile(session.user);
+        else setUser(null);
+      } catch {
+        setUser(null);
       }
     });
 
