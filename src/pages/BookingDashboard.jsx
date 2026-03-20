@@ -43,6 +43,7 @@ const BookingDashboard = () => {
   const [view, setView] = useState('courts');
   const [loadingCourts, setLoadingCourts] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [courtsError, setCourtsError] = useState(null);
 
   useEffect(() => {
     loadCourts();
@@ -50,12 +51,15 @@ const BookingDashboard = () => {
 
   const loadCourts = async () => {
     setLoadingCourts(true);
-    const { data } = await supabase
+    setCourtsError(null);
+    const { data, error } = await supabase
       .from('courts')
       .select('*')
       .eq('active', true)
       .order('name');
-    if (data) setCourts(data);
+    if (error) setCourtsError(error.message);
+    else if (!data || data.length === 0) setCourtsError('No hay pistas activas en la base de datos.');
+    else setCourts(data);
     setLoadingCourts(false);
   };
 
@@ -151,6 +155,10 @@ const BookingDashboard = () => {
           <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
             <div style={{ width: '32px', height: '32px', border: '3px solid #DCFCE7', borderTopColor: '#16A34A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : courtsError ? (
+          <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '1rem', padding: '1.25rem', color: '#DC2626', fontSize: '0.875rem', fontWeight: 500 }}>
+            {courtsError}
           </div>
         ) : (
           <div className="courts-grid">
