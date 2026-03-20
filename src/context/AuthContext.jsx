@@ -3,24 +3,11 @@ import { supabase } from '../services/supabase';
 
 const AuthContext = createContext();
 
+const ADMIN_EMAILS = ['admin@padelmedina.com'];
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        await fetchProfile(session.user);
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const ADMIN_EMAILS = ['admin@padelmedina.com'];
 
   const fetchProfile = async (authUser) => {
     const { data: profile } = await supabase
@@ -39,6 +26,24 @@ export function AuthProvider({ children }) {
       role,
     });
   };
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      try {
+        if (session?.user) {
+          await fetchProfile(session.user);
+        } else {
+          setUser(null);
+        }
+      } catch {
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loginWithGoogle = async () => {
     await supabase.auth.signInWithOAuth({
