@@ -5,54 +5,53 @@ const AuthContext = createContext();
 
 const ADMIN_EMAILS = ['admin@padelmedina.com'];
 
+// Construye el objeto user desde los datos de sesión (sin red, instantáneo)
+const buildUser = (u) => ({
+  id: u.id,
+  email: u.email,
+  name: u.user_metadata?.name || u.email.split('@')[0],
+  role: ADMIN_EMAILS.includes(u.email) ? 'admin' : 'client',
+});
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (authUser) => {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authUser.id)
-      .single();
-
-    const role = profile?.role
-      || (ADMIN_EMAILS.includes(authUser.email) ? 'admin' : 'client');
-
-    setUser({
-      id: authUser.id,
-      email: authUser.email,
-      name: profile?.name || authUser.user_metadata?.name || authUser.email.split('@')[0],
-      role,
-    });
-  };
-
   useEffect(() => {
-    // Carga inicial: lee la sesión de localStorage, no necesita red
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      try {
-        if (session?.user) await fetchProfile(session.user);
-        else setUser(null);
-      } catch {
-        setUser(null);
-      } finally {
-        setLoading(false);
-      }
+    let settled = false;
+
+    const finish = (sessionUser) => {
+      if (settled) return;
+      settled = true;
+      setUser(sessionUser ? buildUser(sessionUser) : null);
+      setLoading(false);
+    };
+
+    // Timeout de seguridad: si nada responde en 5s, desbloquea la app
+    const timeout = setTimeout(() => finish(null), 5000);
+
+    // Obtiene sesión de localStorage (rápido, sin red en la mayoría de casos)
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        clearTimeout(timeout);
+        finish(session?.user ?? null);
+      })
+      .catch(() => {
+        clearTimeout(timeout);
+        finish(null);
+      });
+
+    // Escucha cambios: login, logout, refresco de token
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION') return;
+      setUser(session?.user ? buildUser(session.user) : null);
     });
 
-    // Escucha cambios posteriores: login, logout, refresco de token
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'INITIAL_SESSION') return; // ya lo maneja getSession
-      try {
-        if (session?.user) await fetchProfile(session.user);
-        else setUser(null);
-      } catch {
-        setUser(null);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const loginWithGoogle = async () => {
     await supabase.auth.signInWithOAuth({
