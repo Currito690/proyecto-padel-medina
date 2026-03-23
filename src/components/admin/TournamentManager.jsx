@@ -213,8 +213,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const catList = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
     const newAllRounds = {};
 
+    // If only one category exists, assign all participants to it regardless of stored category
+    const normalizedParticipants = expandedParticipants.map(exp => {
+      if (exp.isBye) return exp;
+      if (catList.length === 1) return { ...exp, category: catList[0] };
+      const match = catList.find(c => c.toLowerCase() === (exp.category || '').toLowerCase());
+      if (!match) return { ...exp, category: catList[0] }; // fallback to first category
+      return { ...exp, category: match };
+    });
+
     catList.forEach(cat => {
-       let catParts = expandedParticipants.filter(exp => exp.category === cat);
+       let catParts = normalizedParticipants.filter(exp => exp.category === cat);
        if (catParts.length < 2) return; // Skip empty categories
 
        // Calcular potencia de 2 más cercana
@@ -277,6 +286,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
        newAllRounds[cat] = catRounds;
     });
+
+    if (Object.keys(newAllRounds).length === 0) {
+      alert('No hay suficientes parejas en ninguna categoría para generar un cuadro. Asegúrate de tener al menos 2 parejas por categoría.');
+      return;
+    }
 
     setRounds(newAllRounds);
     setConsRounds({});
