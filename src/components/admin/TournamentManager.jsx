@@ -24,6 +24,7 @@ const TournamentManager = () => {
     name: '',
     startDay: 'Viernes', endDay: 'Domingo',
     startHour: '09:00', endHour: '22:00',
+    firstDayStartHour: '16:00',
     courtsCount: 2
   });
   
@@ -44,7 +45,7 @@ const TournamentManager = () => {
     if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
       localStorage.removeItem('padel_medina_current_tournament');
       setPhase('config');
-      setTConfig({ name: '', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', courtsCount: 2 });
+      setTConfig({ name: '', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2 });
       setParticipants([]);
       setRounds([]);
       setConsRounds([]);
@@ -326,10 +327,13 @@ const TournamentManager = () => {
     const eDayIdx = DAYS.indexOf(tConfig.endDay);
     const sHourIdx = HOURS.indexOf(tConfig.startHour);
     const eHourIdx = HOURS.indexOf(tConfig.endHour);
+    const firstDayHourIdx = tConfig.firstDayStartHour ? HOURS.indexOf(tConfig.firstDayStartHour) : sHourIdx;
+    
     let globalSlots = [];
     for(let d = sDayIdx; d <= eDayIdx; d++) {
         if(d >= 0 && d < DAYS.length) {
-            for(let h = sHourIdx; h < eHourIdx; h++) {
+            const actualStartHourIdx = (d === sDayIdx) ? firstDayHourIdx : sHourIdx;
+            for(let h = actualStartHourIdx; h < eHourIdx; h++) {
                if(h >= 0 && h < HOURS.length) { globalSlots.push(`${DAYS[d]} ${HOURS[h]}`); }
             }
         }
@@ -453,6 +457,18 @@ const TournamentManager = () => {
                   {HOURS.slice(HOURS.indexOf(tConfig.startHour) + 1).map(h => <option key={h} value={h}>{h}</option>)}
                 </select>
               </div>
+            </div>
+
+            <div style={{ padding: '1rem', backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: '#334155' }}>
+                Hora de Inicio el 1º Día ({tConfig.startDay})
+              </label>
+              <select value={tConfig.firstDayStartHour || tConfig.startHour} onChange={e => setTConfig({...tConfig, firstDayStartHour: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}>
+                {HOURS.slice(0, HOURS.indexOf(tConfig.endHour)).map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>
+                * Frecuentemente los torneos empiezan por la tarde el primer día y por la mañana el resto.
+              </p>
             </div>
 
             <div>
