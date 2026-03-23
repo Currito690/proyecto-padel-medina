@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const HOURS = [
@@ -7,6 +9,8 @@ const HOURS = [
 ];
 
 const TournamentManager = () => {
+  const bracketRef = useRef(null);
+  const [isExporting, setIsExporting] = useState(false);
   const loadSavedState = () => {
     try {
       const saved = localStorage.getItem('padel_medina_current_tournament');
