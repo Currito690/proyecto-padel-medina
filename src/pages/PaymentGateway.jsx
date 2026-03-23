@@ -67,6 +67,8 @@ const PaymentGateway = () => {
 
   const booking = location.state || {};
   const { courtId, courtName, sport, gradient, date, timeSlot } = booking;
+  const [paymentMethod, setPaymentMethod] = useState('stripe');
+  const [processingClub, setProcessingClub] = useState(false);
 
   useEffect(() => {
     const createIntent = async () => {
@@ -103,6 +105,26 @@ const PaymentGateway = () => {
     return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
   };
 
+  const handleClubPayment = async () => {
+    setProcessingClub(true);
+    try {
+      const { error } = await supabase.from('bookings').insert({
+        court_id: courtId,
+        user_id: user.id,
+        date: date,
+        time_slot: timeSlot,
+        status: 'confirmed',
+        is_free: false,
+      });
+      if (error) throw error;
+      navigate('/mis-reservas');
+    } catch (err) {
+      console.error("Error al reservar:", err);
+      alert('Error al procesar la reserva en el club: ' + err.message);
+      setProcessingClub(false);
+    }
+  };
+
   return (
     <div style={{ backgroundColor: 'var(--color-bg-secondary)', minHeight: '100vh', padding: '1.5rem 1rem' }}>
       <div style={{ maxWidth: '780px', margin: '0 auto' }}>
@@ -114,32 +136,71 @@ const PaymentGateway = () => {
         </button>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
-          {/* Formulario de Pago Reemplazado por Stripe Element */}
-          <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-                <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-text-primary)' }}>Pago Seguro</span>
-              </div>
-              <span style={{ fontWeight: 900, fontSize: '1.1rem', color: '#635BFF', letterSpacing: '-0.5px' }}>stripe</span>
+          <div>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
+              <button 
+                onClick={() => setPaymentMethod('stripe')}
+                style={{ flex: 1, padding: '0.75rem', borderRadius: '0.625rem', border: 'none', backgroundColor: paymentMethod === 'stripe' ? 'white' : 'transparent', color: paymentMethod === 'stripe' ? '#0F172A' : '#64748B', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer', transition: 'all 0.2s', boxShadow: paymentMethod === 'stripe' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+                Tarjeta / Móvil
+              </button>
+              <button 
+                onClick={() => setPaymentMethod('club')}
+                style={{ flex: 1, padding: '0.75rem', borderRadius: '0.625rem', border: 'none', backgroundColor: paymentMethod === 'club' ? 'white' : 'transparent', color: paymentMethod === 'club' ? '#0F172A' : '#64748B', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer', transition: 'all 0.2s', boxShadow: paymentMethod === 'club' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+                Pago en el Club
+              </button>
             </div>
 
-            <div style={{ padding: '1.5rem' }}>
-              {creatingIntent ? (
-                <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
-                  <div style={{ width: '28px', height: '28px', border: '3px solid #E2E8F0', borderTopColor: '#635BFF', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 1rem' }} />
-                  Cargando pasarela de pagos...
-                  <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-                </div>
-              ) : clientSecret ? (
-                <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
-                  <CheckoutForm clientSecret={clientSecret} onSuccess={() => navigate('/mis-reservas')} />
-                </Elements>
+            <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
+              {paymentMethod === 'stripe' ? (
+                <>
+                  <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                      <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-text-primary)' }}>Pago Seguro</span>
+                    </div>
+                    <span style={{ fontWeight: 900, fontSize: '1.1rem', color: '#635BFF', letterSpacing: '-0.5px' }}>stripe</span>
+                  </div>
+
+                  <div style={{ padding: '1.5rem' }}>
+                    {creatingIntent ? (
+                      <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
+                        <div style={{ width: '28px', height: '28px', border: '3px solid #E2E8F0', borderTopColor: '#635BFF', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 1rem' }} />
+                        Cargando pasarela de pagos...
+                      </div>
+                    ) : clientSecret ? (
+                      <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
+                        <CheckoutForm clientSecret={clientSecret} onSuccess={() => navigate('/mis-reservas')} />
+                      </Elements>
+                    ) : (
+                      <div style={{ color: '#DC2626', backgroundColor: '#FEF2F2', padding: '1rem', borderRadius: '0.5rem', fontSize: '0.9rem', textAlign: 'center' }}>
+                        Hubo un error al iniciar el pago. Inténtalo de nuevo.
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : (
-                <div style={{ color: '#DC2626', backgroundColor: '#FEF2F2', padding: '1rem', borderRadius: '0.5rem', fontSize: '0.9rem', textAlign: 'center' }}>
-                  Hubo un error al iniciar el pago. Inténtalo de nuevo.
+                <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div style={{ textAlign: 'center', padding: '1rem 0' }}>
+                    <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: '#F0FDF4', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                      </svg>
+                    </div>
+                    <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', color: '#0F172A', fontWeight: 800 }}>Pago en Recepción</h3>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B', lineHeight: '1.5' }}>
+                      Tu pista quedará reservada inmediatamente y abonarás los 18,00 € en el mostrador del club el día del partido.
+                    </p>
+                  </div>
+                  <button 
+                    onClick={handleClubPayment} 
+                    disabled={processingClub} 
+                    className="btn-primary" 
+                    style={{ width: '100%', padding: '1rem', fontSize: '1rem', background: '#16A34A', color: 'white', border: 'none' }}
+                  >
+                    {processingClub ? 'Confirmando...' : 'Confirmar Reserva (18,00 €)'}
+                  </button>
                 </div>
               )}
             </div>
