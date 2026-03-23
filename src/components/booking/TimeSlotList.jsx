@@ -17,17 +17,17 @@ const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook }) => {
                 backgroundColor: isSelected
                   ? 'var(--color-accent)'
                   : isOccupied
-                  ? 'var(--color-bg-tertiary)'
+                  ? '#FEF2F2'
                   : 'white',
                 color: isSelected
                   ? 'white'
                   : isOccupied
-                  ? 'var(--color-text-muted)'
+                  ? '#DC2626'
                   : 'var(--color-text-primary)',
                 border: isSelected
                   ? '1.5px solid var(--color-accent)'
                   : isOccupied
-                  ? '1.5px solid transparent'
+                  ? '1.5px solid #FECACA'
                   : '1.5px solid var(--color-border)',
                 boxShadow: isSelected
                   ? 'var(--shadow-accent)'
@@ -62,12 +62,12 @@ const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook }) => {
                 backgroundColor: isSelected
                   ? 'rgba(255,255,255,0.2)'
                   : isOccupied
-                  ? 'transparent'
+                  ? '#FEE2E2'
                   : 'var(--color-accent-light)',
                 color: isSelected
                   ? 'white'
                   : isOccupied
-                  ? 'var(--color-text-muted)'
+                  ? '#DC2626'
                   : 'var(--color-accent)',
                 padding: '0.15rem 0.5rem',
                 borderRadius: '999px',
