@@ -42,10 +42,11 @@ const AdminDashboard = () => {
 
     if (bookings.length > 0) {
       const userIds = [...new Set(bookings.map(b => b.user_id))];
-      const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', userIds);
+      const { data: profiles, error: pError } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
+      if (pError) console.error('Error cargando perfiles:', pError);
       if (profiles) {
         const profileMap = {};
-        profiles.forEach(p => profileMap[p.id] = p.name);
+        profiles.forEach(p => profileMap[p.id] = p.name || p.email?.split('@')[0] || 'Cliente');
         bookings = bookings.map(b => ({ ...b, profiles: { name: profileMap[b.user_id] } }));
       }
     }
