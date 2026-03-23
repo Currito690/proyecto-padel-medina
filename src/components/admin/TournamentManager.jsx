@@ -7,30 +7,43 @@ const TournamentManager = () => {
   const [phase, setPhase] = useState('setup'); // 'setup', 'bracket'
   const [participants, setParticipants] = useState([]);
   const [newCouple, setNewCouple] = useState('');
-  const [newPreferences, setNewPreferences] = useState([]);
+  const [newPreferences, setNewPreferences] = useState([]); // Array of { id, label, slots }
   const [rounds, setRounds] = useState([]);
   const [selectedDay, setSelectedDay] = useState(DAYS[0]);
-  const [selectedHour, setSelectedHour] = useState(HOURS[0]);
+  const [selectedHourStart, setSelectedHourStart] = useState(HOURS[0]);
+  const [selectedHourEnd, setSelectedHourEnd] = useState(HOURS[1]);
 
   const addPreference = () => {
-    const slotString = `${selectedDay} ${selectedHour}`;
-    if (!newPreferences.includes(slotString)) {
-      setNewPreferences([...newPreferences, slotString]);
+    const startIndex = HOURS.indexOf(selectedHourStart);
+    const endIndex = HOURS.indexOf(selectedHourEnd);
+    
+    if (startIndex >= endIndex) {
+      alert("La hora de fin debe ser posterior a la de inicio.");
+      return;
     }
+
+    const rangeSlots = HOURS.slice(startIndex, endIndex).map(h => `${selectedDay} ${h}`);
+    
+    setNewPreferences([
+      ...newPreferences, 
+      { id: Date.now().toString(), label: `${selectedDay} de ${selectedHourStart} a ${selectedHourEnd}`, slots: rangeSlots }
+    ]);
   };
 
-  const removePreference = (slotString) => {
-    setNewPreferences(prev => prev.filter(s => s !== slotString));
+  const removePreference = (id) => {
+    setNewPreferences(prev => prev.filter(p => p.id !== id));
   };
 
   const addParticipant = (e) => {
     e.preventDefault();
     if (!newCouple.trim()) return;
+    const allSelectedSlots = newPreferences.flatMap(p => p.slots);
+
     setParticipants([...participants, { 
       id: Date.now().toString(), 
       name: newCouple.trim(),
-      preferences: newPreferences,
-      prefNames: [] // We don't display it inline easily if there are many, we keep it simple
+      preferences: allSelectedSlots,
+      prefNames: newPreferences.map(p => p.label)
     }]);
     setNewCouple('');
   };
@@ -210,7 +223,7 @@ const TournamentManager = () => {
             </div>
             
             <div>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad específica (añade horas libres):</p>
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad (Añade rangos horarios):</p>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                 <select 
                   value={selectedDay} 
@@ -219,12 +232,21 @@ const TournamentManager = () => {
                 >
                   {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748B' }}>de</span>
                 <select 
-                  value={selectedHour} 
-                  onChange={e => setSelectedHour(e.target.value)}
+                  value={selectedHourStart} 
+                  onChange={e => setSelectedHourStart(e.target.value)}
                   style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
                 >
-                  {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
+                  {HOURS.slice(0, HOURS.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
+                </select>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748B' }}>a</span>
+                <select 
+                  value={selectedHourEnd} 
+                  onChange={e => setSelectedHourEnd(e.target.value)}
+                  style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  {HOURS.slice(HOURS.indexOf(selectedHourStart) + 1).map(h => <option key={h} value={h}>{h}</option>)}
                 </select>
                 <button 
                   type="button" 
@@ -238,9 +260,9 @@ const TournamentManager = () => {
               {newPreferences.length > 0 && (
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                   {newPreferences.map(pref => (
-                    <div key={pref} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: '#F0FDF4', border: '1.5px solid #16A34A', color: '#16A34A', padding: '0.3rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700 }}>
-                      {pref}
-                      <button type="button" onClick={() => removePreference(pref)} style={{ background: 'none', border: 'none', color: '#16A34A', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.7, marginLeft: '0.2rem' }}>
+                    <div key={pref.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: '#F0FDF4', border: '1.5px solid #16A34A', color: '#16A34A', padding: '0.3rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700 }}>
+                      {pref.label}
+                      <button type="button" onClick={() => removePreference(pref.id)} style={{ background: 'none', border: 'none', color: '#16A34A', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.7, marginLeft: '0.2rem' }}>
                         ✕
                       </button>
                     </div>
