@@ -1,10 +1,7 @@
 import React, { useState } from 'react';
 
-const TOURNAMENT_DAYS = [
-  { name: 'Viernes', slots: ['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'] },
-  { name: 'Sábado', slots: ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'] },
-  { name: 'Domingo', slots: ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00'] }
-];
+const DAYS = ['Viernes', 'Sábado', 'Domingo'];
+const HOURS = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'];
 
 const TournamentManager = () => {
   const [phase, setPhase] = useState('setup'); // 'setup', 'bracket'
@@ -12,11 +9,18 @@ const TournamentManager = () => {
   const [newCouple, setNewCouple] = useState('');
   const [newPreferences, setNewPreferences] = useState([]);
   const [rounds, setRounds] = useState([]);
+  const [selectedDay, setSelectedDay] = useState(DAYS[0]);
+  const [selectedHour, setSelectedHour] = useState(HOURS[0]);
 
-  const togglePreference = (slotString) => {
-    setNewPreferences(prev => 
-      prev.includes(slotString) ? prev.filter(id => id !== slotString) : [...prev, slotString]
-    );
+  const addPreference = () => {
+    const slotString = `${selectedDay} ${selectedHour}`;
+    if (!newPreferences.includes(slotString)) {
+      setNewPreferences([...newPreferences, slotString]);
+    }
+  };
+
+  const removePreference = (slotString) => {
+    setNewPreferences(prev => prev.filter(s => s !== slotString));
   };
 
   const addParticipant = (e) => {
@@ -94,7 +98,7 @@ const TournamentManager = () => {
     const newRounds = [];
     
     // Global pool to avoid duplicate match times in Round 0
-    let availableSlots = TOURNAMENT_DAYS.flatMap(d => d.slots.map(s => `${d.name} ${s}`));
+    let availableSlots = DAYS.flatMap(d => HOURS.map(h => `${d} ${h}`));
     
     // Generar la estructura de rondas vacía
     for (let r = 0; r < numRounds; r++) {
@@ -206,34 +210,43 @@ const TournamentManager = () => {
             </div>
             
             <div>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad específica (selecciona las horas a las que pueden jugar):</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {TOURNAMENT_DAYS.map(day => (
-                  <div key={day.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1E293B', width: '60px' }}>{day.name}:</span>
-                    {day.slots.map(slot => {
-                      const slotString = `${day.name} ${slot}`;
-                      const isSelected = newPreferences.includes(slotString);
-                      return (
-                        <button
-                          key={slotString}
-                          type="button"
-                          onClick={() => togglePreference(slotString)}
-                          style={{
-                            padding: '0.25rem 0.5rem', borderRadius: '0.5rem', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
-                            border: isSelected ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
-                            backgroundColor: isSelected ? '#F0FDF4' : 'transparent',
-                            color: isSelected ? '#16A34A' : '#64748B',
-                            minWidth: '45px'
-                          }}
-                        >
-                          {slot}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad específica (añade horas libres):</p>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                <select 
+                  value={selectedDay} 
+                  onChange={e => setSelectedDay(e.target.value)}
+                  style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <select 
+                  value={selectedHour} 
+                  onChange={e => setSelectedHour(e.target.value)}
+                  style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
+                </select>
+                <button 
+                  type="button" 
+                  onClick={addPreference}
+                  style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', opacity: 0.9 }}
+                >
+                  + Añadir
+                </button>
               </div>
+
+              {newPreferences.length > 0 && (
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                  {newPreferences.map(pref => (
+                    <div key={pref} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: '#F0FDF4', border: '1.5px solid #16A34A', color: '#16A34A', padding: '0.3rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700 }}>
+                      {pref}
+                      <button type="button" onClick={() => removePreference(pref)} style={{ background: 'none', border: 'none', color: '#16A34A', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.7, marginLeft: '0.2rem' }}>
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </form>
 
