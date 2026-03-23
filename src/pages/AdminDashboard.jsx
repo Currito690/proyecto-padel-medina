@@ -19,6 +19,7 @@ const slotColors = {
 const AdminDashboard = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('schedule');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
   const [financialStats, setFinancialStats] = useState({ total: 0, month: 0, today: 0, totalBookings: 0 });
   const [savingSettings, setSavingSettings] = useState(false);
@@ -207,53 +208,122 @@ const AdminDashboard = () => {
   const totalBlocked = Object.values(slots).flatMap(c => Object.values(c)).filter(s => s.status === 'blocked').length;
   const activeCourts = courts.filter(c => c.active).length;
 
-  const tabStyle = (key) => ({
-    flex: 1, padding: '0.625rem 0.375rem',
-    border: 'none', borderRadius: '0.5rem',
-    fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer',
-    transition: 'all 0.2s',
-    backgroundColor: activeTab === key ? 'white' : 'transparent',
-    color: activeTab === key ? '#0F172A' : '#94A3B8',
-    boxShadow: activeTab === key ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
-  });
+  const menuItems = [
+    { key: 'schedule', label: 'Horario', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+    { key: 'bookings', label: `Reservas (${allBookings.length})`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> },
+    { key: 'courts', label: 'Pistas', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 2 Q16 6 16 12 Q16 18 12 22"/><path d="M12 2 Q8 6 8 12 Q8 18 12 22"/><line x1="2" y1="12" x2="22" y2="12"/></svg> },
+    { key: 'finance', label: 'Finanzas', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> },
+    { key: 'settings', label: 'Configuración', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/><circle cx="12" cy="12" r="3"/></svg> },
+  ];
 
   return (
     <>
       <style>{`
-        .admin-wrap { min-height: 100vh; background: var(--color-bg-secondary); }
-        .admin-header { background: white; border-bottom: 1px solid var(--color-border); padding: 0.875rem 1.25rem; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm); }
-        .admin-body { max-width: 960px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
-        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-bottom: 1.5rem; }
+        .admin-layout { display: flex; min-height: 100vh; background: var(--color-bg-secondary); }
+        .admin-sidebar { 
+          width: 280px; background: white; border-right: 1px solid var(--color-border);
+          display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
+          transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .admin-sidebar.open { transform: translateX(0); }
+        .sidebar-overlay { 
+          position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40;
+          opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+        .sidebar-overlay.open { opacity: 1; pointer-events: auto; }
+        
+        .admin-main { flex: 1; display: flex; flex-direction: column; width: 100%; min-height: 100vh; }
+        .admin-header { background: white; border-bottom: 1px solid var(--color-border); padding: 0.875rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm); }
+        .admin-body { flex: 1; padding: 1.5rem 1.25rem; max-width: 1060px; margin: 0 auto; width: 100%; }
+        
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
         .slots-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }
+        
         @media (min-width: 480px) { .slots-grid { grid-template-columns: repeat(7, 1fr); } }
-        @media (min-width: 640px) { .admin-body { padding: 1.75rem 1.5rem 3rem; } }
-        @media (min-width: 1024px) { .admin-body { padding: 2rem 2rem 3rem; max-width: 1060px; } }
+        @media (min-width: 1024px) { 
+          .admin-sidebar { transform: translateX(0); position: sticky; height: 100vh; }
+          .sidebar-overlay { display: none; }
+          .menu-toggle { display: none; }
+          .admin-header { padding: 1.25rem 2rem; }
+          .admin-body { padding: 2rem; }
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
 
-      <div className="admin-wrap">
-        {/* Header */}
-        <div className="admin-header">
-          <div style={{ maxWidth: '1060px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '0.625rem', background: 'linear-gradient(135deg, #16A34A, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
-                  <rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />
-                </svg>
-              </div>
-              <div>
-                <p style={{ margin: 0, fontSize: '0.62rem', fontWeight: 700, color: '#16A34A', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Panel Admin</p>
-                <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 800, color: '#0F172A' }}>Padel Medina</p>
-              </div>
+      <div className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`} onClick={() => setIsSidebarOpen(false)} />
+
+      <div className="admin-layout">
+        {/* Sidebar */}
+        <aside className={`admin-sidebar ${isSidebarOpen ? 'open' : ''}`}>
+          <div style={{ padding: '1.5rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '0.75rem', background: 'linear-gradient(135deg, #16A34A, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />
+              </svg>
             </div>
-            <button onClick={logout} style={{ padding: '0.5rem 1rem', border: '1.5px solid #E2E8F0', borderRadius: '0.625rem', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
-              Salir
+            <div>
+              <p style={{ margin: 0, fontSize: '0.65rem', fontWeight: 800, color: '#16A34A', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Panel Admin</p>
+              <p style={{ margin: 0, fontSize: '1rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Padel Medina</p>
+            </div>
+            {/* Close button on mobile */}
+            <button className="menu-toggle" onClick={() => setIsSidebarOpen(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', padding: '0.5rem', color: '#64748B' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
           </div>
-        </div>
 
-        <div className="admin-body">
+          <div style={{ padding: '1.25rem 1rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <p style={{ margin: '0 0 0.5rem 0.5rem', fontSize: '0.75rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Menú Principal</p>
+            
+            {menuItems.map(item => {
+              const isActive = activeTab === item.key;
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => { setActiveTab(item.key); setIsSidebarOpen(false); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%',
+                    padding: '0.875rem 1rem', borderRadius: '0.75rem', border: 'none',
+                    backgroundColor: isActive ? '#F0FDF4' : 'transparent',
+                    color: isActive ? '#16A34A' : '#475569',
+                    fontFamily: 'inherit', fontWeight: isActive ? 800 : 600, fontSize: '0.95rem',
+                    cursor: 'pointer', transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    textAlign: 'left'
+                  }}
+                >
+                  <span style={{ display: 'flex', color: isActive ? '#16A34A' : '#94A3B8' }}>{item.icon}</span>
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ padding: '1.25rem', borderTop: '1px solid var(--color-border)' }}>
+            <button onClick={logout} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.875rem', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+              Cerrar Sesión
+            </button>
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <div className="admin-main">
+          {/* Header Only on Mobile/Tablet */}
+          <div className="admin-header menu-toggle">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <button aria-label="Abrir panel" onClick={() => setIsSidebarOpen(true)} style={{ padding: '0.5rem', border: '1.5px solid #E2E8F0', borderRadius: '0.5rem', background: 'white', color: '#0F172A', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+              </button>
+              <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '1.1rem', letterSpacing: '-0.02em' }}>
+                {menuItems.find(m => m.key === activeTab)?.label.split(' (')[0]}
+              </span>
+            </div>
+            <div style={{ width: '32px', height: '32px', borderRadius: '0.5rem', background: 'linear-gradient(135deg, #16A34A, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
+            </div>
+          </div>
+
+          <div className="admin-body">
           {/* Stats */}
           <div className="stats-grid">
             {[
@@ -268,18 +338,7 @@ const AdminDashboard = () => {
             ))}
           </div>
 
-          {/* Tabs */}
-          <div style={{ display: 'flex', backgroundColor: '#F1F5F9', borderRadius: '0.875rem', padding: '0.25rem', marginBottom: '1.5rem', gap: '0.25rem', flexWrap: 'wrap' }}>
-            {[
-              { key: 'schedule', label: 'Horario' },
-              { key: 'bookings', label: `Reservas (${allBookings.length})` },
-              { key: 'courts', label: 'Pistas' },
-              { key: 'finance', label: 'Finanzas' },
-              { key: 'settings', label: 'Configuración' },
-            ].map(t => (
-              <button key={t.key} onClick={() => setActiveTab(t.key)} style={tabStyle(t.key)}>{t.label}</button>
-            ))}
-          </div>
+          {/* Tabs - removed in favor of sidebar */}
 
           {loading ? (
             <div style={{ textAlign: 'center', padding: '3rem 0' }}>
