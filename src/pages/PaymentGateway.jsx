@@ -1,54 +1,106 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
+
+// Reemplazar con clave pública real (VITE_STRIPE_PUBLISHABLE_KEY)
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_TYooMQauvdEDq54NiTphI7jx');
+
+const CheckoutForm = ({ clientSecret, onSuccess }) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    setLoading(true);
+    setError(null);
+
+    const { error: submitError } = await elements.submit();
+    if (submitError) {
+      setError(submitError.message);
+      setLoading(false);
+      return;
+    }
+
+    const { error: confirmError } = await stripe.confirmPayment({
+      elements,
+      clientSecret,
+      confirmParams: {
+        // Redirige al panel de usuario cuando termine el flujo de pago con éxito o con más acciones requeridas
+        return_url: `${window.location.origin}/mis-reservas`,
+      },
+      // Usaremos redirect automático de Stripe
+    });
+
+    if (confirmError) {
+      setError(confirmError.message);
+      setLoading(false);
+    } else {
+      // Como usamos redirect automático no llegará aquí normalmente, pero por si acaso
+      onSuccess();
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <PaymentElement />
+      {error && <div style={{ color: '#DC2626', fontSize: '0.85rem', fontWeight: 500, padding: '0.8rem', backgroundColor: '#FEF2F2', borderRadius: '0.5rem' }}>{error}</div>}
+      <button type="submit" disabled={!stripe || loading} className="btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1rem', background: '#0F172A', color: 'white', border: 'none' }}>
+        {loading ? 'Procesando...' : 'Pagar 14,00 €'}
+      </button>
+    </form>
+  );
+};
 
 const PaymentGateway = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [paymentMethod, setPaymentMethod] = useState('card');
+  const [clientSecret, setClientSecret] = useState('');
+  const [creatingIntent, setCreatingIntent] = useState(true);
 
   const booking = location.state || {};
   const { courtId, courtName, sport, gradient, date, timeSlot } = booking;
+
+  useEffect(() => {
+    const createIntent = async () => {
+      if (!user) return;
+      try {
+        const { data, error } = await supabase.functions.invoke('create-payment-intent', {
+          body: {
+            amount: 1400, // 14.00 EUR
+            currency: 'eur',
+            metadata: {
+              court_id: courtId,
+              user_id: user.id,
+              date,
+              time_slot: timeSlot
+            }
+          }
+        });
+
+        if (error) throw error;
+        setClientSecret(data.clientSecret);
+      } catch (err) {
+        console.error("Error creating payment intent:", err);
+      } finally {
+        setCreatingIntent(false);
+      }
+    };
+    
+    createIntent();
+  }, [user, courtId, date, timeSlot]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
     const d = new Date(dateStr + 'T12:00:00');
     return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-  };
-
-  const handlePayment = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    const { error: dbError } = await supabase.from('bookings').insert({
-      court_id: courtId,
-      user_id: user.id,
-      date,
-      time_slot: timeSlot,
-      status: 'confirmed',
-      is_free: false,
-    });
-    setLoading(false);
-    if (dbError) {
-      setError('Esta franja ya no está disponible. Por favor elige otra.');
-      return;
-    }
-    navigate('/mis-reservas');
-  };
-
-  const inputStyle = {
-    width: '100%', padding: '0.875rem 1rem', borderRadius: '0.625rem',
-    border: '1.5px solid #E2E8F0', fontSize: '0.95rem', backgroundColor: '#F8FAFC',
-    color: '#0F172A', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s',
-  };
-  const labelStyle = {
-    display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#475569',
-    marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em',
   };
 
   return (
@@ -62,7 +114,7 @@ const PaymentGateway = () => {
         </button>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
-          {/* Payment Form */}
+          {/* Formulario de Pago Reemplazado por Stripe Element */}
           <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
             <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -71,149 +123,25 @@ const PaymentGateway = () => {
                 </svg>
                 <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-text-primary)' }}>Pago Seguro</span>
               </div>
-              <span style={{ fontWeight: 900, fontSize: '1.1rem', color: paymentMethod === 'card' ? '#635BFF' : paymentMethod === 'bizum' ? '#00c3a9' : paymentMethod === 'paypal' ? '#003087' : '#0F172A', letterSpacing: '-0.5px', textTransform: paymentMethod === 'card' ? 'lowercase' : 'capitalize' }}>
-                {paymentMethod === 'card' ? 'stripe' : paymentMethod === 'bizum' ? 'Bizum' : paymentMethod === 'paypal' ? 'PayPal' : paymentMethod === 'applepay' ? 'Apple Pay' : 'Google Pay'}
-              </span>
+              <span style={{ fontWeight: 900, fontSize: '1.1rem', color: '#635BFF', letterSpacing: '-0.5px' }}>stripe</span>
             </div>
 
             <div style={{ padding: '1.5rem' }}>
-              {error && (
-                <div style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '0.625rem', padding: '0.875rem', marginBottom: '1rem', fontSize: '0.875rem', color: '#DC2626', fontWeight: 500 }}>
-                  {error}
+              {creatingIntent ? (
+                <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
+                  <div style={{ width: '28px', height: '28px', border: '3px solid #E2E8F0', borderTopColor: '#635BFF', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 1rem' }} />
+                  Cargando pasarela de pagos...
+                  <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                </div>
+              ) : clientSecret ? (
+                <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
+                  <CheckoutForm clientSecret={clientSecret} onSuccess={() => navigate('/mis-reservas')} />
+                </Elements>
+              ) : (
+                <div style={{ color: '#DC2626', backgroundColor: '#FEF2F2', padding: '1rem', borderRadius: '0.5rem', fontSize: '0.9rem', textAlign: 'center' }}>
+                  Hubo un error al iniciar el pago. Inténtalo de nuevo.
                 </div>
               )}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem', backgroundColor: '#F1F5F9', padding: '0.375rem', borderRadius: '0.75rem' }}>
-                <button 
-                  type="button"
-                  onClick={() => setPaymentMethod('card')}
-                  style={{ flex: '1 1 auto', minWidth: '80px', padding: '0.6rem', borderRadius: '0.5rem', border: 'none', background: paymentMethod === 'card' ? 'white' : 'transparent', boxShadow: paymentMethod === 'card' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', fontWeight: 600, fontSize: '0.85rem', color: paymentMethod === 'card' ? '#0F172A' : '#64748B', cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
-                >
-                  Tarjeta
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setPaymentMethod('bizum')}
-                  style={{ flex: '1 1 auto', minWidth: '80px', padding: '0.6rem', borderRadius: '0.5rem', border: 'none', background: paymentMethod === 'bizum' ? 'white' : 'transparent', boxShadow: paymentMethod === 'bizum' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', fontWeight: 600, fontSize: '0.85rem', color: paymentMethod === 'bizum' ? '#0F172A' : '#64748B', cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
-                >
-                  Bizum
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setPaymentMethod('paypal')}
-                  style={{ flex: '1 1 auto', minWidth: '80px', padding: '0.6rem', borderRadius: '0.5rem', border: 'none', background: paymentMethod === 'paypal' ? 'white' : 'transparent', boxShadow: paymentMethod === 'paypal' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', fontWeight: 600, fontSize: '0.85rem', color: paymentMethod === 'paypal' ? '#0F172A' : '#64748B', cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
-                >
-                  PayPal
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setPaymentMethod('applepay')}
-                  style={{ flex: '1 1 auto', minWidth: '80px', padding: '0.6rem', borderRadius: '0.5rem', border: 'none', background: paymentMethod === 'applepay' ? 'white' : 'transparent', boxShadow: paymentMethod === 'applepay' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', fontWeight: 600, fontSize: '0.85rem', color: paymentMethod === 'applepay' ? '#0F172A' : '#64748B', cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
-                >
-                  Apple Pay
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setPaymentMethod('gpay')}
-                  style={{ flex: '1 1 auto', minWidth: '80px', padding: '0.6rem', borderRadius: '0.5rem', border: 'none', background: paymentMethod === 'gpay' ? 'white' : 'transparent', boxShadow: paymentMethod === 'gpay' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', fontWeight: 600, fontSize: '0.85rem', color: paymentMethod === 'gpay' ? '#0F172A' : '#64748B', cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
-                >
-                  G Pay
-                </button>
-              </div>
-
-              <form onSubmit={handlePayment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {paymentMethod === 'card' && (
-                  <>
-                    <div>
-                      <label style={labelStyle}>Correo del recibo</label>
-                      <input required type="email" defaultValue={user?.email} placeholder="tu@email.com" style={inputStyle} />
-                    </div>
-                    <div>
-                      <label style={labelStyle}>Número de tarjeta</label>
-                      <input required placeholder="1234 5678 9012 3456" style={inputStyle} />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                      <div>
-                        <label style={labelStyle}>Vencimiento</label>
-                        <input required placeholder="MM / AA" style={inputStyle} />
-                      </div>
-                      <div>
-                        <label style={labelStyle}>CVC</label>
-                        <input required placeholder="123" style={inputStyle} />
-                      </div>
-                    </div>
-                    <div>
-                      <label style={labelStyle}>Nombre en tarjeta</label>
-                      <input required placeholder="Juan García" style={inputStyle} />
-                    </div>
-                  </>
-                )}
-
-                {paymentMethod === 'bizum' && (
-                  <>
-                    <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-                       <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', borderRadius: '50%', backgroundColor: '#00c3a9', color: 'white', marginBottom: '1rem' }}>
-                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                       </div>
-                       <p style={{ margin: 0, fontSize: '0.9rem', color: '#475569' }}>Introduce tu número de teléfono asociado a Bizum para autorizar el pago en tu app bancaria.</p>
-                    </div>
-                    <div>
-                      <label style={labelStyle}>Número de teléfono</label>
-                      <input required type="tel" placeholder="600 000 000" style={inputStyle} />
-                    </div>
-                  </>
-                )}
-
-                 {paymentMethod === 'paypal' && (
-                  <div style={{ textAlign: 'center', padding: '1rem 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
-                     <svg viewBox="0 0 124 33" style={{ height: '32px' }} xmlns="http://www.w3.org/2000/svg">
-                       <path fill="#253b80" d="M46.21 26.32L48 14.85h4.15l-1.8 11.47zM57.65 14.85l-1.8 11.47h-4.14l1.8-11.47z"/><path fill="#179bd7" d="M120.76 15.68c-.62-2.3-2.6-3.08-5.34-3.08h-6.27l-2.02 12.78h4.29l.84-5.22h2.24c3.55 0 5.86-1.52 6.54-4.5.21-1 .18-1.54-.28-2.98"/>
-                       <path fill="#253b80" d="M26.4 11.19c-1.3-.87-3.23-1.07-5.59-1.07H14.1l-3.32 20.94h4.86l1.52-9.62h2.98c3.27 0 5.67-1.35 6.42-4.1.28-1.07.27-2.02-.12-2.9-.38-1.06-1.12-2.04-2.45-2.93L15.4 12.35l3.24-2.22h3.9c1.6 0 3 .15 4.09.82 2.37 1.48 2.92 4.41 2.2 7.15-.6 2.27-2.39 3.59-5.12 3.59h-2.18L18.47 31h4.86l1.54-9.74h2.18c4.04 0 7.32-2.29 8.28-6.19.82-3.32-.45-6.07-3.41-7.92z"/>
-                     </svg>
-                     <p style={{ margin: 0, fontSize: '0.9rem', color: '#475569' }}>Serás redirigido a PayPal para completar tu compra de forma segura.</p>
-                  </div>
-                )}
-
-                {paymentMethod === 'applepay' && (
-                  <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
-                     <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '64px', height: '40px', borderRadius: '4px', backgroundColor: '#000', color: 'white', marginBottom: '1rem' }}>
-                       <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12.15 11.75c-.05-1.95 1.57-3.29 1.63-3.35-1.15-1.84-3.08-2.05-3.64-2.07-1.63-.2-3.25 1.07-4.1 1.07-.84 0-2.22-.97-3.48-.95-1.6.02-3.08.97-3.9 2.5-1.69 3.12-.42 7.74 1.18 10.27.8 1.25 1.72 2.65 2.94 2.62 1.2-.05 1.65-.82 3.08-.82 1.4 0 1.83.82 3.1.8 1.3-.02 2.1-.13 2.87-1.34 1.12-1.6 1.57-3.15 1.6-3.24-.03-.02-2.93-1.19-2.98-4.49zm-.58-5.32c.67-.84 1.1-1.97.98-3.08-1 .04-2.17.65-2.85 1.47-.6.72-1.12 1.87-.97 2.94 1.1.1 2.15-.47 2.84-1.33z"/></svg>
-                     </div>
-                     <p style={{ margin: 0, fontSize: '0.9rem', color: '#475569' }}>Presiona el botón inferior para autorizar el pago en tu dispositivo Apple.</p>
-                  </div>
-                )}
-
-                {paymentMethod === 'gpay' && (
-                  <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
-                     <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0.4rem 0.8rem', borderRadius: '4px', backgroundColor: '#000', color: 'white', marginBottom: '1rem', border: '1px solid #E2E8F0' }}>
-                       <span style={{ fontSize: '1.3rem', fontWeight: 800, letterSpacing: '-0.5px' }}>
-                         <span style={{ color: '#4285F4' }}>G</span> <span style={{ color: '#000', marginLeft: '2px', background: '#FFF', padding: '0 4px', borderRadius: '2px' }}>Pay</span>
-                       </span>
-                     </div>
-                     <p style={{ margin: 0, fontSize: '0.9rem', color: '#475569' }}>Usa las tarjetas asociadas a tu cuenta de Google.</p>
-                  </div>
-                )}
-
-                <button type="submit" disabled={loading} className="btn-primary" style={{ width: '100%', padding: '1rem', marginTop: '0.5rem', fontSize: '1rem', background: paymentMethod === 'paypal' ? '#FFC439' : (paymentMethod === 'bizum' ? '#00c3a9' : paymentMethod === 'applepay' || paymentMethod === 'gpay' ? '#000' : undefined), color: paymentMethod === 'paypal' ? '#000' : paymentMethod === 'applepay' || paymentMethod === 'gpay' ? '#FFF' : undefined, border: paymentMethod === 'paypal' ? '1px solid #F6B828' : paymentMethod === 'applepay' || paymentMethod === 'gpay' ? 'none' : undefined, fontWeight: paymentMethod === 'paypal' ? '800' : undefined }}>
-                  {loading ? (
-                    <>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'spin 1s linear infinite' }}>
-                        <path d="M21 12a9 9 0 11-6.219-8.56" />
-                      </svg>
-                      Procesando...
-                    </>
-                  ) : paymentMethod === 'paypal' ? (
-                    'Pagar con PayPal'
-                  ) : paymentMethod === 'bizum' ? (
-                    'Pagar con Bizum'
-                  ) : paymentMethod === 'applepay' ? (
-                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12.15 11.75c-.05-1.95 1.57-3.29 1.63-3.35-1.15-1.84-3.08-2.05-3.64-2.07-1.63-.2-3.25 1.07-4.1 1.07-.84 0-2.22-.97-3.48-.95-1.6.02-3.08.97-3.9 2.5-1.69 3.12-.42 7.74 1.18 10.27.8 1.25 1.72 2.65 2.94 2.62 1.2-.05 1.65-.82 3.08-.82 1.4 0 1.83.82 3.1.8 1.3-.02 2.1-.13 2.87-1.34 1.12-1.6 1.57-3.15 1.6-3.24-.03-.02-2.93-1.19-2.98-4.49zm-.58-5.32c.67-.84 1.1-1.97.98-3.08-1 .04-2.17.65-2.85 1.47-.6.72-1.12 1.87-.97 2.94 1.1.1 2.15-.47 2.84-1.33z"/></svg> Pay</span>
-                  ) : paymentMethod === 'gpay' ? (
-                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', fontWeight: 800 }}><span style={{ color: '#4285F4' }}>G</span> <span style={{ color: '#000', margin: '0 2px', background: '#FFF', padding: '0 4px', borderRadius: '2px' }}>Pay</span></span>
-                  ) : (
-                    'Pagar 14,00 €'
-                  )}
-                </button>
-              </form>
             </div>
           </div>
 
@@ -250,10 +178,6 @@ const PaymentGateway = () => {
           </div>
         </div>
       </div>
-
-      <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
     </div>
   );
 };
