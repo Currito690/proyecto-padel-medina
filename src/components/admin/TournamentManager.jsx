@@ -211,7 +211,8 @@ const TournamentManager = () => {
           p1: r === 0 ? p[m * 2] : null,
           p2: r === 0 ? p[m * 2 + 1] : null,
           winner: null,
-          time: null
+          time: null,
+          score: null
         });
       }
       newRounds.push(matches);
@@ -265,6 +266,17 @@ const TournamentManager = () => {
        const nextRounds = [...targetRounds];
        nextRounds[match.round] = [...nextRounds[match.round]];
        nextRounds[match.round][match.matchIndex] = { ...nextRounds[match.round][match.matchIndex], time: newTime.trim() };
+       if (isCons) setConsRounds(nextRounds); else setRounds(nextRounds);
+    }
+  };
+
+  const handleEditScore = (match, isCons = false) => {
+    const newScore = prompt("Introduce el resultado del partido (Ej: 6-4 3-6 7-6):", match.score || "");
+    if (newScore !== null) {
+       const targetRounds = isCons ? consRounds : rounds;
+       const nextRounds = [...targetRounds];
+       nextRounds[match.round] = [...nextRounds[match.round]];
+       nextRounds[match.round][match.matchIndex] = { ...nextRounds[match.round][match.matchIndex], score: newScore.trim() };
        if (isCons) setConsRounds(nextRounds); else setRounds(nextRounds);
     }
   };
@@ -353,7 +365,8 @@ const TournamentManager = () => {
           p1: r === 0 ? p[m * 2] : null,
           p2: r === 0 ? p[m * 2 + 1] : null,
           winner: null,
-          time: null
+          time: null,
+          score: null
         });
       }
       newRounds.push(matches);
@@ -675,6 +688,14 @@ const TournamentManager = () => {
                           {match.p2 ? match.p2.name : '\u00A0'}
                         </span>
                       </div>
+                      
+                      {(!match.p1?.isBye && !match.p2?.isBye) && (
+                         <div style={{ padding: '0.4rem', backgroundColor: '#F1F5F9', borderTop: '1px solid #E2E8F0', textAlign: 'center' }}>
+                            <button onClick={() => handleEditScore(match, bracket.isCons)} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#0F172A' : '#64748B', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.05em' }}>
+                              {match.score ? match.score : '+ Añadir Resultado'}
+                            </button>
+                         </div>
+                      )}
                     </div>
                   ))}
                 </div>
