@@ -32,30 +32,56 @@ const DateSelector = ({ selectedDate, maxValidDate, onSelectDate }) => {
     }
   }, []);
 
+  const handleScroll = (direction) => {
+    if (scrollRef.current) {
+      const scrollAmount = direction === 'left' ? -250 : 250;
+      scrollRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
+
   return (
-    <div 
-      ref={scrollRef}
-      style={{
-        display: 'flex',
-        gap: '0.75rem',
-        overflowX: 'auto',
-        paddingBottom: '0.75rem',
-        paddingTop: '0.25rem',
-        scrollbarWidth: 'none', // Firefox
-        msOverflowStyle: 'none', // IE
-        WebkitOverflowScrolling: 'touch'
-      }}
-      className="hide-scrollbar"
-    >
-      <style>
-        {`
-          .hide-scrollbar::-webkit-scrollbar {
-            display: none;
-          }
-        `}
-      </style>
-      
-      {dates.map((date) => {
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', width: '100%' }}>
+      <button 
+        onClick={() => handleScroll('left')}
+        style={{
+          flexShrink: 0,
+          width: '32px', height: '32px', borderRadius: '50%',
+          backgroundColor: 'white', border: '1.5px solid #E2E8F0',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          color: '#64748B', transition: 'all 0.2s'
+        }}
+        aria-label="Anterior"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+
+      <div 
+        ref={scrollRef}
+        style={{
+          flex: 1,
+          display: 'flex',
+          gap: '0.5rem',
+          overflowX: 'auto',
+          padding: '0.25rem 0.25rem 0.75rem 0.25rem',
+          scrollbarWidth: 'none', // Firefox
+          msOverflowStyle: 'none', // IE
+          WebkitOverflowScrolling: 'touch',
+          scrollBehavior: 'smooth'
+        }}
+        className="hide-scrollbar"
+      >
+        <style>
+          {`
+            .hide-scrollbar::-webkit-scrollbar {
+              display: none;
+            }
+          `}
+        </style>
+        
+        {dates.map((date) => {
         const dateStr = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
         const isSelected = dateStr === selectedDate;
         
@@ -74,8 +100,8 @@ const DateSelector = ({ selectedDate, maxValidDate, onSelectDate }) => {
             onClick={() => onSelectDate(dateStr)}
             style={{
               flexShrink: 0,
-              minWidth: '4.8rem',
-              padding: '0.85rem 0.5rem',
+              minWidth: '4.5rem',
+              padding: '0.85rem 0.2rem',
               borderRadius: '0.75rem',
               backgroundColor: isSelected ? '#F7FEE7' : 'white',
               border: isSelected ? '1.5px solid #84CC16' : '1.5px solid #E2E8F0',
@@ -88,18 +114,36 @@ const DateSelector = ({ selectedDate, maxValidDate, onSelectDate }) => {
               transform: isSelected ? 'translateY(-2px)' : 'translateY(0)',
             }}
           >
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: isSelected ? '#65A30D' : '#64748B', marginBottom: '0.2rem' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#65A30D' : '#64748B', marginBottom: '0.2rem' }}>
               {dayOfWeek}
             </span>
-            <span style={{ fontSize: '1.75rem', fontWeight: 800, color: isSelected ? '#4D7C0F' : '#334155', lineHeight: '1.1' }}>
+            <span style={{ fontSize: '1.6rem', fontWeight: 800, color: isSelected ? '#4D7C0F' : '#334155', lineHeight: '1.1' }}>
               {dayOfMonth}
             </span>
-            <span style={{ fontSize: '0.85rem', fontWeight: 500, color: isSelected ? '#65A30D' : '#94A3B8', marginTop: '0.25rem' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 500, color: isSelected ? '#65A30D' : '#94A3B8', marginTop: '0.25rem' }}>
               {month}
             </span>
           </button>
         );
       })}
+      </div>
+
+      <button 
+        onClick={() => handleScroll('right')}
+        style={{
+          flexShrink: 0,
+          width: '32px', height: '32px', borderRadius: '50%',
+          backgroundColor: 'white', border: '1.5px solid #E2E8F0',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          color: '#64748B', transition: 'all 0.2s'
+        }}
+        aria-label="Siguiente"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
     </div>
   );
 };
