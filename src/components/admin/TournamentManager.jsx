@@ -290,6 +290,13 @@ const TournamentManager = () => {
     return [...DAYS.slice(sIdx), ...DAYS.slice(0, eIdx + 1)];
   })();
 
+  const activeHours = (() => {
+    const sIdx = HOURS.indexOf(tConfig.startHour);
+    const eIdx = HOURS.indexOf(tConfig.endHour);
+    if (sIdx <= eIdx) return HOURS.slice(sIdx, eIdx + 1);
+    return HOURS;
+  })();
+
   if (phase === 'config') {
     return (
         <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
@@ -347,7 +354,13 @@ const TournamentManager = () => {
             </div>
           </div>
 
-          <button onClick={() => { setSelectedDay(tConfig.startDay); setPhase('setup'); }} disabled={!tConfig.name.trim()} style={{ width: '100%', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: tConfig.name.trim() ? '#0F172A' : '#94A3B8', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: tConfig.name.trim() ? 'pointer' : 'not-allowed', transition: 'background-color 0.2s' }}>
+          <button onClick={() => { 
+              setSelectedDay(tConfig.startDay); 
+              setSelectedHourStart(tConfig.startHour);
+              setSelectedHourEnd(HOURS[HOURS.indexOf(tConfig.startHour) + 1] || tConfig.endHour);
+              setPhase('setup'); 
+            }} 
+            disabled={!tConfig.name.trim()} style={{ width: '100%', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: tConfig.name.trim() ? '#0F172A' : '#94A3B8', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: tConfig.name.trim() ? 'pointer' : 'not-allowed', transition: 'background-color 0.2s' }}>
             Guardar Configuración y Continuar
           </button>
         </div>
@@ -389,7 +402,7 @@ const TournamentManager = () => {
                   onChange={e => setSelectedHourStart(e.target.value)}
                   style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
                 >
-                  {HOURS.slice(0, HOURS.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
+                  {activeHours.slice(0, activeHours.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
                 </select>
                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748B' }}>a</span>
                 <select 
@@ -397,7 +410,7 @@ const TournamentManager = () => {
                   onChange={e => setSelectedHourEnd(e.target.value)}
                   style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
                 >
-                  {HOURS.slice(HOURS.indexOf(selectedHourStart) + 1).map(h => <option key={h} value={h}>{h}</option>)}
+                  {activeHours.slice(activeHours.indexOf(selectedHourStart) + 1).map(h => <option key={h} value={h}>{h}</option>)}
                 </select>
                 <button 
                   type="button" 
