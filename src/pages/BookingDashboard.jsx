@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import TimeSlotList from '../components/booking/TimeSlotList';
+import DateSelector from '../components/booking/DateSelector';
 import { useAuth } from '../context/AuthContext';
 
 const SCHEDULE_TIMES = [
@@ -275,18 +276,21 @@ const BookingDashboard = () => {
           </div>
 
           <div>
-            <p className="section-label">Selecciona fecha</p>
-            <input
-              type="date"
-              value={selectedDate}
-              min={new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0')}
-              max={maxValidDate}
-              onChange={handleDateChange}
-              style={{ width: '100%', padding: '0.875rem 1rem', borderRadius: '0.75rem', border: '1.5px solid var(--color-border)', backgroundColor: 'white', color: 'var(--color-text-primary)', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer' }}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
+              <p className="section-label" style={{ margin: 0 }}>Selecciona fecha</p>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-accent)', textTransform: 'capitalize' }}>
+                {new Date(selectedDate).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+              </span>
+            </div>
+            <DateSelector 
+              selectedDate={selectedDate} 
+              maxValidDate={maxValidDate} 
+              onSelectDate={(newDate) => {
+                setSelectedDate(newDate);
+                setSelectedSlot(null);
+                if (selectedCourt) loadSlots(selectedCourt, newDate);
+              }} 
             />
-            <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>
-              {formatDate(selectedDate)}
-            </p>
           </div>
         </header>
 
