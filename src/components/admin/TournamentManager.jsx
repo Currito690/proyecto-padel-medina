@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const HOURS = [
@@ -7,21 +7,49 @@ const HOURS = [
 ];
 
 const TournamentManager = () => {
-  const [phase, setPhase] = useState('config'); // 'config', 'setup', 'bracket'
-  const [tConfig, setTConfig] = useState({
+  const loadSavedState = () => {
+    try {
+      const saved = localStorage.getItem('padel_medina_current_tournament');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.warn('Error reading tournament state from localStorage', e);
+    }
+    return null;
+  };
+
+  const savedData = loadSavedState();
+
+  const [phase, setPhase] = useState(savedData?.phase || 'config'); // 'config', 'setup', 'bracket'
+  const [tConfig, setTConfig] = useState(savedData?.tConfig || {
     name: '',
     startDay: 'Viernes', endDay: 'Domingo',
     startHour: '09:00', endHour: '22:00',
     courtsCount: 2
   });
   
-  const [participants, setParticipants] = useState([]);
+  const [participants, setParticipants] = useState(savedData?.participants || []);
   const [newCouple, setNewCouple] = useState('');
   const [newPreferences, setNewPreferences] = useState([]); // Array of { id, label, slots }
-  const [rounds, setRounds] = useState([]);
+  const [rounds, setRounds] = useState(savedData?.rounds || []);
   const [selectedDay, setSelectedDay] = useState(DAYS[0]);
   const [selectedHourStart, setSelectedHourStart] = useState(HOURS[0]);
   const [selectedHourEnd, setSelectedHourEnd] = useState(HOURS[1]);
+
+  useEffect(() => {
+    localStorage.setItem('padel_medina_current_tournament', JSON.stringify({ phase, tConfig, participants, rounds }));
+  }, [phase, tConfig, participants, rounds]);
+
+  const handleResetTournament = () => {
+    if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
+      localStorage.removeItem('padel_medina_current_tournament');
+      setPhase('config');
+      setTConfig({ name: '', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', courtsCount: 2 });
+      setParticipants([]);
+      setRounds([]);
+      setNewCouple('');
+      setNewPreferences([]);
+    }
+  };
 
   const addPreference = () => {
     const startIndex = HOURS.indexOf(selectedHourStart);
