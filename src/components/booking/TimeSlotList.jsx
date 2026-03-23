@@ -51,7 +51,7 @@ const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook }) => {
                 letterSpacing: '-0.02em',
                 textDecoration: isOccupied ? 'line-through' : 'none',
               }}>
-                {slot.time}
+                {slot.time} <span style={{ opacity: 0.85, fontWeight: 500, marginLeft: '0.3rem', color: isOccupied ? '#DC2626' : 'var(--color-accent)' }}>18€</span>
               </span>
               <span style={{
                 fontSize: '0.6rem',

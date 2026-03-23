@@ -52,7 +52,7 @@ const CheckoutForm = ({ clientSecret, onSuccess }) => {
       <PaymentElement />
       {error && <div style={{ color: '#DC2626', fontSize: '0.85rem', fontWeight: 500, padding: '0.8rem', backgroundColor: '#FEF2F2', borderRadius: '0.5rem' }}>{error}</div>}
       <button type="submit" disabled={!stripe || loading} className="btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1rem', background: '#0F172A', color: 'white', border: 'none' }}>
-        {loading ? 'Procesando...' : 'Pagar 14,00 €'}
+        {loading ? 'Procesando...' : 'Pagar 18,00 €'}
       </button>
     </form>
   );
@@ -74,7 +74,7 @@ const PaymentGateway = () => {
       try {
         const { data, error } = await supabase.functions.invoke('create-payment-intent', {
           body: {
-            amount: 1400, // 14.00 EUR
+            amount: 1800, // 18.00 EUR
             currency: 'eur',
             metadata: {
               court_id: courtId,
@@ -173,7 +173,7 @@ const PaymentGateway = () => {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', backgroundColor: 'var(--color-accent-light)', borderRadius: '0.875rem' }}>
               <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-accent-hover)' }}>Total</span>
-              <span style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--color-accent-hover)', letterSpacing: '-1px' }}>14,00 €</span>
+              <span style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--color-accent-hover)', letterSpacing: '-1px' }}>18,00 €</span>
             </div>
           </div>
         </div>
