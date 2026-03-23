@@ -74,15 +74,27 @@ const AdminDashboard = () => {
   const handleAction = async (action) => {
     const { courtId, time } = activeSlot;
     const slot = slots[courtId]?.[time];
+    let actionError = null;
+
     if (action === 'reserve') {
-      await supabase.from('bookings').insert({ court_id: courtId, user_id: user.id, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true });
+      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: user.id, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true });
+      actionError = error;
     } else if (action === 'block') {
-      await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id });
+      const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id });
+      actionError = error;
     } else if (action === 'cancel') {
-      await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', slot.bookingId);
+      const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', slot.bookingId);
+      actionError = error;
     } else if (action === 'unblock') {
-      await supabase.from('blocked_slots').delete().eq('id', slot.blockedId);
+      const { error } = await supabase.from('blocked_slots').delete().eq('id', slot.blockedId);
+      actionError = error;
     }
+
+    if (actionError) {
+      console.error('Action error:', actionError);
+      alert('Error en base de datos: ' + actionError.message + (actionError.details ? ' - ' + actionError.details : ''));
+    }
+
     setActiveSlot(null);
     await loadSlots(selectedDate);
   };
