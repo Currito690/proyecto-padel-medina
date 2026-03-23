@@ -403,6 +403,58 @@ const TournamentManager = () => {
     setConsRounds(newRounds);
   };
 
+  const handleDownloadPDF = async () => {
+    if (!bracketRef.current) return;
+    setIsExporting(true);
+    
+    // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones)
+    setTimeout(async () => {
+      try {
+        const element = bracketRef.current;
+        const originalStyle = element.getAttribute('style');
+        
+        // Forzar expansión para captura completa si hay scroll horizontal
+        element.style.width = 'max-content';
+        element.style.minWidth = '1200px';
+        element.style.padding = '3rem';
+        element.style.backgroundColor = '#FFFFFF';
+
+        const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false });
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        
+        const pdf = new jsPDF({
+            orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+        
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const imgRatio = canvas.width / canvas.height;
+        
+        let finalWidth = pdfWidth;
+        let finalHeight = finalWidth / imgRatio;
+        
+        if (finalHeight > pdfHeight) {
+           finalHeight = pdfHeight;
+           finalWidth = finalHeight * imgRatio;
+        }
+        
+        const x = (pdfWidth - finalWidth) / 2;
+        const y = (pdfHeight - finalHeight) / 2;
+        
+        pdf.addImage(imgData, 'JPEG', x, y, finalWidth, finalHeight);
+        pdf.save(`Cuadro_Torneo_${tConfig.name.replace(/\s+/g, '_')}.pdf`);
+      } catch (err) {
+        console.error("Error generating PDF:", err);
+        alert("Hubo un error al generar el PDF.");
+      } finally {
+        if (bracketRef.current) bracketRef.current.removeAttribute('style');
+        setIsExporting(false);
+      }
+    }, 100);
+  };
+
   const getRoundName = (roundIndex, totalRounds) => {
     const roundsLeft = totalRounds - roundIndex;
     if (roundsLeft === 1) return 'Final';
@@ -629,20 +681,26 @@ const TournamentManager = () => {
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Haz clic en el ganador de cada partido para avanzar ronda.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          {consRounds.length === 0 && (
+          <button onClick={handleDownloadPDF} disabled={isExporting} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#2563EB', color: 'white', fontWeight: 700, cursor: isExporting ? 'wait' : 'pointer', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' }}>
+            {isExporting ? 'Generando...' : '📥 Descargar PDF'}
+          </button>
+          {!isExporting && consRounds.length === 0 && (
             <button onClick={generateConsolation} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(245, 158, 11, 0.2)' }}>
               🏆 Generar Consolación
             </button>
           )}
-          <button 
-            onClick={() => setPhase('setup')}
-            style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
-          >
-            Atrás a Inscripción
-          </button>
+          {!isExporting && (
+            <button 
+              onClick={() => setPhase('setup')}
+              style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+            >
+              Atrás a Inscripción
+            </button>
+          )}
         </div>
       </div>
 
+      <div ref={bracketRef} style={{ padding: '1rem', backgroundColor: '#FAFAF9', borderRadius: '1rem' }}>
       {[
         { title: '🥇 Cuadro Principal', data: rounds, isCons: false },
         { title: '🥈 Cuadro de Consolación', data: consRounds, isCons: true }
@@ -651,8 +709,10 @@ const TournamentManager = () => {
         return (
           <div key={bracket.title} style={{ marginBottom: '3rem', borderTop: bracket.isCons ? '2px dashed #E2E8F0' : 'none', paddingTop: bracket.isCons ? '2rem' : '0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: bracket.isCons ? '#D97706' : '#0F172A' }}>{bracket.title}</h3>
-              {bracket.isCons && (
+              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: bracket.isCons ? '#D97706' : '#0F172A' }}>
+                {isExporting ? `${tConfig.name} - ${bracket.title}` : bracket.title}
+              </h3>
+              {bracket.isCons && !isExporting && (
                  <button onClick={() => setConsRounds([])} style={{ background: 'none', border: 'none', color: '#EF4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Restaurar Consolación</button>
               )}
             </div>
@@ -671,9 +731,11 @@ const TournamentManager = () => {
                           <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             {match.time || 'Horario por definir'}
                           </span>
-                          <button onClick={() => handleEditTime(match, bracket.isCons)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem' }}>
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                          </button>
+                          {!isExporting && (
+                             <button onClick={() => handleEditTime(match, bracket.isCons)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem' }}>
+                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                             </button>
+                          )}
                         </div>
                       )}
                       
@@ -693,9 +755,15 @@ const TournamentManager = () => {
                       
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
                          <div style={{ padding: match.score ? '0.6rem' : '0.4rem', backgroundColor: match.score ? '#1E293B' : '#F1F5F9', borderTop: '1px solid #E2E8F0', textAlign: 'center', transition: 'all 0.2s' }}>
-                            <button onClick={() => handleEditScore(match, bracket.isCons)} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#F8FAFC' : '#64748B', fontSize: match.score ? '1rem' : '0.75rem', fontWeight: 800, letterSpacing: match.score ? '0.1em' : '0.05em' }}>
-                              {match.score ? match.score : '+ Añadir Resultado'}
-                            </button>
+                            {isExporting ? (
+                               <span style={{ color: match.score ? '#F8FAFC' : '#94A3B8', fontSize: match.score ? '1rem' : '0.65rem', fontWeight: 800, letterSpacing: match.score ? '0.1em' : '0.05em', display: 'block', width: '100%', textTransform: 'uppercase' }}>
+                                  {match.score ? match.score : 'Pendiente'}
+                               </span>
+                            ) : (
+                               <button onClick={() => handleEditScore(match, bracket.isCons)} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#F8FAFC' : '#64748B', fontSize: match.score ? '1rem' : '0.75rem', fontWeight: 800, letterSpacing: match.score ? '0.1em' : '0.05em' }}>
+                                 {match.score ? match.score : '+ Añadir Resultado'}
+                               </button>
+                            )}
                          </div>
                       )}
                     </div>
@@ -717,6 +785,7 @@ const TournamentManager = () => {
           </div>
         );
       })}
+      </div>
     </div>
   );
 };
