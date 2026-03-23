@@ -31,13 +31,14 @@ const TournamentManager = () => {
   const [newCouple, setNewCouple] = useState('');
   const [newPreferences, setNewPreferences] = useState([]); // Array of { id, label, slots }
   const [rounds, setRounds] = useState(savedData?.rounds || []);
+  const [consRounds, setConsRounds] = useState(savedData?.consRounds || []);
   const [selectedDay, setSelectedDay] = useState(DAYS[0]);
   const [selectedHourStart, setSelectedHourStart] = useState(HOURS[0]);
   const [selectedHourEnd, setSelectedHourEnd] = useState(HOURS[1]);
 
   useEffect(() => {
-    localStorage.setItem('padel_medina_current_tournament', JSON.stringify({ phase, tConfig, participants, rounds }));
-  }, [phase, tConfig, participants, rounds]);
+    localStorage.setItem('padel_medina_current_tournament', JSON.stringify({ phase, tConfig, participants, rounds, consRounds }));
+  }, [phase, tConfig, participants, rounds, consRounds]);
 
   const handleResetTournament = () => {
     if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
@@ -46,6 +47,7 @@ const TournamentManager = () => {
       setTConfig({ name: '', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', courtsCount: 2 });
       setParticipants([]);
       setRounds([]);
+      setConsRounds([]);
       setNewCouple('');
       setNewPreferences([]);
     }
@@ -255,23 +257,133 @@ const TournamentManager = () => {
     setPhase('bracket');
   };
 
-  const handleEditTime = (match) => {
+  const handleEditTime = (match, isCons = false) => {
     const newTime = prompt("Introduce el horario para este partido (Ej: Sábado 18:00):", match.time || "");
     if (newTime !== null) {
-       const nextRounds = [...rounds];
+       const targetRounds = isCons ? consRounds : rounds;
+       const nextRounds = [...targetRounds];
        nextRounds[match.round] = [...nextRounds[match.round]];
        nextRounds[match.round][match.matchIndex] = { ...nextRounds[match.round][match.matchIndex], time: newTime.trim() };
-       setRounds(nextRounds);
+       if (isCons) setConsRounds(nextRounds); else setRounds(nextRounds);
     }
   };
 
-  const handleSetWinner = (match, participant) => {
+  const handleSetWinner = (match, participant, isCons = false) => {
     if (!participant || participant.isBye) return;
-    
-    // Clonación profunda de estado
-    const nextRounds = rounds.map(r => r.map(m => ({ ...m })));
+    const targetRounds = isCons ? consRounds : rounds;
+    const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
     advanceWinnerMut(nextRounds, match.round, match.matchIndex, participant);
-    setRounds(nextRounds);
+    if (isCons) setConsRounds(nextRounds); else setRounds(nextRounds);
+  };
+
+  const generateConsolation = () => {
+    if (rounds.length < 1) return;
+    
+    // Perdedores puros de R0
+    const losersR0 = rounds[0].map(m => {
+       if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) {
+          return m.winner.id === m.p1.id ? m.p2 : m.p1;
+       }
+       return null;
+    }).filter(Boolean);
+
+    // Perdedores de R1 cuyo oponente (o él) tuvo BYE en R0
+    const losersR1WithBye = (rounds[1] || []).map(m => {
+       if (m.winner && m.p1 && m.p2) {
+          const loser = m.winner.id === m.p1.id ? m.p2 : m.p1;
+          if (loser.isBye) return null;
+          const r0Match = rounds[0].find(r0m => r0m.p1?.id === loser.id || r0m.p2?.id === loser.id);
+          if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) {
+             return loser;
+          }
+       }
+       return null;
+    }).filter(Boolean);
+
+    const consPlayers = [...losersR0, ...losersR1WithBye];
+    if (consPlayers.length < 2) {
+        alert("Faltan jugadores eliminados en sus primeros partidos para formar el cuadro de consolación.");
+        return;
+    }
+
+    let p = [...consPlayers];
+    for (let i = p.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [p[i], p[j]] = [p[j], p[i]];
+    }
+
+    let pow = 2;
+    while (pow < p.length) pow *= 2;
+    const byesCount = pow - p.length;
+    for (let i = 0; i < byesCount; i++) {
+        p.push({ id: `cons-bye-${i}`, name: '---', isBye: true });
+    }
+
+    const numRounds = Math.log2(pow);
+    const newRounds = [];
+
+    const sDayIdx = DAYS.indexOf(tConfig.startDay);
+    const eDayIdx = DAYS.indexOf(tConfig.endDay);
+    const sHourIdx = HOURS.indexOf(tConfig.startHour);
+    const eHourIdx = HOURS.indexOf(tConfig.endHour);
+    let globalSlots = [];
+    for(let d = sDayIdx; d <= eDayIdx; d++) {
+        if(d >= 0 && d < DAYS.length) {
+            for(let h = sHourIdx; h < eHourIdx; h++) {
+               if(h >= 0 && h < HOURS.length) { globalSlots.push(`${DAYS[d]} ${HOURS[h]}`); }
+            }
+        }
+    }
+    
+    let slotUsage = {};
+    globalSlots.forEach(s => slotUsage[s] = 0);
+    
+    for (let r = 0; r < numRounds; r++) {
+      const numMatchesInRound = pow / Math.pow(2, r + 1);
+      const matches = [];
+      for (let m = 0; m < numMatchesInRound; m++) {
+        matches.push({
+          id: `cons-r${r}-m${m}`,
+          round: r,
+          matchIndex: m,
+          p1: r === 0 ? p[m * 2] : null,
+          p2: r === 0 ? p[m * 2 + 1] : null,
+          winner: null,
+          time: null
+        });
+      }
+      newRounds.push(matches);
+    }
+
+    if (newRounds[0]) {
+      newRounds[0].forEach(match => {
+        if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
+           const p1Final = match.p1.finalSlots || [];
+           const p2Final = match.p2.finalSlots || [];
+           let common = p1Final.filter(s => p2Final.includes(s));
+           if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
+           const assignedTime = common.find(s => slotUsage[s] < tConfig.courtsCount);
+           if (assignedTime) {
+               slotUsage[assignedTime]++;
+               match.time = `${assignedTime} - Pista ${slotUsage[assignedTime]}`;
+           } else {
+               match.time = "A convenir";
+           }
+        }
+      });
+    }
+
+    if (newRounds[0]) {
+       newRounds[0].forEach(match => {
+          if (match.p1?.isBye && match.p2 && !match.p2.isBye) {
+             advanceWinnerMut(newRounds, 0, match.matchIndex, match.p2);
+          } else if (match.p2?.isBye && match.p1 && !match.p1.isBye) {
+             advanceWinnerMut(newRounds, 0, match.matchIndex, match.p1);
+          }
+       });
+    }
+
+    setConsRounds(newRounds);
   };
 
   const getRoundName = (roundIndex, totalRounds) => {
@@ -480,121 +592,89 @@ const TournamentManager = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Cuadro: {tConfig.name}</h2>
+          <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Torneo: {tConfig.name}</h2>
           <p style={{ margin: '0.2rem 0', fontSize: '0.85rem', color: '#64748B', fontWeight: 600 }}>{tConfig.startDay} a {tConfig.endDay} ({tConfig.startHour} - {tConfig.endHour})</p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Haz clic en el ganador de cada partido para avanzar ronda.</p>
         </div>
-        <button 
-          onClick={() => setPhase('setup')}
-          style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
-        >
-          Repetir Sorteo
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {consRounds.length === 0 && (
+            <button onClick={generateConsolation} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(245, 158, 11, 0.2)' }}>
+              🏆 Generar Consolación
+            </button>
+          )}
+          <button 
+            onClick={() => setPhase('setup')}
+            style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+          >
+            Atrás a Inscripción
+          </button>
+        </div>
       </div>
 
-      <div style={{ 
-        display: 'flex', 
-        overflowX: 'auto', 
-        gap: '2.5rem', 
-        paddingBottom: '2rem', 
-        minHeight: '600px',
-        alignItems: 'stretch'
-      }}>
-        {rounds.map((roundMatches, rIdx) => (
-          <div key={`round-${rIdx}`} style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            justifyContent: 'space-around', 
-            minWidth: '220px',
-            position: 'relative'
-          }}>
-            <h3 style={{ position: 'absolute', top: '-1.5rem', left: 0, width: '100%', textAlign: 'center', color: '#16A34A', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
-              {getRoundName(rIdx, rounds.length)}
-            </h3>
+      {[
+        { title: '🥇 Cuadro Principal', data: rounds, isCons: false },
+        { title: '🥈 Cuadro de Consolación', data: consRounds, isCons: true }
+      ].map(bracket => {
+        if (bracket.data.length === 0) return null;
+        return (
+          <div key={bracket.title} style={{ marginBottom: '3rem', borderTop: bracket.isCons ? '2px dashed #E2E8F0' : 'none', paddingTop: bracket.isCons ? '2rem' : '0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: bracket.isCons ? '#D97706' : '#0F172A' }}>{bracket.title}</h3>
+              {bracket.isCons && (
+                 <button onClick={() => setConsRounds([])} style={{ background: 'none', border: 'none', color: '#EF4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Restaurar Consolación</button>
+              )}
+            </div>
             
-            {roundMatches.map(match => (
-              <div key={match.id} style={{
-                backgroundColor: 'white',
-                border: '1.5px solid #E2E8F0',
-                borderRadius: '0.75rem',
-                overflow: 'hidden',
-                boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
-                margin: '1rem 0',
-                opacity: match.p1?.isBye && match.p2?.isBye ? 0.3 : 1
-              }}>
-                {/* Header Horario */}
-                {(!match.p1?.isBye && !match.p2?.isBye) && (
-                  <div style={{ backgroundColor: '#F8FAFC', padding: '0.4rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {match.time || 'Horario por definir'}
-                    </span>
-                    <button onClick={() => handleEditTime(match)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem' }} aria-label="Editar horario">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                    </button>
-                  </div>
-                )}
-                {/* Player 1 */}
-                <div 
-                  onClick={() => handleSetWinner(match, match.p1)}
-                  style={{
-                    padding: '0.75rem',
-                    backgroundColor: match.winner?.id === match.p1?.id ? '#DCFCE7' : 'transparent',
-                    borderBottom: '1.5px solid #F1F5F9',
-                    cursor: match.p1?.isBye ? 'default' : 'pointer',
-                    transition: 'background-color 0.2s'
-                  }}
-                >
-                  <span style={{ 
-                    fontSize: '0.85rem', 
-                    fontWeight: match.winner?.id === match.p1?.id ? 800 : 600,
-                    color: match.winner?.id === match.p1?.id ? '#16A34A' : '#334155'
-                  }}>
-                    {match.p1 ? match.p1.name : '\u00A0'}
-                  </span>
+            <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'stretch' }}>
+              {bracket.data.map((roundMatches, rIdx) => (
+                <div key={`round-${rIdx}`} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-around', minWidth: '220px', position: 'relative' }}>
+                  <h4 style={{ position: 'absolute', top: '-1.5rem', left: 0, width: '100%', textAlign: 'center', color: '#16A34A', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+                    {getRoundName(rIdx, bracket.data.length)}
+                  </h4>
+                  
+                  {roundMatches.map(match => (
+                    <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', margin: '1rem 0', opacity: match.p1?.isBye && match.p2?.isBye ? 0.3 : 1 }}>
+                      {(!match.p1?.isBye && !match.p2?.isBye) && (
+                        <div style={{ backgroundColor: '#F8FAFC', padding: '0.4rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            {match.time || 'Horario por definir'}
+                          </span>
+                          <button onClick={() => handleEditTime(match, bracket.isCons)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem' }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                          </button>
+                        </div>
+                      )}
+                      
+                      <div onClick={() => handleSetWinner(match, match.p1, bracket.isCons)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : 'transparent', borderBottom: '1.5px solid #F1F5F9', cursor: match.p1?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s' }}>
+                        <span style={{ fontSize: '0.85rem', fontWeight: match.winner?.id === match.p1?.id ? 800 : 600, color: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155' }}>
+                          {match.p1 ? match.p1.name : '\u00A0'}
+                        </span>
+                      </div>
+                      
+                      <div onClick={() => handleSetWinner(match, match.p2, bracket.isCons)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : '#F8FAFC', cursor: match.p2?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s' }}>
+                        <span style={{ fontSize: '0.85rem', fontWeight: match.winner?.id === match.p2?.id ? 800 : 600, color: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155' }}>
+                          {match.p2 ? match.p2.name : '\u00A0'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                
-                {/* Player 2 */}
-                <div 
-                  onClick={() => handleSetWinner(match, match.p2)}
-                  style={{
-                    padding: '0.75rem',
-                    backgroundColor: match.winner?.id === match.p2?.id ? '#DCFCE7' : '#F8FAFC',
-                    cursor: match.p2?.isBye ? 'default' : 'pointer',
-                    transition: 'background-color 0.2s'
-                  }}
-                >
-                  <span style={{ 
-                    fontSize: '0.85rem', 
-                    fontWeight: match.winner?.id === match.p2?.id ? 800 : 600,
-                    color: match.winner?.id === match.p2?.id ? '#16A34A' : '#334155'
-                  }}>
-                    {match.p2 ? match.p2.name : '\u00A0'}
+              ))}
+
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
+                <h4 style={{ textAlign: 'center', color: bracket.isCons ? '#D97706' : '#F59E0B', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
+                  {bracket.isCons ? 'Campeón Consolación' : 'Campeón Absoluto'}
+                </h4>
+                <div style={{ backgroundColor: '#FEF3C7', border: `2px solid ${bracket.isCons ? '#D97706' : '#F59E0B'}`, borderRadius: '0.75rem', padding: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(245, 158, 11, 0.2)' }}>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#D97706' }}>
+                    {bracket.data[bracket.data.length - 1]?.[0]?.winner?.name || 'TBD'}
                   </span>
                 </div>
               </div>
-            ))}
-          </div>
-        ))}
-
-        {/* Cesta del Ganador Absoluto (Opcional, se dibuja extra) */}
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
-             <h3 style={{ textAlign: 'center', color: '#F59E0B', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
-              Campeón
-            </h3>
-            <div style={{
-                backgroundColor: '#FEF3C7',
-                border: '2px solid #F59E0B',
-                borderRadius: '0.75rem',
-                padding: '1.5rem',
-                textAlign: 'center',
-                boxShadow: '0 10px 15px -3px rgba(245, 158, 11, 0.2)'
-              }}>
-                <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#D97706' }}>
-                  {rounds[rounds.length - 1]?.[0]?.winner?.name || 'TBD'}
-                </span>
             </div>
-        </div>
-      </div>
+          </div>
+        );
+      })}
     </div>
   );
 };
