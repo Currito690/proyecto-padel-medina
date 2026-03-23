@@ -22,21 +22,42 @@ const TournamentManager = () => {
 
   const savedData = loadSavedState();
   const [phase, setPhase] = useState(savedData?.phase || 'config'); 
-  const [tConfig, setTConfig] = useState(savedData?.tConfig || {
-    name: '',
-    categories: 'Masculino, Femenino',
-    startDay: 'Viernes', endDay: 'Domingo',
-    startHour: '09:00', endHour: '22:00',
-    firstDayStartHour: '16:00',
-    courtsCount: 2
+  
+  const [tConfig, setTConfig] = useState(() => {
+    const fallback = {
+      name: '',
+      categories: 'Masculino, Femenino',
+      startDay: 'Viernes', endDay: 'Domingo',
+      startHour: '09:00', endHour: '22:00',
+      firstDayStartHour: '16:00',
+      courtsCount: 2
+    };
+    if (savedData?.tConfig) {
+      return { ...fallback, ...savedData.tConfig, categories: savedData.tConfig.categories || 'Masculino, Femenino' };
+    }
+    return fallback;
   });
   
-  const [participants, setParticipants] = useState(savedData?.participants || []);
+  const [participants, setParticipants] = useState(() => {
+     return (savedData?.participants || []).map(p => ({ ...p, category: p.category || 'General' }));
+  });
   const [newCouple, setNewCouple] = useState('');
   const [newCoupleCategory, setNewCoupleCategory] = useState('');
   const [newPreferences, setNewPreferences] = useState([]); 
-  const [rounds, setRounds] = useState(savedData?.rounds || {});
-  const [consRounds, setConsRounds] = useState(savedData?.consRounds || {});
+  
+  const [rounds, setRounds] = useState(() => {
+     if (savedData?.rounds && Array.isArray(savedData.rounds)) {
+        return { 'General': savedData.rounds };
+     }
+     return savedData?.rounds || {};
+  });
+  
+  const [consRounds, setConsRounds] = useState(() => {
+     if (savedData?.consRounds && Array.isArray(savedData.consRounds)) {
+        return { 'General': savedData.consRounds };
+     }
+     return savedData?.consRounds || {};
+  });
 
   useEffect(() => {
     localStorage.setItem('padel_medina_current_tournament', JSON.stringify({ phase, tConfig, participants, rounds, consRounds }));
