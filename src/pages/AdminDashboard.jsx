@@ -19,6 +19,9 @@ const slotColors = {
 const AdminDashboard = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('schedule');
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
+  const [financialStats, setFinancialStats] = useState({ total: 0, month: 0, today: 0, totalBookings: 0 });
+  const [savingSettings, setSavingSettings] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [courts, setCourts] = useState([]);
   const [slots, setSlots] = useState({});
@@ -73,6 +76,39 @@ const AdminDashboard = () => {
   useEffect(() => {
     async function init() {
       try {
+        // Cargar ajustes globales
+        const { data: settingsData } = await supabase.from('site_settings').select('*').single();
+        if (settingsData) {
+          setSiteSettings({
+            booking_window_days: settingsData.booking_window_days,
+            court_price: parseFloat(settingsData.court_price)
+          });
+        }
+
+        const currentPrice = settingsData ? parseFloat(settingsData.court_price) : 18;
+
+        // Cargar datos financieros (todas las reservas de pago)
+        const now = new Date();
+        const yyyyMm = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        const todayStr = yyyyMm + '-' + String(now.getDate()).padStart(2, '0');
+        
+        const { data: allConfirmed } = await supabase.from('bookings').select('date, is_free').eq('status', 'confirmed');
+        if (allConfirmed) {
+          const paidBookings = allConfirmed.filter(b => !b.is_free);
+          let monthCount = 0;
+          let todayCount = 0;
+          paidBookings.forEach(b => {
+            if (b.date === todayStr) todayCount++;
+            if (b.date.startsWith(yyyyMm)) monthCount++;
+          });
+          setFinancialStats({
+            total: paidBookings.length * currentPrice,
+            month: monthCount * currentPrice,
+            today: todayCount * currentPrice,
+            totalBookings: paidBookings.length
+          });
+        }
+
         const { data } = await supabase.from('courts').select('*').order('name');
         const loaded = data || [];
         courtsRef.current = loaded;
@@ -140,6 +176,22 @@ const AdminDashboard = () => {
   const handleDateChange = (e) => {
     setSelectedDate(e.target.value);
     setActiveSlot(null);
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    const { error } = await supabase.from('site_settings').update({
+      booking_window_days: parseInt(siteSettings.booking_window_days, 10),
+      court_price: parseFloat(siteSettings.court_price)
+    }).eq('id', 1);
+    
+    setSavingSettings(false);
+    if (error) {
+      console.error(error);
+      alert('Error al guardar configuración: ' + error.message);
+    } else {
+      alert('Ajustes guardados correctamente. Los cambios ya son visibles para los clientes.');
+    }
   };
 
   const allBookings = [];
@@ -217,11 +269,13 @@ const AdminDashboard = () => {
           </div>
 
           {/* Tabs */}
-          <div style={{ display: 'flex', backgroundColor: '#F1F5F9', borderRadius: '0.875rem', padding: '0.25rem', marginBottom: '1.5rem', gap: '0.25rem' }}>
+          <div style={{ display: 'flex', backgroundColor: '#F1F5F9', borderRadius: '0.875rem', padding: '0.25rem', marginBottom: '1.5rem', gap: '0.25rem', flexWrap: 'wrap' }}>
             {[
               { key: 'schedule', label: 'Horario' },
               { key: 'bookings', label: `Reservas (${allBookings.length})` },
               { key: 'courts', label: 'Pistas' },
+              { key: 'finance', label: 'Finanzas' },
+              { key: 'settings', label: 'Configuración' },
             ].map(t => (
               <button key={t.key} onClick={() => setActiveTab(t.key)} style={tabStyle(t.key)}>{t.label}</button>
             ))}
@@ -363,6 +417,75 @@ const AdminDashboard = () => {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── TAB: FINANZAS ── */}
+              {activeTab === 'finance' && (
+                <div>
+                  <p className="section-label" style={{ marginBottom: '1.5rem' }}>Resumen Financiero</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+                    <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                      <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ingresos Hoy</p>
+                      <p style={{ margin: 0, fontSize: '2.5rem', fontWeight: 900, color: '#16A34A', letterSpacing: '-0.03em' }}>{financialStats.today.toFixed(2)} €</p>
+                    </div>
+                    <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                      <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ingresos Este Mes</p>
+                      <p style={{ margin: 0, fontSize: '2.5rem', fontWeight: 900, color: '#0EA5E9', letterSpacing: '-0.03em' }}>{financialStats.month.toFixed(2)} €</p>
+                    </div>
+                    <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                      <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ingresos Totales (Histórico)</p>
+                      <p style={{ margin: 0, fontSize: '2.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.03em' }}>{financialStats.total.toFixed(2)} €</p>
+                      <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: '#94A3B8' }}>En {financialStats.totalBookings} reservas de pago</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── TAB: CONFIGURACIÓN ── */}
+              {activeTab === 'settings' && (
+                <div style={{ maxWidth: '600px' }}>
+                  <p className="section-label" style={{ marginBottom: '1.5rem' }}>Ajustes Generales del Club</p>
+                  
+                  <div style={{ backgroundColor: 'white', padding: '1.75rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
+                        Días de antelación permitidos para reservar
+                      </label>
+                      <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
+                        Controla hasta qué día pueden ver y reservar los clientes. Por ejemplo, si pones "2" y hoy es Lunes, solo podrán ver pistas hasta el Miércoles. Si pones "7", verán una semana justa.
+                      </p>
+                      <input 
+                        type="number" 
+                        min="1" max="90"
+                        value={siteSettings.booking_window_days}
+                        onChange={(e) => setSiteSettings({...siteSettings, booking_window_days: e.target.value})}
+                        style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
+                        Precio por reserva de pista (€)
+                      </label>
+                      <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B' }}>El precio que se cobrará a los clientes tanto por tarjeta como en efectivo en el club.</p>
+                      <input 
+                        type="number" 
+                        step="0.5" min="0"
+                        value={siteSettings.court_price}
+                        onChange={(e) => setSiteSettings({...siteSettings, court_price: e.target.value})}
+                        style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
+                      />
+                    </div>
+
+                    <button 
+                      onClick={handleSaveSettings}
+                      disabled={savingSettings}
+                      style={{ marginTop: '0.5rem', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: savingSettings ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
+                    >
+                      {savingSettings ? 'Guardando cambios...' : 'Guardar Ajustes'}
+                    </button>
+                  </div>
                 </div>
               )}
 
