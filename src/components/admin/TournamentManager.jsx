@@ -9,7 +9,6 @@ const HOURS = [
 ];
 
 const TournamentManager = () => {
-  const bracketRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
   const loadSavedState = () => {
     try {
@@ -407,14 +406,14 @@ const TournamentManager = () => {
     setConsRounds(newRounds);
   };
 
-  const handleDownloadPDF = async () => {
-    if (!bracketRef.current) return;
-    setIsExporting(true);
+  const handleDownloadPDF = async (elementId, title) => {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    setIsExporting(elementId);
     
     // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones)
     setTimeout(async () => {
       try {
-        const element = bracketRef.current;
         const originalStyle = element.getAttribute('style');
         
         // Forzar expansión para captura completa si hay scroll horizontal
@@ -448,12 +447,14 @@ const TournamentManager = () => {
         const y = (pdfHeight - finalHeight) / 2;
         
         pdf.addImage(imgData, 'JPEG', x, y, finalWidth, finalHeight);
-        pdf.save(`Cuadro_Torneo_${tConfig.name.replace(/\s+/g, '_')}.pdf`);
+        
+        const safeTitle = title.replace(/[^a-zA-Z0-9]/g, '_');
+        pdf.save(`Cuadro_${tConfig.name.replace(/\s+/g, '_')}_${safeTitle}.pdf`);
       } catch (err) {
         console.error("Error generating PDF:", err);
         alert("Hubo un error al generar el PDF.");
       } finally {
-        if (bracketRef.current) bracketRef.current.removeAttribute('style');
+        element.removeAttribute('style');
         setIsExporting(false);
       }
     }, 100);
@@ -685,10 +686,7 @@ const TournamentManager = () => {
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Haz clic en el ganador de cada partido para avanzar ronda.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={handleDownloadPDF} disabled={isExporting} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#2563EB', color: 'white', fontWeight: 700, cursor: isExporting ? 'wait' : 'pointer', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' }}>
-            {isExporting ? 'Generando...' : '📥 Descargar PDF'}
-          </button>
-          {!isExporting && consRounds.length === 0 && (
+          {consRounds.length === 0 && (
             <button onClick={generateConsolation} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(245, 158, 11, 0.2)' }}>
               🏆 Generar Consolación
             </button>
@@ -704,21 +702,28 @@ const TournamentManager = () => {
         </div>
       </div>
 
-      <div ref={bracketRef} style={{ padding: '1rem', backgroundColor: '#FAFAF9', borderRadius: '1rem' }}>
       {[
-        { title: '🥇 Cuadro Principal', data: rounds, isCons: false },
-        { title: '🥈 Cuadro de Consolación', data: consRounds, isCons: true }
+        { title: '🥇 Cuadro Principal', data: rounds, isCons: false, id: 'export-main-bracket' },
+        { title: '🥈 Cuadro de Consolación', data: consRounds, isCons: true, id: 'export-cons-bracket' }
       ].map(bracket => {
         if (bracket.data.length === 0) return null;
         return (
-          <div key={bracket.title} style={{ marginBottom: '3rem', borderTop: bracket.isCons ? '2px dashed #E2E8F0' : 'none', paddingTop: bracket.isCons ? '2rem' : '0' }}>
+          <div id={bracket.id} key={bracket.title} style={{ padding: '1.5rem', backgroundColor: '#FAFAF9', borderRadius: '1rem', marginBottom: '3rem', borderTop: bracket.isCons ? '2px dashed #E2E8F0' : 'none', marginTop: bracket.isCons ? '2rem' : '0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: bracket.isCons ? '#D97706' : '#0F172A' }}>
-                {isExporting ? `${tConfig.name} - ${bracket.title}` : bracket.title}
+                {isExporting === bracket.id ? `${tConfig.name} - ${bracket.title}` : bracket.title}
               </h3>
-              {bracket.isCons && !isExporting && (
-                 <button onClick={() => setConsRounds([])} style={{ background: 'none', border: 'none', color: '#EF4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Restaurar Consolación</button>
-              )}
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                {!isExporting && (
+                  <button onClick={() => handleDownloadPDF(bracket.id, bracket.title)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Exportar PDF
+                  </button>
+                )}
+                {bracket.isCons && !isExporting && (
+                   <button onClick={() => setConsRounds([])} style={{ background: 'none', border: 'none', color: '#EF4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Restaurar Consolación</button>
+                )}
+              </div>
             </div>
             
             <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'stretch' }}>
@@ -789,7 +794,6 @@ const TournamentManager = () => {
           </div>
         );
       })}
-      </div>
     </div>
   );
 };
