@@ -38,11 +38,12 @@ const BookingDashboard = () => {
   const navigate = useNavigate();
   const [courts, setCourts] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
 
   const getMaxDate = () => {
     const now = new Date();
     const maxDate = new Date(now);
-    maxDate.setDate(now.getDate() + siteSettings.booking_window_days);
+    maxDate.setDate(now.getDate() + (parseInt(siteSettings.booking_window_days, 10) || 7));
     return maxDate.getFullYear() + '-' + String(maxDate.getMonth() + 1).padStart(2, '0') + '-' + String(maxDate.getDate()).padStart(2, '0');
   };
   const maxValidDate = getMaxDate();
@@ -54,7 +55,6 @@ const BookingDashboard = () => {
   const [loadingCourts, setLoadingCourts] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [courtsError, setCourtsError] = useState(null);
-  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
 
   useEffect(() => {
     loadCourts();
@@ -71,8 +71,8 @@ const BookingDashboard = () => {
 
     if (settingsRes.data) {
       setSiteSettings({
-        booking_window_days: settingsRes.data.booking_window_days,
-        court_price: parseFloat(settingsRes.data.court_price)
+        booking_window_days: parseInt(settingsRes.data.booking_window_days, 10) || 7,
+        court_price: parseFloat(settingsRes.data.court_price) || 18.00
       });
     }
 
