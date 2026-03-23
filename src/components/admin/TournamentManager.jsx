@@ -11,7 +11,8 @@ const TournamentManager = () => {
   const [tConfig, setTConfig] = useState({
     name: '',
     startDay: 'Viernes', endDay: 'Domingo',
-    startHour: '09:00', endHour: '22:00'
+    startHour: '09:00', endHour: '22:00',
+    courtsCount: 2
   });
   
   const [participants, setParticipants] = useState([]);
@@ -138,8 +139,10 @@ const TournamentManager = () => {
             }
         }
     }
-    // Copia para ir gastándola al asignar partidos
-    let availableSlots = [...globalSlots]; 
+    
+    // Diccionario para registrar cuántos partidos hay en cada hora
+    let slotUsage = {};
+    globalSlots.forEach(s => slotUsage[s] = 0);
 
     // Expandir disponibilidad de participantes: Si no hay regla para un día, se asume entero libre.
     const expandedParticipants = p.map(part => {
@@ -193,18 +196,17 @@ const TournamentManager = () => {
            // Intersección de ambos disponibilidades finales
            let common = p1Final.filter(s => p2Final.includes(s));
            if (common.length === 0) {
-               // Fallback: si no hay interseccion, no ponemos hora o cogemos de global
-               common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : availableSlots);
+               // Fallback: si no hay interseccion, cogemos todo el pool global
+               common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
            }
 
-           // Buscar el primer slot comun que DE HECHO siga libre en 'availableSlots'
-           const assigned = common.find(s => availableSlots.includes(s));
-           if (assigned) {
-               match.time = assigned;
-               // Quitamos para no solapar
-               availableSlots = availableSlots.filter(s => s !== assigned);
+           // Buscar el primer slot comun que aún tenga pistas libres
+           const assignedTime = common.find(s => slotUsage[s] < tConfig.courtsCount);
+           if (assignedTime) {
+               slotUsage[assignedTime]++;
+               match.time = `${assignedTime} - Pista ${slotUsage[assignedTime]}`;
            } else {
-               match.time = "Sin coincidencia / Revisar";
+               match.time = "Sin coincidencia / Lleno";
            }
         }
       });
@@ -292,6 +294,16 @@ const TournamentManager = () => {
                   {HOURS.slice(HOURS.indexOf(tConfig.startHour) + 1).map(h => <option key={h} value={h}>{h}</option>)}
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Número de Pistas a utilizar</label>
+              <select value={tConfig.courtsCount} onChange={e => setTConfig({...tConfig, courtsCount: parseInt(e.target.value)})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}>
+                <option value={1}>1 Pista (Pista 1 Indoor)</option>
+                <option value={2}>2 Pistas (Indoor 1 y 2)</option>
+                <option value={3}>3 Pistas (Añadir 1 Municipal)</option>
+                <option value={4}>4 Pistas (Todas)</option>
+              </select>
             </div>
           </div>
 
