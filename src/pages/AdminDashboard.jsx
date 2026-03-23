@@ -27,10 +27,18 @@ const AdminDashboard = () => {
   const courtsRef = useRef([]);
 
   const loadSlots = useCallback(async (date) => {
-    const [{ data: bookings }, { data: blocked }] = await Promise.all([
+    const [resBookings, resBlocked] = await Promise.all([
       supabase.from('bookings').select('*, profiles(name)').eq('date', date).eq('status', 'confirmed'),
       supabase.from('blocked_slots').select('*').eq('date', date),
     ]);
+
+    if (resBookings.error) {
+      console.error('Error cargando reservas:', resBookings.error);
+      alert('Error cargando reservas de BD: ' + resBookings.error.message);
+    }
+
+    const bookings = resBookings.data;
+    const blocked = resBlocked.data;
     const newSlots = {};
     courtsRef.current.forEach(court => {
       newSlots[court.id] = {};
@@ -71,7 +79,11 @@ const AdminDashboard = () => {
     if (courtsRef.current.length > 0) loadSlots(selectedDate);
   }, [selectedDate, loadSlots]);
 
+  const [isProcessing, setIsProcessing] = useState(false);
+
   const handleAction = async (action) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
     const { courtId, time } = activeSlot;
     const slot = slots[courtId]?.[time];
     let actionError = null;
@@ -97,6 +109,7 @@ const AdminDashboard = () => {
 
     setActiveSlot(null);
     await loadSlots(selectedDate);
+    setIsProcessing(false);
   };
 
   const cancelBooking = async (bookingId) => {
@@ -279,8 +292,8 @@ const AdminDashboard = () => {
                                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                   {selectedSlotData.status === 'available' && (
                                     <>
-                                      <button onClick={() => handleAction('reserve')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
-                                        ✓ Reservar (gratis)
+                                      <button disabled={isProcessing} onClick={() => handleAction('reserve')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: isProcessing ? '#94A3B8' : '#16A34A', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                        {isProcessing ? 'Procesando...' : '✓ Reservar (gratis)'}
                                       </button>
                                       <button onClick={() => handleAction('block')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
                                         🔒 Bloquear
