@@ -8,11 +8,11 @@ const HOURS = [
   '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'
 ];
 
-const TournamentManager = () => {
+const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [isExporting, setIsExporting] = useState(false);
   const loadSavedState = () => {
     try {
-      const saved = localStorage.getItem('padel_medina_current_tournament');
+      const saved = localStorage.getItem(`padel_medina_tournament_${tournamentKey}`);
       if (saved) return JSON.parse(saved);
     } catch (e) {
       console.warn('Error reading tournament state from localStorage', e);
@@ -64,12 +64,12 @@ const TournamentManager = () => {
   const [selectedHourEnd, setSelectedHourEnd] = useState(HOURS[1]);
 
   useEffect(() => {
-    localStorage.setItem('padel_medina_current_tournament', JSON.stringify({ phase, tConfig, participants, rounds, consRounds }));
-  }, [phase, tConfig, participants, rounds, consRounds]);
+    localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds }));
+  }, [phase, tConfig, participants, rounds, consRounds, tournamentKey]);
 
   const handleResetTournament = () => {
     if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
-      localStorage.removeItem('padel_medina_current_tournament');
+      localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
       setPhase('config');
       setTConfig({ name: '', categories: 'Masculino, Femenino', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2 });
       setParticipants([]);
@@ -515,6 +515,12 @@ const TournamentManager = () => {
 
   if (phase === 'config') {
     return (
+      <div>
+        <div style={{ marginBottom: '1.5rem', maxWidth: '600px', margin: '0 auto 1.5rem' }}>
+           <button onClick={() => onBack(tConfig.name)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', padding: 0 }}>
+              ← Volver al panel de Todos los Torneos
+           </button>
+        </div>
         <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <p className="section-label" style={{ margin: 0 }}>Configuración del Torneo</p>
@@ -598,12 +604,19 @@ const TournamentManager = () => {
             Guardar Configuración y Continuar
           </button>
         </div>
+      </div>
     );
   }
 
   if (phase === 'setup') {
     return (
-      <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+      <div>
+        <div style={{ marginBottom: '1.5rem', maxWidth: '600px', margin: '0 auto 1.5rem' }}>
+           <button onClick={() => onBack(tConfig.name)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', padding: 0 }}>
+              ← Volver al panel de Todos los Torneos
+           </button>
+        </div>
+        <div style={{ maxWidth: '600px', margin: '0 auto' }}>
         <p className="section-label" style={{ marginBottom: '1rem' }}>{tConfig.name ? `Fase 2: Inscripción - ${tConfig.name}` : 'Inscripción de Torneo'}</p>
         <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <form onSubmit={addParticipant} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
@@ -719,12 +732,18 @@ const TournamentManager = () => {
           </button>
         </div>
       </div>
+     </div>
     );
   }
 
   // BRACKET PHASE
   return (
     <div>
+      <div style={{ marginBottom: '1.5rem' }}>
+         <button onClick={() => onBack(tConfig.name)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', padding: 0 }}>
+            ← Volver al panel de Todos los Torneos
+         </button>
+      </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Torneo: {tConfig.name}</h2>
@@ -854,6 +873,100 @@ const TournamentManager = () => {
             </div>
          );
       })}
+    </div>
+  );
+};
+
+const TournamentManager = () => {
+  const [tournaments, setTournaments] = useState(() => {
+    try {
+      const saved = localStorage.getItem('padel_medina_tournaments_list');
+      if (saved) return JSON.parse(saved);
+    } catch (e) { }
+    // Migration: si existe el torneo antiguo unificado, lo metemos en la lista.
+    if (localStorage.getItem('padel_medina_current_tournament')) {
+       const legacyData = JSON.parse(localStorage.getItem('padel_medina_current_tournament'));
+       const legacyId = 'legacy_1';
+       localStorage.setItem(`padel_medina_tournament_${legacyId}`, JSON.stringify(legacyData));
+       localStorage.removeItem('padel_medina_current_tournament');
+       const nName = legacyData.tConfig?.name || 'Torneo Activo';
+       const newList = [{ id: legacyId, name: nName, date: new Date().toISOString() }];
+       localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
+       return newList;
+    }
+    return [];
+  });
+
+  const [activeId, setActiveId] = useState(null);
+
+  const createNewTournament = () => {
+     const newId = Date.now().toString();
+     const newList = [...tournaments, { id: newId, name: 'Nuevo Torneo', date: new Date().toISOString() }];
+     setTournaments(newList);
+     localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
+     setActiveId(newId);
+  };
+
+  const deleteTournament = (id) => {
+     if (window.confirm('¿Estás seguro de que quieres eliminar este torneo permanentemente?')) {
+        const newList = tournaments.filter(t => t.id !== id);
+        setTournaments(newList);
+        localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
+        localStorage.removeItem(`padel_medina_tournament_${id}`);
+     }
+  };
+
+  const updateTournamentName = (id, newName) => {
+     if (!newName) return;
+     const newList = tournaments.map(t => t.id === id ? { ...t, name: newName } : t);
+     setTournaments(newList);
+     localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
+  };
+
+  if (activeId) {
+     return <TournamentEditor tournamentKey={activeId} onBack={(newName) => {
+         if (newName) updateTournamentName(activeId, newName);
+         setActiveId(null);
+     }} />;
+  }
+
+  return (
+    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '1rem' }}>
+       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 900, color: '#0F172A' }}>Mis Torneos</h1>
+            <p style={{ margin: '0.2rem 0 0', color: '#64748B', fontSize: '0.9rem' }}>Gestiona tus competiciones activas y crea nuevas.</p>
+          </div>
+          <button onClick={createNewTournament} style={{ padding: '0.75rem 1.25rem', borderRadius: '0.75rem', backgroundColor: '#16A34A', color: 'white', fontWeight: 700, cursor: 'pointer', border: 'none', boxShadow: '0 4px 6px -1px rgba(22,163,74,0.2)' }}>
+             ➕ Crear Nuevo Torneo
+          </button>
+       </div>
+
+       {tournaments.length === 0 ? (
+          <div style={{ padding: '3rem', textAlign: 'center', backgroundColor: '#F8FAFC', borderRadius: '1rem', border: '1px dashed #CBD5E1' }}>
+             <p style={{ color: '#64748B', fontSize: '1.1rem', fontWeight: 600 }}>No hay torneos creados activos.</p>
+             <p style={{ color: '#94A3B8', fontSize: '0.9rem' }}>Haz clic en el botón superior para empezar uno nuevo.</p>
+          </div>
+       ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
+             {tournaments.map(t => (
+                <div key={t.id} style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                   <div>
+                      <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1E293B' }}>{t.name}</h3>
+                      <span style={{ fontSize: '0.75rem', color: '#94A3B8' }}>Creado: {new Date(t.date).toLocaleDateString()}</span>
+                   </div>
+                   <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
+                      <button onClick={() => setActiveId(t.id)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, border: 'none', cursor: 'pointer', fontSize: '0.85rem' }}>
+                         Abrir / Editar
+                      </button>
+                      <button onClick={() => deleteTournament(t.id)} style={{ padding: '0.6rem', borderRadius: '0.5rem', backgroundColor: '#FEE2E2', color: '#EF4444', fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                      </button>
+                   </div>
+                </div>
+             ))}
+          </div>
+       )}
     </div>
   );
 };
