@@ -677,21 +677,23 @@ const TournamentManager = () => {
                         </div>
                       )}
                       
-                      <div onClick={() => handleSetWinner(match, match.p1, bracket.isCons)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : 'transparent', borderBottom: '1.5px solid #F1F5F9', cursor: match.p1?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s' }}>
+                      <div onClick={() => handleSetWinner(match, match.p1, bracket.isCons)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : 'transparent', borderBottom: '1.5px solid #F1F5F9', cursor: match.p1?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.85rem', fontWeight: match.winner?.id === match.p1?.id ? 800 : 600, color: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155' }}>
                           {match.p1 ? match.p1.name : '\u00A0'}
                         </span>
+                        {match.winner?.id === match.p1?.id && <span style={{ fontSize: '1rem' }}>🏆</span>}
                       </div>
                       
-                      <div onClick={() => handleSetWinner(match, match.p2, bracket.isCons)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : '#F8FAFC', cursor: match.p2?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s' }}>
+                      <div onClick={() => handleSetWinner(match, match.p2, bracket.isCons)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : '#F8FAFC', cursor: match.p2?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.85rem', fontWeight: match.winner?.id === match.p2?.id ? 800 : 600, color: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155' }}>
                           {match.p2 ? match.p2.name : '\u00A0'}
                         </span>
+                        {match.winner?.id === match.p2?.id && <span style={{ fontSize: '1rem' }}>🏆</span>}
                       </div>
                       
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
-                         <div style={{ padding: '0.4rem', backgroundColor: '#F1F5F9', borderTop: '1px solid #E2E8F0', textAlign: 'center' }}>
-                            <button onClick={() => handleEditScore(match, bracket.isCons)} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#0F172A' : '#64748B', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.05em' }}>
+                         <div style={{ padding: match.score ? '0.6rem' : '0.4rem', backgroundColor: match.score ? '#1E293B' : '#F1F5F9', borderTop: '1px solid #E2E8F0', textAlign: 'center', transition: 'all 0.2s' }}>
+                            <button onClick={() => handleEditScore(match, bracket.isCons)} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#F8FAFC' : '#64748B', fontSize: match.score ? '1rem' : '0.75rem', fontWeight: 800, letterSpacing: match.score ? '0.1em' : '0.05em' }}>
                               {match.score ? match.score : '+ Añadir Resultado'}
                             </button>
                          </div>
