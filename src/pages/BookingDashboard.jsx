@@ -262,8 +262,8 @@ const BookingDashboard = () => {
   // ---- Calendar / Time Slots View ----
   return (
     <div className="dashboard-container">
-      <div className="dashboard-layout">
-        <header className="dashboard-sidebar">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', maxWidth: '800px', margin: '0 auto' }}>
+        <header>
           <button
             onClick={() => setView('courts')}
             style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', padding: 0 }}
@@ -300,7 +300,7 @@ const BookingDashboard = () => {
           </div>
         </header>
 
-        <main className="dashboard-main">
+        <main>
           <p className="section-label">Horas disponibles</p>
           {loadingSlots ? (
             <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
