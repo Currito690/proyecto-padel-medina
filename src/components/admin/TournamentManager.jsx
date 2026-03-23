@@ -1,10 +1,24 @@
 import React, { useState } from 'react';
 
+const TIME_BLOCKS = [
+  { id: 'v_tarde', label: 'Viernes Tarde (17:00-22:00)', slots: ["Viernes 17:00", "Viernes 18:00", "Viernes 19:00", "Viernes 20:00", "Viernes 21:00", "Viernes 22:00"] },
+  { id: 's_manana', label: 'Sábado Mañana (09:00-14:00)', slots: ["Sábado 09:00", "Sábado 10:00", "Sábado 11:00", "Sábado 12:00", "Sábado 13:00", "Sábado 14:00"] },
+  { id: 's_tarde', label: 'Sábado Tarde (17:00-22:00)', slots: ["Sábado 17:00", "Sábado 18:00", "Sábado 19:00", "Sábado 20:00", "Sábado 21:00", "Sábado 22:00"] },
+  { id: 'd_manana', label: 'Domingo Mañana (09:00-14:00)', slots: ["Domingo 09:00", "Domingo 10:00", "Domingo 11:00", "Domingo 12:00", "Domingo 13:00", "Domingo 14:00"] }
+];
+
 const TournamentManager = () => {
   const [phase, setPhase] = useState('setup'); // 'setup', 'bracket'
   const [participants, setParticipants] = useState([]);
   const [newCouple, setNewCouple] = useState('');
+  const [newPreferences, setNewPreferences] = useState([]);
   const [rounds, setRounds] = useState([]);
+
+  const togglePreference = (blockId) => {
+    setNewPreferences(prev => 
+      prev.includes(blockId) ? prev.filter(id => id !== blockId) : [...prev, blockId]
+    );
+  };
 
   const addParticipant = (e) => {
     e.preventDefault();
@@ -75,6 +89,9 @@ const TournamentManager = () => {
     const numRounds = Math.log2(pow);
     const newRounds = [];
     
+    // Global pool to avoid duplicate match times in Round 0
+    let availableSlots = TIME_BLOCKS.flatMap(b => b.slots);
+    
     // Generar la estructura de rondas vacía
     for (let r = 0; r < numRounds; r++) {
       const numMatchesInRound = pow / Math.pow(2, r + 1);
@@ -86,10 +103,40 @@ const TournamentManager = () => {
           matchIndex: m,
           p1: r === 0 ? p[m * 2] : null,
           p2: r === 0 ? p[m * 2 + 1] : null,
-          winner: null
+          winner: null,
+          time: null
         });
       }
       newRounds.push(matches);
+    }
+
+    // Calcular horarios de Primera Ronda (R0)
+    if (newRounds[0]) {
+      newRounds[0].forEach(match => {
+        if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
+           const p1Prefs = match.p1.preferences || [];
+           const p2Prefs = match.p2.preferences || [];
+           
+           // Si ambos tienen preferencias, buscamos intersección
+           let common = p1Prefs.filter(s => p2Prefs.includes(s));
+           
+           // Si uno no puso, aceptamos las del otro
+           if (p1Prefs.length === 0 && p2Prefs.length > 0) common = p2Prefs;
+           if (p2Prefs.length === 0 && p1Prefs.length > 0) common = p1Prefs;
+           // Si ninguno puso, usan todas
+           if (p1Prefs.length === 0 && p2Prefs.length === 0) common = availableSlots;
+
+           const assigned = common.find(s => availableSlots.includes(s));
+           if (assigned) {
+               match.time = assigned;
+               // Quitamos para no solapar (asumiendo 1 partido por franja/pista)
+               // Si tienes varias pistas esto se puede afinar, pero así es seguro.
+               availableSlots = availableSlots.filter(s => s !== assigned);
+           } else {
+               match.time = "A convenir / Sin coincidencia";
+           }
+        }
+      });
     }
     
     // Auto-avanzar los que se enfrentan a un BYE en primera ronda
@@ -105,6 +152,16 @@ const TournamentManager = () => {
 
     setRounds(newRounds);
     setPhase('bracket');
+  };
+
+  const handleEditTime = (match) => {
+    const newTime = prompt("Introduce el horario para este partido (Ej: Sábado 18:00):", match.time || "");
+    if (newTime !== null) {
+       const nextRounds = [...rounds];
+       nextRounds[match.round] = [...nextRounds[match.round]];
+       nextRounds[match.round][match.matchIndex] = { ...nextRounds[match.round][match.matchIndex], time: newTime.trim() };
+       setRounds(nextRounds);
+    }
   };
 
   const handleSetWinner = (match, participant) => {
@@ -130,17 +187,40 @@ const TournamentManager = () => {
       <div style={{ maxWidth: '600px', margin: '0 auto' }}>
         <p className="section-label" style={{ marginBottom: '1rem' }}>Inscripción de Torneo</p>
         <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-          <form onSubmit={addParticipant} style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
-            <input 
-              type="text" 
-              placeholder="Ej: Juan y Alberto" 
-              value={newCouple}
-              onChange={(e) => setNewCouple(e.target.value)}
-              style={{ flex: 1, padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem' }}
-            />
-            <button type="submit" style={{ padding: '0.75rem 1.25rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, cursor: 'pointer' }}>
-              Añadir
-            </button>
+          <form onSubmit={addParticipant} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <input 
+                type="text" 
+                placeholder="Nombre de la pareja (Ej: Juan y Alberto)" 
+                value={newCouple}
+                onChange={(e) => setNewCouple(e.target.value)}
+                style={{ flex: 1, padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem' }}
+              />
+              <button type="submit" style={{ padding: '0.75rem 1.25rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, cursor: 'pointer' }}>
+                Añadir
+              </button>
+            </div>
+            
+            <div>
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad (Opcional):</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {TIME_BLOCKS.map(block => (
+                  <button
+                    key={block.id}
+                    type="button"
+                    onClick={() => togglePreference(block.id)}
+                    style={{
+                      padding: '0.4rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
+                      border: newPreferences.includes(block.id) ? '1.5px solid #16A34A' : '1.5px solid #CBD5E1',
+                      backgroundColor: newPreferences.includes(block.id) ? '#F0FDF4' : 'transparent',
+                      color: newPreferences.includes(block.id) ? '#16A34A' : '#64748B'
+                    }}
+                  >
+                    {block.label.split(' ')[0]} {block.label.split(' ')[1]}
+                  </button>
+                ))}
+              </div>
+            </div>
           </form>
 
           <div style={{ marginBottom: '1.5rem', maxHeight: '300px', overflowY: 'auto' }}>
@@ -151,7 +231,14 @@ const TournamentManager = () => {
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {participants.map((p, idx) => (
                   <li key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', padding: '0.75rem', borderRadius: '0.5rem' }}>
-                    <span style={{ fontWeight: 600, color: '#1E293B', fontSize: '0.9rem' }}>{idx + 1}. {p.name}</span>
+                    <div>
+                      <span style={{ fontWeight: 600, color: '#1E293B', fontSize: '0.9rem', display: 'block' }}>{idx + 1}. {p.name}</span>
+                      {p.prefNames?.length > 0 && (
+                        <span style={{ fontSize: '0.7rem', color: '#64748B', display: 'block', marginTop: '0.2rem' }}>
+                          Prefiere: {p.prefNames.join(', ')}
+                        </span>
+                      )}
+                    </div>
                     <button onClick={() => removeParticipant(p.id)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '0.2rem' }}>
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
@@ -218,6 +305,17 @@ const TournamentManager = () => {
                 margin: '1rem 0',
                 opacity: match.p1?.isBye && match.p2?.isBye ? 0.3 : 1
               }}>
+                {/* Header Horario */}
+                {(!match.p1?.isBye && !match.p2?.isBye) && (
+                  <div style={{ backgroundColor: '#F8FAFC', padding: '0.4rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {match.time || 'Horario por definir'}
+                    </span>
+                    <button onClick={() => handleEditTime(match)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem' }} aria-label="Editar horario">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                    </button>
+                  </div>
+                )}
                 {/* Player 1 */}
                 <div 
                   onClick={() => handleSetWinner(match, match.p1)}
