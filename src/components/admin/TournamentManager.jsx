@@ -7,7 +7,13 @@ const HOURS = [
 ];
 
 const TournamentManager = () => {
-  const [phase, setPhase] = useState('setup'); // 'setup', 'bracket'
+  const [phase, setPhase] = useState('config'); // 'config', 'setup', 'bracket'
+  const [tConfig, setTConfig] = useState({
+    name: '',
+    startDay: 'Viernes', endDay: 'Domingo',
+    startHour: '09:00', endHour: '22:00'
+  });
+  
   const [participants, setParticipants] = useState([]);
   const [newCouple, setNewCouple] = useState('');
   const [newPreferences, setNewPreferences] = useState([]); // Array of { id, label, slots }
@@ -29,7 +35,7 @@ const TournamentManager = () => {
     
     setNewPreferences([
       ...newPreferences, 
-      { id: Date.now().toString(), label: `${selectedDay} de ${selectedHourStart} a ${selectedHourEnd}`, slots: rangeSlots }
+      { id: Date.now().toString(), day: selectedDay, label: `${selectedDay} de ${selectedHourStart} a ${selectedHourEnd}`, slots: rangeSlots }
     ]);
   };
 
@@ -40,15 +46,18 @@ const TournamentManager = () => {
   const addParticipant = (e) => {
     e.preventDefault();
     if (!newCouple.trim()) return;
-    const allSelectedSlots = newPreferences.flatMap(p => p.slots);
 
+    // We store the manual preferences objects exactly as they are.
+    // We will compute their 'finalAvailability' at bracket generation time, 
+    // because that's when we know the global tournament slots.
     setParticipants([...participants, { 
       id: Date.now().toString(), 
       name: newCouple.trim(),
-      preferences: allSelectedSlots,
+      prefRules: [...newPreferences],
       prefNames: newPreferences.map(p => p.label)
     }]);
     setNewCouple('');
+    setNewPreferences([]);
   };
 
   const removeParticipant = (id) => {
@@ -113,8 +122,48 @@ const TournamentManager = () => {
     const numRounds = Math.log2(pow);
     const newRounds = [];
     
-    // Global pool to avoid duplicate match times in Round 0
-    let availableSlots = DAYS.flatMap(d => HOURS.map(h => `${d} ${h}`));
+    // 1) Generar los slots globales del torneo en base a la configuración
+    const sDayIdx = DAYS.indexOf(tConfig.startDay);
+    const eDayIdx = DAYS.indexOf(tConfig.endDay);
+    const sHourIdx = HOURS.indexOf(tConfig.startHour);
+    const eHourIdx = HOURS.indexOf(tConfig.endHour);
+    
+    let globalSlots = [];
+    for(let d = sDayIdx; d <= eDayIdx; d++) {
+        if(d >= 0 && d < DAYS.length) {
+            for(let h = sHourIdx; h < eHourIdx; h++) {
+               if(h >= 0 && h < HOURS.length) {
+                   globalSlots.push(`${DAYS[d]} ${HOURS[h]}`);
+               }
+            }
+        }
+    }
+    // Copia para ir gastándola al asignar partidos
+    let availableSlots = [...globalSlots]; 
+
+    // Expandir disponibilidad de participantes: Si no hay regla para un día, se asume entero libre.
+    const expandedParticipants = p.map(part => {
+       if (part.isBye) return part;
+       const prefDays = [...new Set(part.prefRules?.map(rule => rule.day) || [])];
+       let finalSlots = [];
+       globalSlots.forEach(gs => {
+           const [dayStr] = gs.split(" ");
+           if (prefDays.includes(dayStr)) {
+               // Tiene restriccion para este dia
+               const isAllowed = part.prefRules.some(rule => rule.slots.includes(gs));
+               if (isAllowed) finalSlots.push(gs);
+           } else {
+               // No tiene restricciones este día, asumimos que puede
+               finalSlots.push(gs);
+           }
+       });
+       return { ...part, finalSlots };
+    });
+
+    // Replace in pairs array 'p' with expanded info
+    for(let i=0; i<p.length; i++) {
+       if(!p[i].isBye) p[i] = expandedParticipants.find(exp => exp.id === p[i].id) || p[i];
+    }
     
     // Generar la estructura de rondas vacía
     for (let r = 0; r < numRounds; r++) {
@@ -134,30 +183,28 @@ const TournamentManager = () => {
       newRounds.push(matches);
     }
 
-    // Calcular horarios de Primera Ronda (R0)
+    // Calcular horarios de Primera Ronda (R0) usando finalSlots
     if (newRounds[0]) {
       newRounds[0].forEach(match => {
         if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
-           const p1Prefs = match.p1.preferences || [];
-           const p2Prefs = match.p2.preferences || [];
+           const p1Final = match.p1.finalSlots || [];
+           const p2Final = match.p2.finalSlots || [];
            
-           // Si ambos tienen preferencias, buscamos intersección
-           let common = p1Prefs.filter(s => p2Prefs.includes(s));
-           
-           // Si uno no puso, aceptamos las del otro
-           if (p1Prefs.length === 0 && p2Prefs.length > 0) common = p2Prefs;
-           if (p2Prefs.length === 0 && p1Prefs.length > 0) common = p1Prefs;
-           // Si ninguno puso, usan todas
-           if (p1Prefs.length === 0 && p2Prefs.length === 0) common = availableSlots;
+           // Intersección de ambos disponibilidades finales
+           let common = p1Final.filter(s => p2Final.includes(s));
+           if (common.length === 0) {
+               // Fallback: si no hay interseccion, no ponemos hora o cogemos de global
+               common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : availableSlots);
+           }
 
+           // Buscar el primer slot comun que DE HECHO siga libre en 'availableSlots'
            const assigned = common.find(s => availableSlots.includes(s));
            if (assigned) {
                match.time = assigned;
-               // Quitamos para no solapar (asumiendo 1 partido por franja/pista)
-               // Si tienes varias pistas esto se puede afinar, pero así es seguro.
+               // Quitamos para no solapar
                availableSlots = availableSlots.filter(s => s !== assigned);
            } else {
-               match.time = "A convenir / Sin coincidencia";
+               match.time = "Sin coincidencia / Revisar";
            }
         }
       });
