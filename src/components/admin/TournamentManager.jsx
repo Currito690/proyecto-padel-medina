@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 
-const TIME_BLOCKS = [
-  { id: 'v_tarde', label: 'Viernes Tarde (17:00-22:00)', slots: ["Viernes 17:00", "Viernes 18:00", "Viernes 19:00", "Viernes 20:00", "Viernes 21:00", "Viernes 22:00"] },
-  { id: 's_manana', label: 'Sábado Mañana (09:00-14:00)', slots: ["Sábado 09:00", "Sábado 10:00", "Sábado 11:00", "Sábado 12:00", "Sábado 13:00", "Sábado 14:00"] },
-  { id: 's_tarde', label: 'Sábado Tarde (17:00-22:00)', slots: ["Sábado 17:00", "Sábado 18:00", "Sábado 19:00", "Sábado 20:00", "Sábado 21:00", "Sábado 22:00"] },
-  { id: 'd_manana', label: 'Domingo Mañana (09:00-14:00)', slots: ["Domingo 09:00", "Domingo 10:00", "Domingo 11:00", "Domingo 12:00", "Domingo 13:00", "Domingo 14:00"] }
+const TOURNAMENT_DAYS = [
+  { name: 'Viernes', slots: ['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'] },
+  { name: 'Sábado', slots: ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'] },
+  { name: 'Domingo', slots: ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00'] }
 ];
 
 const TournamentManager = () => {
@@ -14,16 +13,21 @@ const TournamentManager = () => {
   const [newPreferences, setNewPreferences] = useState([]);
   const [rounds, setRounds] = useState([]);
 
-  const togglePreference = (blockId) => {
+  const togglePreference = (slotString) => {
     setNewPreferences(prev => 
-      prev.includes(blockId) ? prev.filter(id => id !== blockId) : [...prev, blockId]
+      prev.includes(slotString) ? prev.filter(id => id !== slotString) : [...prev, slotString]
     );
   };
 
   const addParticipant = (e) => {
     e.preventDefault();
     if (!newCouple.trim()) return;
-    setParticipants([...participants, { id: Date.now().toString(), name: newCouple.trim() }]);
+    setParticipants([...participants, { 
+      id: Date.now().toString(), 
+      name: newCouple.trim(),
+      preferences: newPreferences,
+      prefNames: [] // We don't display it inline easily if there are many, we keep it simple
+    }]);
     setNewCouple('');
   };
 
@@ -90,7 +94,7 @@ const TournamentManager = () => {
     const newRounds = [];
     
     // Global pool to avoid duplicate match times in Round 0
-    let availableSlots = TIME_BLOCKS.flatMap(b => b.slots);
+    let availableSlots = TOURNAMENT_DAYS.flatMap(d => d.slots.map(s => `${d.name} ${s}`));
     
     // Generar la estructura de rondas vacía
     for (let r = 0; r < numRounds; r++) {
@@ -202,22 +206,32 @@ const TournamentManager = () => {
             </div>
             
             <div>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad (Opcional):</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                {TIME_BLOCKS.map(block => (
-                  <button
-                    key={block.id}
-                    type="button"
-                    onClick={() => togglePreference(block.id)}
-                    style={{
-                      padding: '0.4rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-                      border: newPreferences.includes(block.id) ? '1.5px solid #16A34A' : '1.5px solid #CBD5E1',
-                      backgroundColor: newPreferences.includes(block.id) ? '#F0FDF4' : 'transparent',
-                      color: newPreferences.includes(block.id) ? '#16A34A' : '#64748B'
-                    }}
-                  >
-                    {block.label.split(' ')[0]} {block.label.split(' ')[1]}
-                  </button>
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad específica (selecciona las horas a las que pueden jugar):</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {TOURNAMENT_DAYS.map(day => (
+                  <div key={day.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1E293B', width: '60px' }}>{day.name}:</span>
+                    {day.slots.map(slot => {
+                      const slotString = `${day.name} ${slot}`;
+                      const isSelected = newPreferences.includes(slotString);
+                      return (
+                        <button
+                          key={slotString}
+                          type="button"
+                          onClick={() => togglePreference(slotString)}
+                          style={{
+                            padding: '0.25rem 0.5rem', borderRadius: '0.5rem', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                            border: isSelected ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
+                            backgroundColor: isSelected ? '#F0FDF4' : 'transparent',
+                            color: isSelected ? '#16A34A' : '#64748B',
+                            minWidth: '45px'
+                          }}
+                        >
+                          {slot}
+                        </button>
+                      );
+                    })}
+                  </div>
                 ))}
               </div>
             </div>
