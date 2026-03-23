@@ -751,6 +751,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   }
 
   // BRACKET PHASE
+  if (Object.keys(rounds).length === 0) {
+    return (
+      <div>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <button onClick={() => onBack(tConfig.name)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', padding: 0 }}>
+            ← Volver al panel de Todos los Torneos
+          </button>
+        </div>
+        <div style={{ padding: '3rem', textAlign: 'center', backgroundColor: '#F8FAFC', borderRadius: '1rem', border: '1px dashed #CBD5E1', maxWidth: '600px', margin: '0 auto' }}>
+          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: '#475569', marginBottom: '0.5rem' }}>⚠️ El cuadro está vacío</p>
+          <p style={{ color: '#94A3B8', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Puede que las categorías del torneo no coincidan con las de las parejas inscritas. Vuelve a inscripción, comprueba que cada pareja tenga una categoría correcta y vuelve a sortear.</p>
+          <button onClick={() => setPhase('setup')} style={{ padding: '0.75rem 1.5rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#0F172A', color: 'white', fontWeight: 700, cursor: 'pointer' }}>
+            ← Volver a Inscripción y Re-sortear
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div style={{ marginBottom: '1.5rem' }}>
