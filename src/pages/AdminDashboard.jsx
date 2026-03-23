@@ -28,7 +28,7 @@ const AdminDashboard = () => {
 
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked] = await Promise.all([
-      supabase.from('bookings').select('*, profiles(name)').eq('date', date).eq('status', 'confirmed'),
+      supabase.from('bookings').select('*').eq('date', date).eq('status', 'confirmed'),
       supabase.from('blocked_slots').select('*').eq('date', date),
     ]);
 
@@ -37,8 +37,19 @@ const AdminDashboard = () => {
       alert('Error cargando reservas de BD: ' + resBookings.error.message);
     }
 
-    const bookings = resBookings.data;
-    const blocked = resBlocked.data;
+    let bookings = resBookings.data || [];
+    const blocked = resBlocked.data || [];
+
+    if (bookings.length > 0) {
+      const userIds = [...new Set(bookings.map(b => b.user_id))];
+      const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', userIds);
+      if (profiles) {
+        const profileMap = {};
+        profiles.forEach(p => profileMap[p.id] = p.name);
+        bookings = bookings.map(b => ({ ...b, profiles: { name: profileMap[b.user_id] } }));
+      }
+    }
+
     const newSlots = {};
     courtsRef.current.forEach(court => {
       newSlots[court.id] = {};
