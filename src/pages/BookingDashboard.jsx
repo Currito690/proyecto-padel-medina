@@ -37,6 +37,20 @@ const BookingDashboard = () => {
   const navigate = useNavigate();
   const [courts, setCourts] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const getMaxDate = () => {
+    const now = new Date();
+    const currentDay = now.getDay() || 7;
+    let daysUntilSunday = 7 - currentDay;
+    if (currentDay === 7 && now.getHours() >= 12) {
+      daysUntilSunday += 7;
+    }
+    const maxDate = new Date(now);
+    maxDate.setDate(now.getDate() + daysUntilSunday);
+    return maxDate.getFullYear() + '-' + String(maxDate.getMonth() + 1).padStart(2, '0') + '-' + String(maxDate.getDate()).padStart(2, '0');
+  };
+  const maxValidDate = getMaxDate();
+
   const [selectedCourt, setSelectedCourt] = useState(null);
   const [slots, setSlots] = useState([]);
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -266,6 +280,7 @@ const BookingDashboard = () => {
               type="date"
               value={selectedDate}
               min={new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0')}
+              max={maxValidDate}
               onChange={handleDateChange}
               style={{ width: '100%', padding: '0.875rem 1rem', borderRadius: '0.75rem', border: '1.5px solid var(--color-border)', backgroundColor: 'white', color: 'var(--color-text-primary)', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer' }}
             />
