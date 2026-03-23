@@ -71,11 +71,35 @@ const BookingDashboard = () => {
     ]);
     const bookedTimes = new Set(bookings?.map(b => b.time_slot) || []);
     const blockedTimes = new Set(blocked?.map(b => b.time_slot) || []);
-    const newSlots = SCHEDULE_TIMES.map((time, idx) => ({
-      id: `slot-${idx}`,
-      time,
-      status: bookedTimes.has(time) || blockedTimes.has(time) ? 'occupied' : 'available',
-    }));
+
+    const now = new Date();
+    const todayDateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    const isTodayOrPast = date <= todayDateStr;
+    const currentHours = now.getHours();
+    const currentMinutes = now.getMinutes();
+
+    const newSlots = SCHEDULE_TIMES.map((time, idx) => {
+      let isPast = false;
+      if (isTodayOrPast) {
+        if (date < todayDateStr) {
+          isPast = true;
+        } else {
+          const startStr = time.split(' - ')[0]; // "09:00"
+          const [hoursStr, minutesStr] = startStr.split(':');
+          if (currentHours > parseInt(hoursStr, 10) || (currentHours === parseInt(hoursStr, 10) && currentMinutes > parseInt(minutesStr, 10))) {
+            isPast = true;
+          }
+        }
+      }
+      
+      const isBooked = bookedTimes.has(time) || blockedTimes.has(time);
+
+      return {
+        id: `slot-${idx}`,
+        time,
+        status: isBooked || isPast ? 'occupied' : 'available',
+      };
+    });
     setSlots(newSlots);
     setLoadingSlots(false);
   };
@@ -241,6 +265,7 @@ const BookingDashboard = () => {
             <input
               type="date"
               value={selectedDate}
+              min={new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0')}
               onChange={handleDateChange}
               style={{ width: '100%', padding: '0.875rem 1rem', borderRadius: '0.75rem', border: '1.5px solid var(--color-border)', backgroundColor: 'white', color: 'var(--color-text-primary)', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer' }}
             />
