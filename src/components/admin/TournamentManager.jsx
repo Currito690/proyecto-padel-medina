@@ -59,6 +59,10 @@ const TournamentManager = () => {
      return savedData?.consRounds || {};
   });
 
+  const [selectedDay, setSelectedDay] = useState(DAYS[0]);
+  const [selectedHourStart, setSelectedHourStart] = useState(HOURS[0]);
+  const [selectedHourEnd, setSelectedHourEnd] = useState(HOURS[1]);
+
   useEffect(() => {
     localStorage.setItem('padel_medina_current_tournament', JSON.stringify({ phase, tConfig, participants, rounds, consRounds }));
   }, [phase, tConfig, participants, rounds, consRounds]);
