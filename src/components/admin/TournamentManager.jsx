@@ -159,14 +159,14 @@ const TournamentManager = () => {
     const eDayIdx = DAYS.indexOf(tConfig.endDay);
     const sHourIdx = HOURS.indexOf(tConfig.startHour);
     const eHourIdx = HOURS.indexOf(tConfig.endHour);
+    const firstDayHourIdx = tConfig.firstDayStartHour ? HOURS.indexOf(tConfig.firstDayStartHour) : sHourIdx;
     
     let globalSlots = [];
     for(let d = sDayIdx; d <= eDayIdx; d++) {
         if(d >= 0 && d < DAYS.length) {
-            for(let h = sHourIdx; h < eHourIdx; h++) {
-               if(h >= 0 && h < HOURS.length) {
-                   globalSlots.push(`${DAYS[d]} ${HOURS[h]}`);
-               }
+            const actualStartHourIdx = (d === sDayIdx) ? firstDayHourIdx : sHourIdx;
+            for(let h = actualStartHourIdx; h < eHourIdx; h++) {
+               if(h >= 0 && h < HOURS.length) { globalSlots.push(`${DAYS[d]} ${HOURS[h]}`); }
             }
         }
     }
