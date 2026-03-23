@@ -286,7 +286,12 @@ const TournamentManager = () => {
   if (phase === 'config') {
     return (
         <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-          <p className="section-label" style={{ marginBottom: '1.5rem' }}>Configuración del Torneo</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <p className="section-label" style={{ margin: 0 }}>Configuración del Torneo</p>
+            {(participants.length > 0 || rounds.length > 0) && (
+               <button onClick={handleResetTournament} style={{ padding: '0.4rem 0.8rem', borderRadius: '0.5rem', backgroundColor: '#FEE2E2', color: '#EF4444', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>Borrar Torneo Viejo</button>
+            )}
+          </div>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
             <div>
