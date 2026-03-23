@@ -24,9 +24,24 @@ const MyBookings = () => {
     setLoading(false);
   };
 
-  const cancelBooking = async (bookingId) => {
-    await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', bookingId);
-    setBookings(prev => prev.filter(b => b.id !== bookingId));
+  const isCancelable = (dateStr, timeStr) => {
+    if (!dateStr || !timeStr) return true;
+    const startTime = timeStr.split(' - ')[0]; // e.g., '16:00'
+    const bookingDateTime = new Date(`${dateStr}T${startTime}:00`);
+    const now = new Date();
+    const diffHours = (bookingDateTime - now) / (1000 * 60 * 60);
+    return diffHours >= 24;
+  };
+
+  const cancelBooking = async (booking) => {
+    if (!isCancelable(booking.date, booking.time_slot)) {
+      alert('Las reservas no se pueden cancelar con menos de 24 horas de antelación. En caso de emergencia, contacta con el administrador.');
+      return;
+    }
+    if (!window.confirm('¿Estás seguro de que deseas cancelar esta reserva?')) return;
+
+    await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', booking.id);
+    setBookings(prev => prev.filter(b => b.id !== booking.id));
   };
 
   const today = new Date().toISOString().split('T')[0];
@@ -111,14 +126,25 @@ const MyBookings = () => {
                           </svg>
                           {booking.is_free ? 'Reserva admin (gratis)' : 'Confirmada'}
                         </div>
-                        <button
-                          onClick={() => cancelBooking(booking.id)}
-                          style={{ backgroundColor: 'transparent', color: 'var(--color-danger)', border: '1.5px solid #FECACA', padding: '0.4rem 0.875rem', borderRadius: '0.5rem', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}
-                          onMouseOver={(e) => { e.currentTarget.style.backgroundColor = '#FEF2F2'; }}
-                          onMouseOut={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                        >
-                          Cancelar
-                        </button>
+                        {isCancelable(booking.date, booking.time_slot) ? (
+                          <button
+                            onClick={() => cancelBooking(booking)}
+                            style={{ backgroundColor: 'transparent', color: 'var(--color-danger)', border: '1.5px solid #FECACA', padding: '0.4rem 0.875rem', borderRadius: '0.5rem', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}
+                            onMouseOver={(e) => { e.currentTarget.style.backgroundColor = '#FEF2F2'; }}
+                            onMouseOut={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                          >
+                            Cancelar
+                          </button>
+                        ) : (
+                          <div style={{ textAlign: 'right' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#94A3B8', fontWeight: 700, display: 'block', lineHeight: 1.2 }}>
+                              No cancelable
+                            </span>
+                            <span style={{ fontSize: '0.65rem', color: '#CBD5E1', display: 'block', lineHeight: 1.2, fontWeight: 500 }}>
+                              (&lt; 24h)
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
