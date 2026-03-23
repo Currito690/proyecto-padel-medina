@@ -407,7 +407,9 @@ const TournamentManager = () => {
   })();
 
   const activeHours = (() => {
-    const sIdx = HOURS.indexOf(tConfig.startHour);
+    const isFirstDay = selectedDay === tConfig.startDay;
+    const startHourStr = isFirstDay && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : tConfig.startHour;
+    const sIdx = HOURS.indexOf(startHourStr);
     const eIdx = HOURS.indexOf(tConfig.endHour);
     if (sIdx <= eIdx) return HOURS.slice(sIdx, eIdx + 1);
     return HOURS;
@@ -483,9 +485,10 @@ const TournamentManager = () => {
           </div>
 
           <button onClick={() => { 
+              const initialStart = tConfig.firstDayStartHour || tConfig.startHour;
               setSelectedDay(tConfig.startDay); 
-              setSelectedHourStart(tConfig.startHour);
-              setSelectedHourEnd(HOURS[HOURS.indexOf(tConfig.startHour) + 1] || tConfig.endHour);
+              setSelectedHourStart(initialStart);
+              setSelectedHourEnd(HOURS[HOURS.indexOf(initialStart) + 1] || tConfig.endHour);
               setPhase('setup'); 
             }} 
             disabled={!tConfig.name.trim()} style={{ width: '100%', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: tConfig.name.trim() ? '#0F172A' : '#94A3B8', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: tConfig.name.trim() ? 'pointer' : 'not-allowed', transition: 'background-color 0.2s' }}>
