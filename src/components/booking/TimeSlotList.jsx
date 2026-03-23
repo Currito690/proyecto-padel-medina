@@ -1,4 +1,4 @@
-const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook }) => {
+const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook, price = 18 }) => {
   return (
     <div>
       <div className="time-slot-grid">
@@ -51,7 +51,7 @@ const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook }) => {
                 letterSpacing: '-0.02em',
                 textDecoration: isOccupied ? 'line-through' : 'none',
               }}>
-                {slot.time} <span style={{ opacity: 0.85, fontWeight: 500, marginLeft: '0.3rem', color: isOccupied ? '#DC2626' : 'var(--color-accent)' }}>18€</span>
+                {slot.time} <span style={{ opacity: 0.85, fontWeight: 500, marginLeft: '0.3rem', color: isOccupied ? '#DC2626' : 'var(--color-accent)' }}>{price}€</span>
               </span>
               <span style={{
                 fontSize: '0.6rem',

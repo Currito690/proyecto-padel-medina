@@ -66,7 +66,7 @@ const PaymentGateway = () => {
   const [creatingIntent, setCreatingIntent] = useState(true);
 
   const booking = location.state || {};
-  const { courtId, courtName, sport, gradient, date, timeSlot } = booking;
+  const { courtId, courtName, sport, gradient, date, timeSlot, price = 18 } = booking;
   const [paymentMethod, setPaymentMethod] = useState('stripe');
   const [processingClub, setProcessingClub] = useState(false);
 
@@ -76,7 +76,7 @@ const PaymentGateway = () => {
       try {
         const { data, error } = await supabase.functions.invoke('create-payment-intent', {
           body: {
-            amount: 1800, // 18.00 EUR
+            amount: Math.round(price * 100), // convert to cents
             currency: 'eur',
             metadata: {
               court_id: courtId,
@@ -190,7 +190,7 @@ const PaymentGateway = () => {
                     </div>
                     <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', color: '#0F172A', fontWeight: 800 }}>Pago en Recepción</h3>
                     <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B', lineHeight: '1.5' }}>
-                      Tu pista quedará reservada inmediatamente y abonarás los 18,00 € en el mostrador del club el día del partido.
+                      Tu pista quedará reservada inmediatamente y abonarás los {price.toFixed(2).replace('.', ',')} € en el mostrador del club el día del partido.
                     </p>
                   </div>
                   <button 
@@ -199,7 +199,7 @@ const PaymentGateway = () => {
                     className="btn-primary" 
                     style={{ width: '100%', padding: '1rem', fontSize: '1rem', background: '#16A34A', color: 'white', border: 'none' }}
                   >
-                    {processingClub ? 'Confirmando...' : 'Confirmar Reserva (18,00 €)'}
+                    {processingClub ? 'Confirmando...' : `Confirmar Reserva (${price.toFixed(2).replace('.', ',')} €)`}
                   </button>
                 </div>
               )}
@@ -234,7 +234,7 @@ const PaymentGateway = () => {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', backgroundColor: 'var(--color-accent-light)', borderRadius: '0.875rem' }}>
               <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-accent-hover)' }}>Total</span>
-              <span style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--color-accent-hover)', letterSpacing: '-1px' }}>18,00 €</span>
+              <span style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--color-accent-hover)', letterSpacing: '-1px' }}>{price.toFixed(2).replace('.', ',')} €</span>
             </div>
           </div>
         </div>

@@ -41,13 +41,8 @@ const BookingDashboard = () => {
 
   const getMaxDate = () => {
     const now = new Date();
-    const currentDay = now.getDay() || 7;
-    let daysUntilSunday = 7 - currentDay;
-    if (currentDay === 7 && now.getHours() >= 12) {
-      daysUntilSunday += 7;
-    }
     const maxDate = new Date(now);
-    maxDate.setDate(now.getDate() + daysUntilSunday);
+    maxDate.setDate(now.getDate() + siteSettings.booking_window_days);
     return maxDate.getFullYear() + '-' + String(maxDate.getMonth() + 1).padStart(2, '0') + '-' + String(maxDate.getDate()).padStart(2, '0');
   };
   const maxValidDate = getMaxDate();
@@ -59,6 +54,7 @@ const BookingDashboard = () => {
   const [loadingCourts, setLoadingCourts] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [courtsError, setCourtsError] = useState(null);
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
 
   useEffect(() => {
     loadCourts();
@@ -67,14 +63,23 @@ const BookingDashboard = () => {
   const loadCourts = async () => {
     setLoadingCourts(true);
     setCourtsError(null);
-    const { data, error } = await supabase
-      .from('courts')
-      .select('*')
-      .eq('active', true)
-      .order('name');
-    if (error) setCourtsError(error.message);
-    else if (!data || data.length === 0) setCourtsError('No hay pistas activas en la base de datos.');
-    else setCourts(data);
+
+    const [settingsRes, courtsRes] = await Promise.all([
+      supabase.from('site_settings').select('*').single(),
+      supabase.from('courts').select('*').eq('active', true).order('name')
+    ]);
+
+    if (settingsRes.data) {
+      setSiteSettings({
+        booking_window_days: settingsRes.data.booking_window_days,
+        court_price: parseFloat(settingsRes.data.court_price)
+      });
+    }
+
+    if (courtsRes.error) setCourtsError(courtsRes.error.message);
+    else if (!courtsRes.data || courtsRes.data.length === 0) setCourtsError('No hay pistas activas en la base de datos.');
+    else setCourts(courtsRes.data);
+    
     setLoadingCourts(false);
   };
 
@@ -143,6 +148,7 @@ const BookingDashboard = () => {
         gradient: court.gradient,
         date: selectedDate,
         timeSlot: slot.time,
+        price: siteSettings.court_price
       },
     });
   };
@@ -306,6 +312,7 @@ const BookingDashboard = () => {
               selectedSlot={selectedSlot}
               onSelectSlot={setSelectedSlot}
               onBook={handleBook}
+              price={siteSettings.court_price}
             />
           )}
         </main>
