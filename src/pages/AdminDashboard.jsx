@@ -352,14 +352,11 @@ const AdminDashboard = () => {
         {/* Sidebar */}
         <aside className={`admin-sidebar ${isSidebarOpen ? 'open' : ''}`}>
           <div style={{ padding: '1.5rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ width: '40px', height: '40px', borderRadius: '0.75rem', background: 'linear-gradient(135deg, #16A34A, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
-                <rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />
-              </svg>
+            <div style={{ width: '48px', height: '48px', borderRadius: '0.75rem', background: 'white', border: '1.5px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+              <img src="/logo.png" alt="Padel Medina" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
             </div>
             <div>
-              <p style={{ margin: 0, fontSize: '0.65rem', fontWeight: 800, color: '#16A34A', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Panel Admin</p>
+              <p style={{ margin: 0, fontSize: '0.65rem', fontWeight: 800, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Panel Admin</p>
               <p style={{ margin: 0, fontSize: '1rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Padel Medina</p>
             </div>
             {/* Close button on mobile */}

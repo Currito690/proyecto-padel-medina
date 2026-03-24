@@ -39,13 +39,8 @@ const Login = () => {
       <div className="login-blob login-blob-2" />
 
       {/* Logo */}
-      <div className="login-logo">
-        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 2 Q16 6 16 12 Q16 18 12 22" />
-          <path d="M12 2 Q8 6 8 12 Q8 18 12 22" />
-          <line x1="2" y1="12" x2="22" y2="12" />
-        </svg>
+      <div className="login-logo" style={{ background: 'white', border: '2px solid rgba(255,255,255,0.4)', padding: '0.5rem' }}>
+        <img src="/logo.png" alt="Padel Medina" style={{ width: '52px', height: '52px', objectFit: 'contain', display: 'block' }} />
       </div>
 
       <h1 className="login-brand-title">Padel Medina</h1>
