@@ -38,12 +38,8 @@ const Login = () => {
       <div className="login-blob login-blob-1" />
       <div className="login-blob login-blob-2" />
 
-      {/* Logo */}
-      <div style={{ background: 'white', borderRadius: '1rem', padding: '0.875rem 1.25rem', display: 'inline-block', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', marginBottom: '0.5rem' }}>
-        <img src="/logo.png" alt="Padel Medina" style={{ width: '160px', height: 'auto', objectFit: 'contain', display: 'block' }} />
-      </div>
-
-      <p className="login-brand-sub" style={{ marginTop: '0.75rem' }}>Tu pista te espera</p>
+      <h1 className="login-brand-title">Padel Medina</h1>
+      <p className="login-brand-sub">Tu pista te espera</p>
 
       {/* Features — only visible on desktop */}
       <ul className="login-features">
@@ -289,6 +285,11 @@ const Login = () => {
 
         <div className="login-form-section">
           <div className="login-card">
+
+            {/* Logo sobre fondo blanco — sin rectángulo visible */}
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <img src="/logo.png" alt="Padel Medina" style={{ width: '160px', height: 'auto', objectFit: 'contain', display: 'inline-block' }} />
+            </div>
 
             {/* Tabs */}
             <div className="login-tabs">
