@@ -472,24 +472,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const numRounds = Math.log2(pow);
     const newRounds = [];
 
-    const sDayIdx = DAYS.indexOf(tConfig.startDay);
-    const eDayIdx = DAYS.indexOf(tConfig.endDay);
-    const sHourIdx = HOURS.indexOf(tConfig.startHour);
-    const eHourIdx = HOURS.indexOf(tConfig.endHour);
-    const firstDayHourIdx = tConfig.firstDayStartHour ? HOURS.indexOf(tConfig.firstDayStartHour) : sHourIdx;
-    
-    let globalSlots = [];
-    for(let d = sDayIdx; d <= eDayIdx; d++) {
-        if(d >= 0 && d < DAYS.length) {
-            const actualStartHourIdx = (d === sDayIdx) ? firstDayHourIdx : sHourIdx;
-            for(let h = actualStartHourIdx; h < eHourIdx; h++) {
-               if(h >= 0 && h < HOURS.length) { globalSlots.push(`${DAYS[d]} ${HOURS[h]}`); }
-            }
-        }
-    }
-    
-    let slotUsage = {};
-    globalSlots.forEach(s => slotUsage[s] = 0);
+    // Use shared helpers to get globalSlots and reconstruct full slotUsage
+    // (accounting for ALL matches in ALL categories and existing consolation)
+    const globalSlots = buildGlobalSlots();
+    // Include the consolation bracket being generated in the snapshot
+    // (consRounds doesn't have this cat yet, but we pass what we have)
+    const slotUsage = buildSlotUsage(globalSlots, rounds, consRounds);
+
     
     for (let r = 0; r < numRounds; r++) {
       const numMatchesInRound = pow / Math.pow(2, r + 1);
