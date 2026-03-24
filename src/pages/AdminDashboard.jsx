@@ -17,7 +17,68 @@ const slotColors = {
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
+const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
+  const [search, setSearch] = useState('');
+  const [loadingUsers, setLoadingUsers] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      setLoadingUsers(true);
+      const { data } = await supabase.from('profiles').select('id, name, email, phone, role').order('name');
+      setAllUsers(data || []);
+      setLoadingUsers(false);
+    }
+    if (allUsers.length === 0) load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filtered = allUsers.filter(u =>
+    (u.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (u.email || '').toLowerCase().includes(search.toLowerCase()) ||
+    (u.phone || '').includes(search)
+  );
+
+  return (
+    <div>
+      <div style={{ marginBottom: '1rem', position: 'relative' }}>
+        <input
+          type="text"
+          placeholder="Buscar por nombre, email o teléfono..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ width: '100%', padding: '0.75rem 1rem 0.75rem 2.5rem', borderRadius: '0.75rem', border: '1.5px solid #E2E8F0', fontSize: '0.9rem', boxSizing: 'border-box' }}
+        />
+        <svg style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </div>
+
+      {loadingUsers ? (
+        <p style={{ color: '#94A3B8', textAlign: 'center', padding: '2rem' }}>Cargando jugadores...</p>
+      ) : filtered.length === 0 ? (
+        <p style={{ color: '#94A3B8', textAlign: 'center', padding: '2rem' }}>No se encontraron jugadores.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 0.5fr', gap: '0.5rem', padding: '0.4rem 1rem', borderRadius: '0.5rem', backgroundColor: '#F8FAFC' }}>
+            {['Nombre', 'Email', 'Teléfono', 'Rol'].map(h => (
+              <span key={h} style={{ fontSize: '0.7rem', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
+            ))}
+          </div>
+          {filtered.map(u => (
+            <div key={u.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 0.5fr', gap: '0.5rem', padding: '0.75rem 1rem', backgroundColor: 'white', borderRadius: '0.75rem', border: '1px solid #E2E8F0', alignItems: 'center' }}>
+              <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || '—'}</span>
+              <span style={{ color: '#475569', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email || '—'}</span>
+              <span style={{ color: '#475569', fontSize: '0.8rem' }}>{u.phone || '—'}</span>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: '999px', backgroundColor: u.role === 'admin' ? '#FEF9C3' : '#F0FDF4', color: u.role === 'admin' ? '#92400E' : '#15803D', textAlign: 'center', textTransform: 'uppercase' }}>{u.role || 'cliente'}</span>
+            </div>
+          ))}
+          <p style={{ color: '#94A3B8', fontSize: '0.78rem', textAlign: 'right', marginTop: '0.25rem' }}>{filtered.length} jugadores</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AdminDashboard = () => {
+
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('schedule');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -30,6 +91,10 @@ const AdminDashboard = () => {
   const [activeSlot, setActiveSlot] = useState(null);
   const [loading, setLoading] = useState(true);
   const courtsRef = useRef([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [showUserPicker, setShowUserPicker] = useState(false);
 
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked] = await Promise.all([
@@ -139,8 +204,11 @@ const AdminDashboard = () => {
     let actionError = null;
 
     if (action === 'reserve') {
-      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: user.id, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true });
+      const bookUserId = selectedUserId || user.id;
+      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true });
       actionError = error;
+      setSelectedUserId(null);
+      setShowUserPicker(false);
     } else if (action === 'block') {
       const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id });
       actionError = error;
@@ -213,6 +281,7 @@ const AdminDashboard = () => {
     { key: 'schedule', label: 'Horario', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
     { key: 'bookings', label: `Reservas (${allBookings.length})`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> },
     { key: 'courts', label: 'Pistas', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 2 Q16 6 16 12 Q16 18 12 22"/><path d="M12 2 Q8 6 8 12 Q8 18 12 22"/><line x1="2" y1="12" x2="22" y2="12"/></svg> },
+    { key: 'users', label: 'Jugadores', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
     { key: 'tournaments', label: 'Torneos', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg> },
     { key: 'finance', label: 'Finanzas', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> },
     { key: 'settings', label: 'Configuración', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/><circle cx="12" cy="12" r="3"/></svg> },
@@ -419,12 +488,54 @@ const AdminDashboard = () => {
                                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                   {selectedSlotData.status === 'available' && (
                                     <>
-                                      <button disabled={isProcessing} onClick={() => handleAction('reserve')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: isProcessing ? '#94A3B8' : '#16A34A', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
-                                        {isProcessing ? 'Procesando...' : '✓ Reservar (gratis)'}
-                                      </button>
-                                      <button onClick={() => handleAction('block')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
-                                        🔒 Bloquear
-                                      </button>
+                                      {showUserPicker ? (
+                                        <div style={{ width: '100%', backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', padding: '0.875rem', marginBottom: '0.5rem' }}>
+                                          <p style={{ margin: '0 0 0.5rem', fontWeight: 700, fontSize: '0.85rem', color: '#0F172A' }}>Selecciona el jugador para esta reserva:</p>
+                                          <input
+                                            autoFocus
+                                            type="text"
+                                            placeholder="Buscar por nombre o email..."
+                                            value={userSearch}
+                                            onChange={e => setUserSearch(e.target.value)}
+                                            style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', marginBottom: '0.5rem', boxSizing: 'border-box' }}
+                                          />
+                                          <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                                            {allUsers
+                                              .filter(u => (u.name || '').toLowerCase().includes(userSearch.toLowerCase()) || (u.email || '').toLowerCase().includes(userSearch.toLowerCase()))
+                                              .map(u => (
+                                                <button key={u.id} onClick={() => { setSelectedUserId(u.id); setShowUserPicker(false); setUserSearch(''); }}
+                                                  style={{ textAlign: 'left', padding: '0.5rem 0.75rem', borderRadius: '0.5rem', border: selectedUserId === u.id ? '2px solid #16A34A' : '1px solid #E2E8F0', backgroundColor: selectedUserId === u.id ? '#F0FDF4' : 'white', cursor: 'pointer', fontSize: '0.82rem' }}>
+                                                  <span style={{ fontWeight: 700, color: '#0F172A', display: 'block' }}>{u.name || 'Sin nombre'}</span>
+                                                  <span style={{ color: '#64748B' }}>{u.email}</span>
+                                                </button>
+                                              ))}
+                                          </div>
+                                          <button onClick={() => { setShowUserPicker(false); setSelectedUserId(null); }} style={{ marginTop: '0.5rem', background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.8rem' }}>Cancelar</button>
+                                        </div>
+                                      ) : (
+                                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                          {selectedUserId && (
+                                            <span style={{ fontSize: '0.78rem', backgroundColor: '#F0FDF4', color: '#16A34A', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: 700, border: '1px solid #86EFAC' }}>
+                                              ✓ {allUsers.find(u => u.id === selectedUserId)?.name || 'Jugador seleccionado'}
+                                            </span>
+                                          )}
+                                          <button onClick={() => {
+                                            if (allUsers.length === 0) {
+                                              supabase.from('profiles').select('id, name, email, phone, role').order('name')
+                                                .then(({data}) => setAllUsers(data || []));
+                                            }
+                                            setShowUserPicker(true);
+                                          }} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                                            👤 {selectedUserId ? 'Cambiar jugador' : 'Elegir jugador'}
+                                          </button>
+                                          <button disabled={isProcessing} onClick={() => handleAction('reserve')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: isProcessing ? '#94A3B8' : '#16A34A', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                            {isProcessing ? 'Procesando...' : '✓ Reservar (gratis)'}
+                                          </button>
+                                          <button onClick={() => handleAction('block')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                                            🔒 Bloquear
+                                          </button>
+                                        </div>
+                                      )}
                                     </>
                                   )}
                                   {selectedSlotData.status === 'booked' && (
@@ -579,6 +690,21 @@ const AdminDashboard = () => {
                       Las pistas desactivadas no aceptan nuevas reservas. Las reservas existentes se mantienen activas.
                     </p>
                   </div>
+                </div>
+              )}
+              {/* ── TAB: JUGADORES ── */}
+              {activeTab === 'users' && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                    <p className="section-label" style={{ margin: 0 }}>Directorio de Jugadores</p>
+                    <button onClick={async () => {
+                      const { data } = await supabase.from('profiles').select('id, name, email, phone, role').order('name');
+                      setAllUsers(data || []);
+                    }} style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
+                      ↻ Actualizar lista
+                    </button>
+                  </div>
+                  <UserDirectoryTab supabase={supabase} allUsers={allUsers} setAllUsers={setAllUsers} />
                 </div>
               )}
               {/* ── TAB: TORNEOS ── */}
