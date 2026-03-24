@@ -717,12 +717,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </form>
 
           <div style={{ marginBottom: '1.5rem', maxHeight: '300px', overflowY: 'auto' }}>
-            <h4 style={{ margin: '0 0 0.5rem', color: '#64748B', fontSize: '0.85rem' }}>Participantes Instalados: {participants.length}</h4>
-            {participants.length === 0 ? (
-              <p style={{ fontSize: '0.875rem', color: '#94A3B8', fontStyle: 'italic' }}>No hay parejas añadidas todavía.</p>
+            <h4 style={{ margin: '0 0 0.5rem', color: '#64748B', fontSize: '0.85rem' }}>
+              Elenco "{newCoupleCategory || 'Todas'}": {participants.filter(p => !newCoupleCategory || p.category === newCoupleCategory).length} parejas
+              <span style={{ color: '#94A3B8', fontWeight: 400, marginLeft: '0.5rem' }}>(total: {participants.length})</span>
+            </h4>
+            {participants.filter(p => !newCoupleCategory || p.category === newCoupleCategory).length === 0 ? (
+              <p style={{ fontSize: '0.875rem', color: '#94A3B8', fontStyle: 'italic' }}>No hay parejas en esta categoría todavía.</p>
             ) : (
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {participants.map((p, idx) => (
+                {participants
+                  .filter(p => !newCoupleCategory || p.category === newCoupleCategory)
+                  .map((p, idx) => (
                   <li key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', padding: '0.75rem', borderRadius: '0.5rem' }}>
                     <div>
                       <span style={{ fontWeight: 600, color: '#1E293B', fontSize: '0.9rem', display: 'block' }}>{idx + 1}. {p.name}</span>
