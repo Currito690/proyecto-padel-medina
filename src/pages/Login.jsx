@@ -39,8 +39,8 @@ const Login = () => {
       <div className="login-blob login-blob-2" />
 
       {/* Logo */}
-      <div className="login-logo" style={{ background: 'white', border: '2px solid rgba(255,255,255,0.4)', padding: '0.5rem' }}>
-        <img src="/logo.png" alt="Padel Medina" style={{ width: '52px', height: '52px', objectFit: 'contain', display: 'block' }} />
+      <div className="login-logo" style={{ background: 'white', border: '3px solid rgba(255,255,255,0.5)', padding: '0.625rem', width: '88px', height: '88px' }}>
+        <img src="/logo.png" alt="Padel Medina" style={{ width: '68px', height: '68px', objectFit: 'contain', display: 'block' }} />
       </div>
 
       <h1 className="login-brand-title">Padel Medina</h1>

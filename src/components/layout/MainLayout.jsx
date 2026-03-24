@@ -50,10 +50,54 @@ const MainLayout = () => {
           flex-direction: column;
           background: var(--color-bg-secondary);
         }
+
+        /* ── Top header bar ── */
+        .top-header {
+          position: fixed;
+          top: 0; left: 0; right: 0;
+          height: 56px;
+          background: rgba(255,255,255,0.95);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border-bottom: 1px solid rgba(226,232,240,0.8);
+          display: flex;
+          align-items: center;
+          padding: 0 1.25rem;
+          gap: 0.625rem;
+          box-shadow: 0 1px 12px rgba(0,0,0,0.06);
+          z-index: 100;
+        }
+        .top-header-logo {
+          width: 34px;
+          height: 34px;
+          border-radius: 8px;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .top-header-logo img {
+          width: 30px;
+          height: 30px;
+          object-fit: contain;
+          display: block;
+        }
+        .top-header-name {
+          font-size: 1rem;
+          font-weight: 900;
+          color: var(--color-primary, #1B3A6E);
+          letter-spacing: -0.02em;
+          line-height: 1;
+        }
+
         .main-content {
           flex: 1;
-          padding-bottom: 72px; /* nav height */
+          padding-top: 56px;   /* top header height */
+          padding-bottom: 72px; /* bottom nav height */
         }
+
+        /* ── Bottom nav ── */
         .bottom-nav {
           position: fixed;
           bottom: 0; left: 0; right: 0;
@@ -98,15 +142,21 @@ const MainLayout = () => {
           white-space: nowrap;
         }
 
-        /* On wider screens, the nav is larger */
         @media (min-width: 640px) {
           .bottom-nav { height: 68px; }
           .main-content { padding-bottom: 76px; }
           .nav-label { font-size: 0.7rem; }
         }
 
-        /* On desktop the nav stays fixed but gets a max width */
         @media (min-width: 1024px) {
+          .top-header {
+            max-width: 480px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 0 0 1rem 1rem;
+            border-left: 1px solid rgba(226,232,240,0.8);
+            border-right: 1px solid rgba(226,232,240,0.8);
+          }
           .bottom-nav {
             max-width: 480px;
             left: 50%;
@@ -119,6 +169,14 @@ const MainLayout = () => {
       `}</style>
 
       <div className="main-layout">
+        {/* Top branding header */}
+        <header className="top-header">
+          <div className="top-header-logo">
+            <img src="/logo.png" alt="Padel Medina" />
+          </div>
+          <span className="top-header-name">Padel Medina</span>
+        </header>
+
         <main className="main-content">
           <Outlet />
         </main>
