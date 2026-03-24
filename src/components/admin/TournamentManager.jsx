@@ -38,11 +38,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return fallback;
   });
   
+  const catListDefault = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
+
   const [participants, setParticipants] = useState(() => {
-     return (savedData?.participants || []).map(p => ({ ...p, category: p.category || 'General' }));
+     const firstCat = catListDefault[0] || 'General';
+     // Remap any 'General' legacy category to the first real category on load
+     return (savedData?.participants || []).map(p => ({
+       ...p,
+       category: (!p.category || p.category === 'General') ? firstCat : p.category
+     }));
   });
   const [newCouple, setNewCouple] = useState('');
-  const [newCoupleCategory, setNewCoupleCategory] = useState('');
+  // Default to first category so dropdown is never empty
+  const [newCoupleCategory, setNewCoupleCategory] = useState(catListDefault[0] || '');
   const [newPreferences, setNewPreferences] = useState([]); 
   
   const [rounds, setRounds] = useState(() => {
@@ -117,6 +125,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       prefNames: newPreferences.map(p => p.label)
     }]);
     setNewCouple('');
+    setNewCoupleCategory(catList[0] || ''); // reset to first category, not empty
     setNewPreferences([]);
   };
 
