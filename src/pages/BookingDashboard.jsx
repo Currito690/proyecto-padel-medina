@@ -38,7 +38,8 @@ const BookingDashboard = () => {
   const navigate = useNavigate();
   const [courts, setCourts] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00' });
+  const [slotsLocked, setSlotsLocked] = useState(false);
 
   const getMaxDate = () => {
     const now = new Date();
@@ -70,10 +71,19 @@ const BookingDashboard = () => {
     ]);
 
     if (settingsRes.data) {
+      const s = settingsRes.data;
+      const releaseTime = s.slots_release_time || '00:00';
       setSiteSettings({
-        booking_window_days: parseInt(settingsRes.data.booking_window_days, 10) || 7,
-        court_price: parseFloat(settingsRes.data.court_price) || 18.00
+        booking_window_days: parseInt(s.booking_window_days, 10) || 7,
+        court_price: parseFloat(s.court_price) || 18.00,
+        slots_release_time: releaseTime,
       });
+      // Check if courts are still locked for today
+      const now = new Date();
+      const [rH, rM] = releaseTime.split(':').map(Number);
+      const releaseMinutes = rH * 60 + rM;
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      setSlotsLocked(nowMinutes < releaseMinutes);
     }
 
     if (courtsRes.error) setCourtsError(courtsRes.error.message);
@@ -196,7 +206,18 @@ const BookingDashboard = () => {
           </h1>
         </header>
 
+        {slotsLocked && (
+          <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: '1rem', padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '1.5rem' }}>🔒</span>
+            <div>
+              <p style={{ margin: 0, fontWeight: 800, color: '#9A3412', fontSize: '0.9rem' }}>Reservas cerradas hasta las {siteSettings.slots_release_time}</p>
+              <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: '#C2410C' }}>Las pistas se desbloquean automáticamente a esa hora. Vuelve entonces para reservar.</p>
+            </div>
+          </div>
+        )}
+
         {loadingCourts ? (
+
           <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
             <div style={{ width: '32px', height: '32px', border: '3px solid #DCFCE7', borderTopColor: '#16A34A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

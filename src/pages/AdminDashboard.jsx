@@ -85,6 +85,8 @@ const AdminDashboard = () => {
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
   const [financialStats, setFinancialStats] = useState({ total: 0, month: 0, today: 0, totalBookings: 0 });
   const [savingSettings, setSavingSettings] = useState(false);
+  // slots_release_time default from DB, fallback 00:00
+  if (!siteSettings.slots_release_time) siteSettings.slots_release_time = '00:00';
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [courts, setCourts] = useState([]);
   const [slots, setSlots] = useState({});
@@ -252,7 +254,8 @@ const AdminDashboard = () => {
     setSavingSettings(true);
     const { error } = await supabase.from('site_settings').update({
       booking_window_days: parseInt(siteSettings.booking_window_days, 10),
-      court_price: parseFloat(siteSettings.court_price)
+      court_price: parseFloat(siteSettings.court_price),
+      slots_release_time: siteSettings.slots_release_time || '00:00'
     }).eq('id', 1);
     
     setSavingSettings(false);
@@ -646,6 +649,21 @@ const AdminDashboard = () => {
                         step="0.5" min="0"
                         value={siteSettings.court_price}
                         onChange={(e) => setSiteSettings({...siteSettings, court_price: e.target.value})}
+                        style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
+                        🔓 Hora de apertura de reservas
+                      </label>
+                      <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
+                        Los clientes no podrán ver ni reservar pistas hasta que llegue esta hora cada día. Por ejemplo, <strong>08:00</strong> significa que las pistas se desbloquean a las 8 de la mañana. Pon <strong>00:00</strong> para que siempre estén disponibles.
+                      </p>
+                      <input
+                        type="time"
+                        value={siteSettings.slots_release_time || '00:00'}
+                        onChange={(e) => setSiteSettings({...siteSettings, slots_release_time: e.target.value})}
                         style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
                       />
                     </div>
