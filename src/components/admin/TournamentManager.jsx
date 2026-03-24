@@ -332,15 +332,98 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
+  // Helper: expand slots for a participant respecting their prefRules
+  const expandPlayerSlots = (part, globalSlots) => {
+    if (!part || part.isBye) return [];
+    if (!part.prefRules || part.prefRules.length === 0) return [...globalSlots];
+    const prefDays = [...new Set(part.prefRules.map(r => r.day))];
+    let final = [];
+    globalSlots.forEach(gs => {
+      const [dayStr] = gs.split(' ');
+      if (prefDays.includes(dayStr)) {
+        if (part.prefRules.some(r => r.slots.includes(gs))) final.push(gs);
+      } else {
+        final.push(gs);
+      }
+    });
+    return final;
+  };
+
+  // Helper: reconstruct slotUsage from ALL matches that already have a time
+  const buildSlotUsage = (globalSlots, mainRounds, consRoundsSnap) => {
+    const usage = {};
+    globalSlots.forEach(s => { usage[s] = 0; });
+    const countRounds = (roundsObj) => {
+      Object.values(roundsObj).forEach(catR => {
+        catR.forEach(round => {
+          round.forEach(m => {
+            if (m.time && m.time !== 'A convenir') {
+              const base = m.time.split(' - Pista')[0].trim();
+              if (usage[base] !== undefined) usage[base]++;
+            }
+          });
+        });
+      });
+    };
+    countRounds(mainRounds);
+    countRounds(consRoundsSnap);
+    return usage;
+  };
+
+  // Helper: compute globalSlots from tConfig
+  const buildGlobalSlots = () => {
+    const sDayIdx = DAYS.indexOf(tConfig.startDay);
+    const eDayIdx = DAYS.indexOf(tConfig.endDay);
+    const sHourIdx = HOURS.indexOf(tConfig.startHour);
+    const eHourIdx = HOURS.indexOf(tConfig.endHour);
+    const firstDayHourIdx = tConfig.firstDayStartHour ? HOURS.indexOf(tConfig.firstDayStartHour) : sHourIdx;
+    const slots = [];
+    for (let d = sDayIdx; d <= eDayIdx; d++) {
+      if (d >= 0 && d < DAYS.length) {
+        const actualStart = (d === sDayIdx) ? firstDayHourIdx : sHourIdx;
+        for (let h = actualStart; h < eHourIdx; h++) {
+          if (h >= 0 && h < HOURS.length) slots.push(`${DAYS[d]} ${HOURS[h]}`);
+        }
+      }
+    }
+    return slots;
+  };
+
   const handleSetWinner = (match, participant, isCons = false, cat) => {
     if (!participant || participant.isBye) return;
     const targetRoundsGlob = isCons ? consRounds : rounds;
     const targetRounds = targetRoundsGlob[cat];
     const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
     advanceWinnerMut(nextRounds, match.round, match.matchIndex, participant);
-    if (isCons) setConsRounds({...consRounds, [cat]: nextRounds}); 
+
+    // Auto-schedule the next round match if both players are now known
+    const nextRoundIdx = match.round + 1;
+    const nextMatchIdx = Math.floor(match.matchIndex / 2);
+
+    if (nextRoundIdx < nextRounds.length) {
+      const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
+      if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye && !nextMatch.time) {
+        const globalSlots = buildGlobalSlots();
+
+        // Build snapshots with the new nextRounds applied
+        const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
+        const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
+        const slotUsage = buildSlotUsage(globalSlots, updatedMain, updatedCons);
+
+        const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
+        const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
+        let common = p1Slots.filter(s => p2Slots.includes(s));
+        if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
+
+        const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount);
+        nextMatch.time = assigned ? `${assigned} - Pista ${slotUsage[assigned] + 1}` : 'A convenir';
+      }
+    }
+
+    if (isCons) setConsRounds({...consRounds, [cat]: nextRounds});
     else setRounds({...rounds, [cat]: nextRounds});
   };
+
 
   const generateConsolation = (cat) => {
     const catRounds = rounds[cat];
