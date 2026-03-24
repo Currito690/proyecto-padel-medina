@@ -204,13 +204,11 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (activeTab !== 'bookings') return;
     setLoadingAllBookings(true);
-    const today = new Date().toISOString().split('T')[0];
     supabase
       .from('bookings')
       .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)')
       .eq('status', 'confirmed')
-      .gte('date', today)
-      .order('date', { ascending: true })
+      .order('date', { ascending: false })
       .order('time_slot', { ascending: true })
       .then(({ data, error }) => {
         if (error) console.error('Error cargando reservas:', error);
