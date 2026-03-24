@@ -82,7 +82,7 @@ const Login = () => {
 
         /* Brand panel (hero) */
         .login-brand {
-          background: linear-gradient(150deg, #16A34A 0%, #059669 55%, #047857 100%);
+          background: linear-gradient(150deg, #1B3A6E 0%, #15326A 55%, #0F2550 100%);
           padding: 2.5rem 1.5rem 3rem;
           text-align: center;
           position: relative;
@@ -189,8 +189,8 @@ const Login = () => {
         }
         .login-input:focus {
           outline: none;
-          border-color: #16A34A;
-          box-shadow: 0 0 0 3px rgba(22,163,74,0.15);
+          border-color: #1B3A6E;
+          box-shadow: 0 0 0 3px rgba(27,58,110,0.15);
           background: white;
         }
 
@@ -206,17 +206,17 @@ const Login = () => {
         /* Submit button */
         .login-submit {
           width: 100%; padding: 1rem; margin-top: 0.25rem;
-          background: linear-gradient(135deg, #16A34A, #15803D);
+          background: linear-gradient(135deg, #1B3A6E, #152D57);
           color: white; border: none; border-radius: 0.75rem;
           font-family: inherit; font-size: 1rem; font-weight: 700;
           cursor: pointer;
-          box-shadow: 0 6px 20px rgba(22,163,74,0.35);
+          box-shadow: 0 6px 20px rgba(27,58,110,0.35);
           display: flex; align-items: center; justify-content: center; gap: 0.5rem;
           transition: all 0.2s;
         }
         .login-submit:hover:not(:disabled) {
           transform: translateY(-1px);
-          box-shadow: 0 10px 24px rgba(22,163,74,0.45);
+          box-shadow: 0 10px 24px rgba(27,58,110,0.45);
         }
         .login-submit:disabled { opacity: 0.6; cursor: not-allowed; }
 
