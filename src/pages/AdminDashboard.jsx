@@ -151,7 +151,8 @@ const AdminDashboard = () => {
         if (settingsData) {
           setSiteSettings({
             booking_window_days: settingsData.booking_window_days,
-            court_price: parseFloat(settingsData.court_price)
+            court_price: parseFloat(settingsData.court_price),
+            slots_release_time: settingsData.slots_release_time || '00:00',
           });
         }
 
