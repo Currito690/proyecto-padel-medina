@@ -56,39 +56,22 @@ const MainLayout = () => {
           position: fixed;
           top: 0; left: 0; right: 0;
           height: 56px;
-          background: rgba(255,255,255,0.95);
+          background: rgba(255,255,255,0.97);
           backdrop-filter: blur(16px);
           -webkit-backdrop-filter: blur(16px);
           border-bottom: 1px solid rgba(226,232,240,0.8);
           display: flex;
           align-items: center;
+          justify-content: center;
           padding: 0 1.25rem;
-          gap: 0.625rem;
           box-shadow: 0 1px 12px rgba(0,0,0,0.06);
           z-index: 100;
         }
-        .top-header-logo {
-          width: 34px;
-          height: 34px;
-          border-radius: 8px;
-          overflow: hidden;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-        }
-        .top-header-logo img {
-          width: 30px;
-          height: 30px;
+        .top-header-logo-img {
+          height: 36px;
+          width: auto;
           object-fit: contain;
           display: block;
-        }
-        .top-header-name {
-          font-size: 1rem;
-          font-weight: 900;
-          color: var(--color-primary, #1B3A6E);
-          letter-spacing: -0.02em;
-          line-height: 1;
         }
 
         .main-content {
@@ -171,10 +154,7 @@ const MainLayout = () => {
       <div className="main-layout">
         {/* Top branding header */}
         <header className="top-header">
-          <div className="top-header-logo">
-            <img src="/logo.png" alt="Padel Medina" />
-          </div>
-          <span className="top-header-name">Padel Medina</span>
+          <img src="/logo.png" alt="Padel Medina" className="top-header-logo-img" />
         </header>
 
         <main className="main-content">

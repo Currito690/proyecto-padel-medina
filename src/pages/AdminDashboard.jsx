@@ -352,30 +352,25 @@ const AdminDashboard = () => {
         {/* Sidebar */}
         <aside className={`admin-sidebar ${isSidebarOpen ? 'open' : ''}`}>
           <div style={{
-            padding: '1.5rem 1.25rem',
-            borderBottom: '1px solid rgba(255,255,255,0.1)',
-            background: 'linear-gradient(135deg, #1B3A6E 0%, #0F2550 100%)',
+            padding: '1.25rem 1.25rem 1rem',
+            borderBottom: '1px solid var(--color-border)',
+            background: 'white',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '0.75rem',
+            gap: '0.5rem',
             position: 'relative',
           }}>
             {/* Close button on mobile */}
-            <button className="menu-toggle" onClick={() => setIsSidebarOpen(false)} style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', background: 'rgba(255,255,255,0.1)', border: 'none', cursor: 'pointer', padding: '0.4rem', borderRadius: '0.5rem', color: 'rgba(255,255,255,0.8)', display: 'flex' }}>
+            <button className="menu-toggle" onClick={() => setIsSidebarOpen(false)} style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', background: '#F1F5F9', border: 'none', cursor: 'pointer', padding: '0.4rem', borderRadius: '0.5rem', color: '#64748B', display: 'flex' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
 
-            {/* Logo */}
-            <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(0,0,0,0.25)', flexShrink: 0 }}>
-              <img src="/logo.png" alt="Padel Medina" style={{ width: '58px', height: '58px', objectFit: 'contain' }} />
-            </div>
+            {/* Logo a tamaño completo, sin recortar */}
+            <img src="/logo.png" alt="Padel Medina" style={{ width: '140px', objectFit: 'contain', display: 'block' }} />
 
-            {/* Texts */}
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 900, color: 'white', letterSpacing: '-0.02em', lineHeight: 1.2 }}>Padel Medina</p>
-              <p style={{ margin: '0.2rem 0 0', fontSize: '0.65rem', fontWeight: 700, color: '#4ADE80', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Panel Admin</p>
-            </div>
+            {/* Badge Panel Admin */}
+            <span style={{ fontSize: '0.6rem', fontWeight: 800, color: 'white', background: '#1B3A6E', textTransform: 'uppercase', letterSpacing: '0.1em', padding: '0.2rem 0.6rem', borderRadius: '999px' }}>Panel Admin</span>
           </div>
 
           <div style={{ padding: '1.25rem 1rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
