@@ -100,6 +100,11 @@ const AdminDashboard = () => {
   const [showUserPicker, setShowUserPicker] = useState(false);
   const [allDbBookings, setAllDbBookings] = useState([]);
   const [loadingAllBookings, setLoadingAllBookings] = useState(false);
+  const [moveBooking, setMoveBooking] = useState(null); // { id, courtId, courtName, date, time, client }
+  const [moveTargetDate, setMoveTargetDate] = useState('');
+  const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
+  const [moveTargetTime, setMoveTargetTime] = useState('');
+  const [moveSlotInfo, setMoveSlotInfo] = useState(null); // null | 'checking' | 'available' | 'conflict'
 
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked] = await Promise.all([
@@ -195,6 +200,23 @@ const AdminDashboard = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Comprueba disponibilidad del slot destino al mover una reserva
+  useEffect(() => {
+    if (!moveTargetDate || !moveTargetCourtId || !moveTargetTime) {
+      setMoveSlotInfo(null);
+      return;
+    }
+    setMoveSlotInfo('checking');
+    const check = async () => {
+      const [{ data: existing }, { data: blocked }] = await Promise.all([
+        supabase.from('bookings').select('id').eq('court_id', moveTargetCourtId).eq('date', moveTargetDate).eq('time_slot', moveTargetTime).eq('status', 'confirmed').neq('id', moveBooking?.id || ''),
+        supabase.from('blocked_slots').select('id').eq('court_id', moveTargetCourtId).eq('date', moveTargetDate).eq('time_slot', moveTargetTime),
+      ]);
+      setMoveSlotInfo((existing?.length > 0 || blocked?.length > 0) ? 'conflict' : 'available');
+    };
+    check();
+  }, [moveTargetDate, moveTargetCourtId, moveTargetTime, moveBooking]);
+
   // Recarga slots cuando cambia la fecha
   useEffect(() => {
     if (courtsRef.current.length > 0) loadSlots(selectedDate);
@@ -256,6 +278,30 @@ const AdminDashboard = () => {
   const cancelBooking = async (bookingId) => {
     await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', bookingId);
     await loadSlots(selectedDate);
+  };
+
+  const handleMoveBooking = async () => {
+    if (!moveBooking || !moveTargetDate || !moveTargetCourtId || !moveTargetTime) return;
+    setIsProcessing(true);
+    const { error } = await supabase.from('bookings').update({
+      date: moveTargetDate,
+      time_slot: moveTargetTime,
+      court_id: moveTargetCourtId,
+    }).eq('id', moveBooking.id);
+    if (error) {
+      alert('Error al mover la reserva: ' + error.message);
+    } else {
+      setMoveBooking(null);
+      await loadSlots(selectedDate);
+      if (activeTab === 'bookings') {
+        const today = new Date().toISOString().split('T')[0];
+        const { data } = await supabase.from('bookings')
+          .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)')
+          .eq('status', 'confirmed').gte('date', today).order('date').order('time_slot');
+        setAllDbBookings(data || []);
+      }
+    }
+    setIsProcessing(false);
   };
 
   const toggleCourt = async (courtId) => {
@@ -569,9 +615,21 @@ const AdminDashboard = () => {
                                     </>
                                   )}
                                   {selectedSlotData.status === 'booked' && (
-                                    <button onClick={() => handleAction('cancel')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#DC2626', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
-                                      ✕ Cancelar reserva
-                                    </button>
+                                    <>
+                                      <button onClick={() => {
+                                        const court = courts.find(c => c.id === activeSlot.courtId);
+                                        setMoveBooking({ id: selectedSlotData.bookingId, courtId: activeSlot.courtId, courtName: court?.name || 'Pista', date: selectedDate, time: activeSlot.time, client: selectedSlotData.client });
+                                        setMoveTargetDate(selectedDate);
+                                        setMoveTargetCourtId(activeSlot.courtId);
+                                        setMoveTargetTime(activeSlot.time);
+                                        setMoveSlotInfo(null);
+                                      }} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                                        ↔ Mover reserva
+                                      </button>
+                                      <button onClick={() => handleAction('cancel')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#DC2626', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                                        ✕ Cancelar reserva
+                                      </button>
+                                    </>
                                   )}
                                   {selectedSlotData.status === 'blocked' && (
                                     <button onClick={() => handleAction('unblock')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#0EA5E9', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
@@ -647,6 +705,15 @@ const AdminDashboard = () => {
                                       {b.is_free && <span style={{ marginLeft: '0.4rem', backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>GRATIS</span>}
                                     </p>
                                   </div>
+                                  <button onClick={() => {
+                                    setMoveBooking({ id: b.id, courtId: b.court_id, courtName: b.courts?.name || 'Pista', date: b.date, time: b.time_slot, client: b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente' });
+                                    setMoveTargetDate(b.date);
+                                    setMoveTargetCourtId(b.court_id);
+                                    setMoveTargetTime(b.time_slot);
+                                    setMoveSlotInfo(null);
+                                  }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
+                                    Mover
+                                  </button>
                                   <button onClick={() => cancelDbBooking(b.id)}
                                     style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
                                     Cancelar
@@ -817,6 +884,81 @@ const AdminDashboard = () => {
         </div>
       </div>
     </div>
+
+    {/* ── MODAL: MOVER RESERVA ── */}
+    {moveBooking && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }} onClick={e => { if (e.target === e.currentTarget) setMoveBooking(null); }}>
+        <div style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '460px', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
+          <div style={{ background: 'linear-gradient(135deg, #1e3a5f 0%, #2563EB 100%)', padding: '1.25rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 800, color: 'white', fontSize: '1.05rem' }}>Mover reserva</p>
+              <p style={{ margin: '0.2rem 0 0', color: 'rgba(255,255,255,0.75)', fontSize: '0.78rem' }}>{moveBooking.client} · {moveBooking.courtName}</p>
+            </div>
+            <button onClick={() => setMoveBooking(null)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '0.5rem', padding: '0.4rem 0.6rem', cursor: 'pointer', color: 'white', fontSize: '1rem', lineHeight: 1 }}>✕</button>
+          </div>
+
+          <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '0.75rem', padding: '0.75rem 1rem' }}>
+              <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: '#DC2626', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Reserva actual</p>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.875rem', color: '#0F172A', fontWeight: 600 }}>
+                {moveBooking.courtName} · {formatDate(moveBooking.date)} · {moveBooking.time}
+              </p>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 700, color: '#0F172A', fontSize: '0.875rem' }}>Nueva fecha</label>
+              <input type="date" value={moveTargetDate} onChange={e => setMoveTargetDate(e.target.value)}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', fontWeight: 600, boxSizing: 'border-box' }} />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 700, color: '#0F172A', fontSize: '0.875rem' }}>Nueva pista</label>
+              <select value={moveTargetCourtId} onChange={e => setMoveTargetCourtId(e.target.value)}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', fontWeight: 600, backgroundColor: 'white', boxSizing: 'border-box' }}>
+                {courts.filter(c => c.active).map(c => (
+                  <option key={c.id} value={c.id}>{c.name} · {c.sport}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 700, color: '#0F172A', fontSize: '0.875rem' }}>Nueva franja horaria</label>
+              <select value={moveTargetTime} onChange={e => setMoveTargetTime(e.target.value)}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', fontWeight: 600, backgroundColor: 'white', boxSizing: 'border-box' }}>
+                <option value="">— Selecciona franja —</option>
+                {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            {moveSlotInfo === 'checking' && (
+              <p style={{ margin: 0, color: '#94A3B8', fontSize: '0.85rem', textAlign: 'center' }}>Comprobando disponibilidad...</p>
+            )}
+            {moveSlotInfo === 'available' && (
+              <div style={{ padding: '0.75rem 1rem', borderRadius: '0.75rem', backgroundColor: '#F0FDF4', border: '1px solid #86EFAC', color: '#15803D', fontWeight: 700, fontSize: '0.875rem' }}>
+                ✓ Franja disponible
+              </div>
+            )}
+            {moveSlotInfo === 'conflict' && (
+              <div style={{ padding: '0.75rem 1rem', borderRadius: '0.75rem', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', fontWeight: 700, fontSize: '0.875rem' }}>
+                ✕ Franja ocupada o bloqueada — elige otra
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button onClick={() => setMoveBooking(null)} style={{ flex: 1, padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button
+                disabled={moveSlotInfo !== 'available' || isProcessing}
+                onClick={handleMoveBooking}
+                style={{ flex: 2, padding: '0.875rem', borderRadius: '0.75rem', border: 'none', background: moveSlotInfo === 'available' && !isProcessing ? '#16A34A' : '#CBD5E1', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem', cursor: moveSlotInfo === 'available' && !isProcessing ? 'pointer' : 'not-allowed', transition: 'background 0.2s' }}>
+                {isProcessing ? 'Moviendo...' : '↔ Confirmar traslado'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
   </>
 );
 };
