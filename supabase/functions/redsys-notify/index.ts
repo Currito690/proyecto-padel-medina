@@ -73,6 +73,21 @@ serve(async (req) => {
         console.error('Error guardando reserva Redsys:', error);
         return new Response('KO', { status: 500 });
       }
+
+      // Notificar al admin via push
+      const pushUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push`;
+      fetch(pushUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        },
+        body: JSON.stringify({
+          title: 'Nueva reserva (Redsys)',
+          body: `Pista ${courtId} · ${timeSlot} · ${date}`,
+          url: '/',
+        }),
+      }).catch(console.warn);
     } else {
       console.log(`Redsys: pago rechazado con código ${responseCode}`);
     }

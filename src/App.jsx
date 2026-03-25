@@ -1,6 +1,8 @@
-import React from 'react';
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { supabase } from './services/supabase';
+import { subscribeAdminToPush } from './services/pushNotifications';
 import MainLayout from './components/layout/MainLayout';
 import BookingDashboard from './pages/BookingDashboard';
 import MyBookings from './pages/MyBookings';
@@ -11,6 +13,12 @@ import PaymentGateway from './pages/PaymentGateway';
 
 function App() {
   const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (user?.role === 'admin') {
+      subscribeAdminToPush(supabase, user.id);
+    }
+  }, [user]);
 
   if (loading) {
     return (

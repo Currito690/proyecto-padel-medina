@@ -84,6 +84,16 @@ const PaymentGateway = () => {
         is_free: false,
       });
       if (error) throw error;
+
+      // Notificar al admin
+      supabase.functions.invoke('send-push', {
+        body: {
+          title: 'Nueva reserva',
+          body: `${user.name} — ${courtName} · ${timeSlot}`,
+          url: '/',
+        },
+      }).catch(() => {});
+
       navigate('/mis-reservas');
     } catch (err) {
       console.error('Error al reservar:', err);
