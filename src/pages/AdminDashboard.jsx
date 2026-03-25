@@ -37,7 +37,10 @@ const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
     setTogglingId(u.id);
     const newBanned = !u.banned;
     const { error } = await supabase.from('profiles').update({ banned: newBanned }).eq('id', u.id);
-    if (!error) {
+    if (error) {
+      console.error('Error al actualizar estado del jugador:', error);
+      alert('Error: ' + (error.message || 'No se pudo actualizar. Asegúrate de haber ejecutado la migración SQL en Supabase.'));
+    } else {
       setAllUsers(prev => prev.map(p => p.id === u.id ? { ...p, banned: newBanned } : p));
     }
     setTogglingId(null);
