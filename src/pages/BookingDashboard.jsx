@@ -40,6 +40,7 @@ const BookingDashboard = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00' });
   const [slotsLocked, setSlotsLocked] = useState(false);
+  const [isBanned, setIsBanned] = useState(false);
 
   const getMaxDate = () => {
     const now = new Date();
@@ -65,10 +66,17 @@ const BookingDashboard = () => {
     setLoadingCourts(true);
     setCourtsError(null);
 
-    const [settingsRes, courtsRes] = await Promise.all([
+    const [settingsRes, courtsRes, profileRes] = await Promise.all([
       supabase.from('site_settings').select('*').single(),
-      supabase.from('courts').select('*').eq('active', true).order('name')
+      supabase.from('courts').select('*').eq('active', true).order('name'),
+      supabase.from('profiles').select('banned').eq('id', user.id).single(),
     ]);
+
+    if (profileRes.data?.banned) {
+      setIsBanned(true);
+      setLoadingCourts(false);
+      return;
+    }
 
     if (settingsRes.data) {
       const s = settingsRes.data;
@@ -191,6 +199,28 @@ const BookingDashboard = () => {
     const d = new Date(dateStr + 'T12:00:00');
     return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
   };
+
+  // ---- Banned View ----
+  if (isBanned) {
+    return (
+      <div className="dashboard-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+        <div style={{ textAlign: 'center', maxWidth: '380px', padding: '2rem' }}>
+          <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#FEF2F2', border: '2px solid #FECACA', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+            </svg>
+          </div>
+          <h2 style={{ margin: '0 0 0.5rem', fontWeight: 900, color: '#0F172A', fontSize: '1.25rem', letterSpacing: '-0.02em' }}>Cuenta desactivada</h2>
+          <p style={{ margin: '0 0 1.5rem', color: '#64748B', fontSize: '0.9rem', lineHeight: 1.6 }}>
+            Tu cuenta ha sido desactivada por el administrador del club. Ponte en contacto con nosotros para más información.
+          </p>
+          <a href="mailto:info@padelmedina.com" style={{ display: 'inline-block', padding: '0.75rem 1.5rem', borderRadius: '0.75rem', backgroundColor: '#0F172A', color: 'white', fontWeight: 700, fontSize: '0.875rem', textDecoration: 'none' }}>
+            Contactar con el club
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   // ---- Courts View ----
   if (view === 'courts') {

@@ -20,17 +20,28 @@ const slotColors = {
 const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
   const [search, setSearch] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [togglingId, setTogglingId] = useState(null);
 
   useEffect(() => {
     async function load() {
       setLoadingUsers(true);
-      const { data } = await supabase.from('profiles').select('id, name, email, phone, role').order('name');
+      const { data } = await supabase.from('profiles').select('id, name, email, phone, role, banned').order('name');
       setAllUsers(data || []);
       setLoadingUsers(false);
     }
     if (allUsers.length === 0) load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const toggleBan = async (u) => {
+    setTogglingId(u.id);
+    const newBanned = !u.banned;
+    const { error } = await supabase.from('profiles').update({ banned: newBanned }).eq('id', u.id);
+    if (!error) {
+      setAllUsers(prev => prev.map(p => p.id === u.id ? { ...p, banned: newBanned } : p));
+    }
+    setTogglingId(null);
+  };
 
   const filtered = allUsers.filter(u =>
     (u.name || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -57,20 +68,27 @@ const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
         <p style={{ color: '#94A3B8', textAlign: 'center', padding: '2rem' }}>No se encontraron jugadores.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 0.5fr', gap: '0.5rem', padding: '0.4rem 1rem', borderRadius: '0.5rem', backgroundColor: '#F8FAFC' }}>
-            {['Nombre', 'Email', 'Teléfono', 'Rol'].map(h => (
-              <span key={h} style={{ fontSize: '0.7rem', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
-            ))}
-          </div>
           {filtered.map(u => (
-            <div key={u.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 0.5fr', gap: '0.5rem', padding: '0.75rem 1rem', backgroundColor: 'white', borderRadius: '0.75rem', border: '1px solid #E2E8F0', alignItems: 'center' }}>
-              <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || '—'}</span>
-              <span style={{ color: '#475569', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email || '—'}</span>
-              <span style={{ color: '#475569', fontSize: '0.8rem' }}>{u.phone || '—'}</span>
-              <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: '999px', backgroundColor: u.role === 'admin' ? '#FEF9C3' : '#F0FDF4', color: u.role === 'admin' ? '#92400E' : '#15803D', textAlign: 'center', textTransform: 'uppercase' }}>{u.role || 'cliente'}</span>
+            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.875rem 1rem', backgroundColor: u.banned ? '#FEF2F2' : 'white', borderRadius: '0.875rem', border: `1px solid ${u.banned ? '#FECACA' : '#E2E8F0'}`, opacity: u.banned ? 0.85 : 1, transition: 'all 0.2s' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700, color: u.banned ? '#94A3B8' : '#0F172A', fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || '—'}</span>
+                  <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '999px', backgroundColor: u.role === 'admin' ? '#FEF9C3' : '#F0FDF4', color: u.role === 'admin' ? '#92400E' : '#15803D', textTransform: 'uppercase' }}>{u.role || 'cliente'}</span>
+                  {u.banned && <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '999px', backgroundColor: '#FEF2F2', color: '#DC2626', textTransform: 'uppercase' }}>Baja</span>}
+                </div>
+                <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email || '—'}{u.phone ? ` · ${u.phone}` : ''}</p>
+              </div>
+              {u.role !== 'admin' && (
+                <button
+                  disabled={togglingId === u.id}
+                  onClick={() => toggleBan(u)}
+                  style={{ padding: '0.4rem 0.875rem', borderRadius: '0.5rem', border: `1.5px solid ${u.banned ? '#16A34A' : '#DC2626'}`, backgroundColor: u.banned ? '#F0FDF4' : '#FEF2F2', color: u.banned ? '#16A34A' : '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: togglingId === u.id ? 'not-allowed' : 'pointer', flexShrink: 0, transition: 'all 0.2s', opacity: togglingId === u.id ? 0.6 : 1 }}>
+                  {togglingId === u.id ? '...' : u.banned ? 'Reactivar' : 'Dar de baja'}
+                </button>
+              )}
             </div>
           ))}
-          <p style={{ color: '#94A3B8', fontSize: '0.78rem', textAlign: 'right', marginTop: '0.25rem' }}>{filtered.length} jugadores</p>
+          <p style={{ color: '#94A3B8', fontSize: '0.78rem', textAlign: 'right', marginTop: '0.25rem' }}>{filtered.length} jugadores · {filtered.filter(u => u.banned).length} dados de baja</p>
         </div>
       )}
     </div>
