@@ -10,6 +10,8 @@ const HOURS = [
 
 const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [isExporting, setIsExporting] = useState(false);
+  const [editingScoreId, setEditingScoreId] = useState(null);
+  const [scoreInput, setScoreInput] = useState('');
   const loadSavedState = () => {
     try {
       const saved = localStorage.getItem(`padel_medina_tournament_${tournamentKey}`);
@@ -310,18 +312,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
-  const handleEditScore = (match, isCons = false, cat) => {
-    const newScore = prompt("Introduce el resultado del partido (Ej: 6-4 3-6 7-6):", match.score || "");
-    if (newScore !== null) {
-       const targetRoundsGlob = isCons ? consRounds : rounds;
-       const targetRounds = targetRoundsGlob[cat];
-       const nextRounds = [...targetRounds];
-       nextRounds[match.round] = [...nextRounds[match.round]];
-       nextRounds[match.round][match.matchIndex] = { ...nextRounds[match.round][match.matchIndex], score: newScore.trim() };
-       if (isCons) setConsRounds({...consRounds, [cat]: nextRounds}); 
-       else setRounds({...rounds, [cat]: nextRounds});
-    }
-  };
 
   // Helper: expand slots for a participant excluding their blocked slots
   const expandPlayerSlots = (part, globalSlots) => {
@@ -339,6 +329,56 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const p = s.split('-');
       return p.length === 2 ? p[pIdx] : null;
     }).filter(n => n !== null);
+  };
+
+  // Determine winner automatically from score string
+  const determineWinnerFromScore = (scoreStr, p1, p2) => {
+    if (!scoreStr || !p1 || !p2 || p1.isBye || p2.isBye) return null;
+    let p1Wins = 0, p2Wins = 0;
+    scoreStr.trim().split(/\s+/).forEach(s => {
+      const parts = s.split('-');
+      if (parts.length === 2) {
+        const a = parseInt(parts[0]), b = parseInt(parts[1]);
+        if (!isNaN(a) && !isNaN(b)) { if (a > b) p1Wins++; else if (b > a) p2Wins++; }
+      }
+    });
+    if (p1Wins > p2Wins) return p1;
+    if (p2Wins > p1Wins) return p2;
+    return null;
+  };
+
+  const handleScoreSubmit = (match, scoreStr, isCons, cat) => {
+    const trimmed = scoreStr.trim();
+    setEditingScoreId(null);
+    setScoreInput('');
+    if (!trimmed) return;
+    const targetRounds = (isCons ? consRounds : rounds)[cat];
+    const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+    nextRounds[match.round][match.matchIndex].score = trimmed;
+    const winner = determineWinnerFromScore(trimmed, match.p1, match.p2);
+    if (winner) {
+      advanceWinnerMut(nextRounds, match.round, match.matchIndex, winner);
+      // Auto-schedule next match
+      const nextRoundIdx = match.round + 1;
+      const nextMatchIdx = Math.floor(match.matchIndex / 2);
+      if (nextRoundIdx < nextRounds.length) {
+        const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
+        if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye && !nextMatch.time) {
+          const globalSlots = buildGlobalSlots();
+          const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
+          const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
+          const slotUsage = buildSlotUsage(globalSlots, updatedMain, updatedCons);
+          const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
+          const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
+          let common = p1Slots.filter(s => p2Slots.includes(s));
+          if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
+          const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount);
+          nextMatch.time = assigned ? `${assigned} - Pista ${slotUsage[assigned] + 1}` : 'A convenir';
+        }
+      }
+    }
+    if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
+    else setRounds({ ...rounds, [cat]: nextRounds });
   };
 
   // Helper: reconstruct slotUsage from ALL matches that already have a time
@@ -964,11 +1004,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       </div>
 
                       {(!match.p1?.isBye && !match.p2?.isBye) && !isExporting && (
-                         <div style={{ padding: '0.35rem', borderTop: '1px solid #F1F5F9', textAlign: 'center' }}>
-                           <button onClick={() => handleEditScore(match, bracket.isCons, cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#64748B' : '#2563EB', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit' }}>
-                             {match.score ? '✎ Editar resultado' : '+ Añadir resultado'}
-                           </button>
-                         </div>
+                        <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
+                          {editingScoreId === match.id ? (
+                            <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                              <input
+                                autoFocus
+                                type="text"
+                                placeholder="Ej: 6-4 3-6 7-5"
+                                value={scoreInput}
+                                onChange={e => setScoreInput(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, bracket.isCons, cat);
+                                  if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); }
+                                }}
+                                style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 }}
+                              />
+                              <button onClick={() => handleScoreSubmit(match, scoreInput, bracket.isCons, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✓</button>
+                              <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✕</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#64748B' : '#2563EB', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: 0 }}>
+                              {match.score ? '✎ Editar resultado' : '+ Añadir resultado'}
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   ))}
