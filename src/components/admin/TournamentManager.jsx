@@ -202,20 +202,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     let slotUsage = {};
     globalSlots.forEach(s => slotUsage[s] = 0);
 
-    // Expandir disponibilidad de TODOS los participantes
+    // Expandir disponibilidad de TODOS los participantes (excluyendo sus horas bloqueadas)
     const expandedParticipants = p.map(part => {
        if (part.isBye) return part;
-       const prefDays = [...new Set(part.prefRules?.map(rule => rule.day) || [])];
-       let finalSlots = [];
-       globalSlots.forEach(gs => {
-           const [dayStr] = gs.split(" ");
-           if (prefDays.includes(dayStr)) {
-               const isAllowed = part.prefRules.some(rule => rule.slots.includes(gs));
-               if (isAllowed) finalSlots.push(gs);
-           } else {
-               finalSlots.push(gs);
-           }
-       });
+       const blockedSlots = new Set((part.prefRules || []).flatMap(rule => rule.slots));
+       const finalSlots = globalSlots.filter(gs => !blockedSlots.has(gs));
        return { ...part, finalSlots };
     });
 
@@ -332,21 +323,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
-  // Helper: expand slots for a participant respecting their prefRules
+  // Helper: expand slots for a participant excluding their blocked slots
   const expandPlayerSlots = (part, globalSlots) => {
     if (!part || part.isBye) return [];
     if (!part.prefRules || part.prefRules.length === 0) return [...globalSlots];
-    const prefDays = [...new Set(part.prefRules.map(r => r.day))];
-    let final = [];
-    globalSlots.forEach(gs => {
-      const [dayStr] = gs.split(' ');
-      if (prefDays.includes(dayStr)) {
-        if (part.prefRules.some(r => r.slots.includes(gs))) final.push(gs);
-      } else {
-        final.push(gs);
-      }
-    });
-    return final;
+    const blockedSlots = new Set(part.prefRules.flatMap(r => r.slots));
+    return globalSlots.filter(gs => !blockedSlots.has(gs));
+  };
+
+  // Helper: parse score string into per-player set values
+  // e.g. "6-4 3-6 7-6" with pIdx=0 → ['6','3','7']
+  const parseScore = (scoreStr, pIdx) => {
+    if (!scoreStr) return [];
+    return scoreStr.trim().split(/\s+/).map(s => {
+      const p = s.split('-');
+      return p.length === 2 ? p[pIdx] : null;
+    }).filter(n => n !== null);
   };
 
   // Helper: reconstruct slotUsage from ALL matches that already have a time
@@ -739,7 +731,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             </div>
             
             <div>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Disponibilidad (Añade rangos horarios):</p>
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>No disponible (horas en las que <strong>no</strong> puede jugar):</p>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                 <select 
                   value={selectedDay} 
@@ -776,9 +768,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               {newPreferences.length > 0 && (
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                   {newPreferences.map(pref => (
-                    <div key={pref.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: '#F0FDF4', border: '1.5px solid #16A34A', color: '#16A34A', padding: '0.3rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700 }}>
+                    <div key={pref.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: '#FEF2F2', border: '1.5px solid #DC2626', color: '#DC2626', padding: '0.3rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700 }}>
                       {pref.label}
-                      <button type="button" onClick={() => removePreference(pref.id)} style={{ background: 'none', border: 'none', color: '#16A34A', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.7, marginLeft: '0.2rem' }}>
+                      <button type="button" onClick={() => removePreference(pref.id)} style={{ background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.7, marginLeft: '0.2rem' }}>
                         ✕
                       </button>
                     </div>
@@ -807,8 +799,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                          {p.category}
                       </span>
                       {p.prefNames?.length > 0 && (
-                        <span style={{ fontSize: '0.7rem', color: '#64748B', display: 'block', marginTop: '0.2rem' }}>
-                          Prefiere: {p.prefNames.join(', ')}
+                        <span style={{ fontSize: '0.7rem', color: '#DC2626', display: 'block', marginTop: '0.2rem' }}>
+                          No puede: {p.prefNames.join(', ')}
                         </span>
                       )}
                     </div>
@@ -943,31 +935,39 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         </div>
                       )}
                       
-                      <div onClick={() => handleSetWinner(match, match.p1, bracket.isCons, cat)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : 'transparent', borderBottom: '1.5px solid #F1F5F9', cursor: match.p1?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.85rem', fontWeight: match.winner?.id === match.p1?.id ? 800 : 600, color: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155' }}>
+                      <div onClick={() => handleSetWinner(match, match.p1, bracket.isCons, cat)} style={{ padding: '0.6rem 0.75rem', backgroundColor: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : 'transparent', borderBottom: '1.5px solid #F1F5F9', cursor: match.p1?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{ fontSize: '0.82rem', fontWeight: match.winner?.id === match.p1?.id ? 800 : 600, color: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {match.p1 ? match.p1.name : '\u00A0'}
                         </span>
-                        {match.winner?.id === match.p1?.id && <span style={{ fontSize: '1rem' }}>🏆</span>}
+                        {match.score && (
+                          <div style={{ display: 'flex', gap: '0.2rem', flexShrink: 0 }}>
+                            {parseScore(match.score, 0).map((s, i) => (
+                              <span key={i} style={{ fontSize: '0.72rem', fontWeight: 800, background: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#F59E0B' : '#16A34A') : '#E2E8F0', color: match.winner?.id === match.p1?.id ? 'white' : '#475569', borderRadius: '3px', padding: '0.05rem 0.3rem', minWidth: '1.2rem', textAlign: 'center' }}>{s}</span>
+                            ))}
+                          </div>
+                        )}
+                        {match.winner?.id === match.p1?.id && <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>🏆</span>}
                       </div>
-                      
-                      <div onClick={() => handleSetWinner(match, match.p2, bracket.isCons, cat)} style={{ padding: '0.75rem', backgroundColor: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : '#F8FAFC', cursor: match.p2?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.85rem', fontWeight: match.winner?.id === match.p2?.id ? 800 : 600, color: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155' }}>
+
+                      <div onClick={() => handleSetWinner(match, match.p2, bracket.isCons, cat)} style={{ padding: '0.6rem 0.75rem', backgroundColor: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : '#F8FAFC', cursor: match.p2?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{ fontSize: '0.82rem', fontWeight: match.winner?.id === match.p2?.id ? 800 : 600, color: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {match.p2 ? match.p2.name : '\u00A0'}
                         </span>
-                        {match.winner?.id === match.p2?.id && <span style={{ fontSize: '1rem' }}>🏆</span>}
+                        {match.score && (
+                          <div style={{ display: 'flex', gap: '0.2rem', flexShrink: 0 }}>
+                            {parseScore(match.score, 1).map((s, i) => (
+                              <span key={i} style={{ fontSize: '0.72rem', fontWeight: 800, background: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#F59E0B' : '#16A34A') : '#E2E8F0', color: match.winner?.id === match.p2?.id ? 'white' : '#475569', borderRadius: '3px', padding: '0.05rem 0.3rem', minWidth: '1.2rem', textAlign: 'center' }}>{s}</span>
+                            ))}
+                          </div>
+                        )}
+                        {match.winner?.id === match.p2?.id && <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>🏆</span>}
                       </div>
-                      
-                      {(!match.p1?.isBye && !match.p2?.isBye) && (
-                         <div style={{ padding: match.score ? '0.6rem' : '0.4rem', backgroundColor: match.score ? '#1E293B' : '#F1F5F9', borderTop: '1px solid #E2E8F0', textAlign: 'center', transition: 'all 0.2s' }}>
-                            {isExporting ? (
-                               <span style={{ color: match.score ? '#F8FAFC' : '#94A3B8', fontSize: match.score ? '1rem' : '0.65rem', fontWeight: 800, letterSpacing: match.score ? '0.1em' : '0.05em', display: 'block', width: '100%', textTransform: 'uppercase' }}>
-                                  {match.score ? match.score : 'Pendiente'}
-                               </span>
-                            ) : (
-                               <button onClick={() => handleEditScore(match, bracket.isCons, cat)} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#F8FAFC' : '#64748B', fontSize: match.score ? '1rem' : '0.75rem', fontWeight: 800, letterSpacing: match.score ? '0.1em' : '0.05em' }}>
-                                 {match.score ? match.score : '+ Añadir Resultado'}
-                               </button>
-                            )}
+
+                      {(!match.p1?.isBye && !match.p2?.isBye) && !isExporting && (
+                         <div style={{ padding: '0.35rem', borderTop: '1px solid #F1F5F9', textAlign: 'center' }}>
+                           <button onClick={() => handleEditScore(match, bracket.isCons, cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#64748B' : '#2563EB', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit' }}>
+                             {match.score ? '✎ Editar resultado' : '+ Añadir resultado'}
+                           </button>
                          </div>
                       )}
                     </div>
