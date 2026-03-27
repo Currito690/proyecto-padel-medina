@@ -247,16 +247,25 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (activeTab !== 'bookings') return;
     setLoadingAllBookings(true);
-    supabase
-      .from('bookings')
-      .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)')
-      .order('date', { ascending: false })
-      .order('time_slot', { ascending: true })
-      .then(({ data, error }) => {
-        if (error) console.error('Error cargando reservas:', error);
-        setAllDbBookings(data || []);
-        setLoadingAllBookings(false);
-      });
+    (async () => {
+      const { data: bookings, error } = await supabase
+        .from('bookings')
+        .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)')
+        .order('date', { ascending: false })
+        .order('time_slot', { ascending: true });
+      if (error) { console.error('Error cargando reservas:', error); setLoadingAllBookings(false); return; }
+      const rows = bookings || [];
+      if (rows.length > 0) {
+        const userIds = [...new Set(rows.map(b => b.user_id))];
+        const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
+        const profileMap = {};
+        (profiles || []).forEach(p => { profileMap[p.id] = p; });
+        setAllDbBookings(rows.map(b => ({ ...b, profiles: profileMap[b.user_id] || null })));
+      } else {
+        setAllDbBookings([]);
+      }
+      setLoadingAllBookings(false);
+    })();
   }, [activeTab]);
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -696,11 +705,21 @@ const AdminDashboard = () => {
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
                       <p className="section-label" style={{ margin: 0 }}>Todas las reservas ({allDbBookings.length})</p>
-                      <button onClick={() => {
+                      <button onClick={async () => {
                         setLoadingAllBookings(true);
                         const today = new Date().toISOString().split('T')[0];
-                        supabase.from('bookings').select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)').gte('date', today).order('date').order('time_slot')
-                          .then(({ data }) => { setAllDbBookings(data || []); setLoadingAllBookings(false); });
+                        const { data: bookings } = await supabase.from('bookings').select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)').gte('date', today).order('date').order('time_slot');
+                        const rows = bookings || [];
+                        if (rows.length > 0) {
+                          const userIds = [...new Set(rows.map(b => b.user_id))];
+                          const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
+                          const profileMap = {};
+                          (profiles || []).forEach(p => { profileMap[p.id] = p; });
+                          setAllDbBookings(rows.map(b => ({ ...b, profiles: profileMap[b.user_id] || null })));
+                        } else {
+                          setAllDbBookings([]);
+                        }
+                        setLoadingAllBookings(false);
                       }} style={{ background: 'none', border: '1.5px solid #E2E8F0', borderRadius: '0.625rem', padding: '0.4rem 0.75rem', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: '#475569', fontFamily: 'inherit' }}>↻ Actualizar</button>
                     </div>
                     {loadingAllBookings ? (
