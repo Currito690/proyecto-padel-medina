@@ -499,17 +499,13 @@ const AdminDashboard = () => {
         <div className="admin-main">
           {/* Header Only on Mobile/Tablet */}
           <div className="admin-header menu-toggle">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <button aria-label="Abrir panel" onClick={() => setIsSidebarOpen(true)} style={{ padding: '0.5rem', border: '1.5px solid #E2E8F0', borderRadius: '0.5rem', background: 'white', color: '#0F172A', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-              </button>
-              <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '1.1rem', letterSpacing: '-0.02em' }}>
-                {menuItems.find(m => m.key === activeTab)?.label.split(' (')[0]}
-              </span>
-            </div>
-            <div style={{ width: '32px', height: '32px', borderRadius: '0.5rem', background: 'linear-gradient(135deg, #16A34A, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
-            </div>
+            <button aria-label="Abrir panel" onClick={() => setIsSidebarOpen(true)} style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+              <img src="/logo.png" alt="Padel Medina" style={{ height: '36px', objectFit: 'contain' }} />
+            </button>
+            <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '1.05rem', letterSpacing: '-0.02em' }}>
+              {menuItems.find(m => m.key === activeTab)?.label.split(' (')[0]}
+            </span>
+            <div style={{ width: '32px' }} />
           </div>
 
           <div className="admin-body">
