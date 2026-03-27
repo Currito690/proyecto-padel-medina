@@ -924,7 +924,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          return (
             <div key={cat} style={{ marginBottom: '4rem' }}>
                <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', color: 'white', borderRadius: '1rem', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>Categoría: {cat}</h2>
+                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'white' }}>Categoría: {cat}</h2>
                   {!isExporting && catCons.length === 0 && (
                     <button onClick={() => generateConsolation(cat)} style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>
                       🏆 Generar Consolación ({cat})
