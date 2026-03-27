@@ -26,10 +26,15 @@ export default function TournamentRegistration() {
   const [p2Phone, setP2Phone] = useState('');
   
   // Unavailable blocks
-  const [unavailableTimes, setUnavailableTimes] = useState([]);
-  const [selectedDay, setSelectedDay] = useState('');
-  const [startHour, setStartHour] = useState('');
-  const [endHour, setEndHour] = useState('');
+  const [unavailableTimes1, setUnavailableTimes1] = useState([]);
+  const [selectedDay1, setSelectedDay1] = useState('');
+  const [startHour1, setStartHour1] = useState('');
+  const [endHour1, setEndHour1] = useState('');
+
+  const [unavailableTimes2, setUnavailableTimes2] = useState([]);
+  const [selectedDay2, setSelectedDay2] = useState('');
+  const [startHour2, setStartHour2] = useState('');
+  const [endHour2, setEndHour2] = useState('');
 
   useEffect(() => {
     const fetchTournament = async () => {
@@ -64,10 +69,10 @@ export default function TournamentRegistration() {
     return [...DAYS.slice(sIdx), ...DAYS.slice(0, eIdx + 1)];
   })();
 
-  const activeHours = (() => {
+  const activeHours1 = (() => {
     if (!tournament) return HOURS;
     const tConfig = tournament.config;
-    const isFirstDay = selectedDay === tConfig.startDay;
+    const isFirstDay = selectedDay1 === tConfig.startDay;
     const startHourStr = isFirstDay && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : tConfig.startHour;
     const sIdx = HOURS.indexOf(startHourStr);
     const eIdx = HOURS.indexOf(tConfig.endHour);
@@ -75,7 +80,25 @@ export default function TournamentRegistration() {
     return HOURS;
   })();
 
-  const addUnavailableTime = () => {
+  const activeHours2 = (() => {
+    if (!tournament) return HOURS;
+    const tConfig = tournament.config;
+    const isFirstDay = selectedDay2 === tConfig.startDay;
+    const startHourStr = isFirstDay && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : tConfig.startHour;
+    const sIdx = HOURS.indexOf(startHourStr);
+    const eIdx = HOURS.indexOf(tConfig.endHour);
+    if (sIdx <= eIdx) return HOURS.slice(sIdx, eIdx + 1);
+    return HOURS;
+  })();
+
+  const addUnavailableTime = (playerNum) => {
+    const selectedDay = playerNum === 1 ? selectedDay1 : selectedDay2;
+    const startHour = playerNum === 1 ? startHour1 : startHour2;
+    const endHour = playerNum === 1 ? endHour1 : endHour2;
+    const setT = playerNum === 1 ? setUnavailableTimes1 : setUnavailableTimes2;
+    const tList = playerNum === 1 ? unavailableTimes1 : unavailableTimes2;
+    const playerName = playerNum === 1 ? (p1Name || 'Jugador 1') : (p2Name || 'Jugador 2');
+
     if (!selectedDay || !startHour || !endHour) return;
     const startIndex = HOURS.indexOf(startHour);
     const endIndex = HOURS.indexOf(endHour);
@@ -87,14 +110,15 @@ export default function TournamentRegistration() {
 
     const rangeSlots = HOURS.slice(startIndex, endIndex).map(h => `${selectedDay} ${h}`);
     
-    setUnavailableTimes([
-      ...unavailableTimes, 
-      { id: Date.now().toString(), day: selectedDay, label: `${selectedDay} de ${startHour} a ${endHour}`, slots: rangeSlots }
+    setT([
+      ...tList, 
+      { id: Date.now().toString(), day: selectedDay, label: `${selectedDay} de ${startHour} a ${endHour} (${playerName})`, slots: rangeSlots }
     ]);
   };
 
-  const removeUnavailableTime = (tid) => {
-    setUnavailableTimes(prev => prev.filter(p => p.id !== tid));
+  const removeUnavailableTime = (tid, playerNum) => {
+    const setT = playerNum === 1 ? setUnavailableTimes1 : setUnavailableTimes2;
+    setT(prev => prev.filter(p => p.id !== tid));
   };
 
   const handleSubmit = async (e) => {
@@ -116,7 +140,7 @@ export default function TournamentRegistration() {
         player2_name: p2Name,
         player2_email: p2Email,
         player2_phone: p2Phone,
-        unavailable_times: unavailableTimes
+        unavailable_times: [...unavailableTimes1, ...unavailableTimes2]
       });
       
     if (insError) {
@@ -214,12 +238,50 @@ export default function TournamentRegistration() {
               <span style={{ width: '24px', height: '24px', backgroundColor: '#0F172A', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem' }}>2</span>
               Jugador 1
             </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
               <input type="text" required placeholder="Nombre Completo" value={p1Name} onChange={e => setP1Name(e.target.value)} style={{ padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', width: '100%', boxSizing: 'border-box' }} />
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <input type="email" placeholder="Correo (Opcional)" value={p1Email} onChange={e => setP1Email(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
                 <input type="tel" placeholder="Teléfono" value={p1Phone} onChange={e => setP1Phone(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
               </div>
+            </div>
+
+            {/* Restricciones Jugador 1 */}
+            <div style={{ backgroundColor: '#F8FAFC', padding: '1rem', borderRadius: '1rem', border: '1px solid #E2E8F0' }}>
+              <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#64748B' }}>Días y horas que <strong>NO puede jugar</strong> el Jugador 1:</p>
+              
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
+                <select value={selectedDay1} onChange={e => setSelectedDay1(e.target.value)} style={{ flex: '1 1 120px', padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                  <option value="">-- Día --</option>
+                  {activeDays.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flex: '2 1 200px' }}>
+                  <span style={{ fontSize: '0.85rem', color: '#64748B' }}>de</span>
+                  <select value={startHour1} onChange={e => setStartHour1(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                    <option value="">-- H --</option>
+                    {activeHours1.slice(0, activeHours1.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  <span style={{ fontSize: '0.85rem', color: '#64748B' }}>a</span>
+                  <select value={endHour1} onChange={e => setEndHour1(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                    <option value="">-- H --</option>
+                    {activeHours1.slice(activeHours1.indexOf(startHour1) + 1).map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </div>
+                <button type="button" onClick={() => addUnavailableTime(1)} style={{ flex: '1 1 100%', padding: '0.75rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', borderRadius: '0.5rem', fontWeight: 600, cursor: 'pointer', marginTop: '0.5rem' }}>
+                  Añadir No-Disponibilidad (J1)
+                </button>
+              </div>
+
+              {unavailableTimes1.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  {unavailableTimes1.map(pref => (
+                     <div key={pref.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', backgroundColor: '#FFF0F2', border: '1px solid #FFE4E6', borderRadius: '0.5rem', fontSize: '0.85rem', color: '#BE123C', fontWeight: 600 }}>
+                       <span>🚫 {pref.label.split('(')[0].trim()}</span>
+                       <button type="button" onClick={() => removeUnavailableTime(pref.id, 1)} style={{ background: 'none', border: 'none', color: '#BE123C', cursor: 'pointer', fontSize: '1rem', padding: 0 }}>×</button>
+                     </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 
@@ -229,52 +291,46 @@ export default function TournamentRegistration() {
               <span style={{ width: '24px', height: '24px', backgroundColor: '#0F172A', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem' }}>3</span>
               Jugador 2
             </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
               <input type="text" required placeholder="Nombre Completo" value={p2Name} onChange={e => setP2Name(e.target.value)} style={{ padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', width: '100%', boxSizing: 'border-box' }} />
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <input type="email" placeholder="Correo (Opcional)" value={p2Email} onChange={e => setP2Email(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
                 <input type="tel" placeholder="Teléfono" value={p2Phone} onChange={e => setP2Phone(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
               </div>
             </div>
-          </section>
 
-          {/* Restricciones horarias */}
-          <section>
-             <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem', fontWeight: 800, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ width: '24px', height: '24px', backgroundColor: '#0F172A', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem' }}>4</span>
-              Horas de NO disponibilidad
-            </h2>
+            {/* Restricciones Jugador 2 */}
             <div style={{ backgroundColor: '#F8FAFC', padding: '1rem', borderRadius: '1rem', border: '1px solid #E2E8F0' }}>
-              <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#64748B' }}>Añade qué días y a qué horas <strong>NO podéis jugar</strong> por trabajo u otros motivos.</p>
+              <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#64748B' }}>Días y horas que <strong>NO puede jugar</strong> el Jugador 2:</p>
               
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
-                <select value={selectedDay} onChange={e => setSelectedDay(e.target.value)} style={{ flex: '1 1 120px', padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                <select value={selectedDay2} onChange={e => setSelectedDay2(e.target.value)} style={{ flex: '1 1 120px', padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
                   <option value="">-- Día --</option>
                   {activeDays.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flex: '2 1 200px' }}>
                   <span style={{ fontSize: '0.85rem', color: '#64748B' }}>de</span>
-                  <select value={startHour} onChange={e => setStartHour(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                  <select value={startHour2} onChange={e => setStartHour2(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
                     <option value="">-- H --</option>
-                    {activeHours.slice(0, activeHours.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
+                    {activeHours2.slice(0, activeHours2.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
                   </select>
                   <span style={{ fontSize: '0.85rem', color: '#64748B' }}>a</span>
-                  <select value={endHour} onChange={e => setEndHour(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                  <select value={endHour2} onChange={e => setEndHour2(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
                     <option value="">-- H --</option>
-                    {activeHours.slice(activeHours.indexOf(startHour) + 1).map(h => <option key={h} value={h}>{h}</option>)}
+                    {activeHours2.slice(activeHours2.indexOf(startHour2) + 1).map(h => <option key={h} value={h}>{h}</option>)}
                   </select>
                 </div>
-                <button type="button" onClick={addUnavailableTime} style={{ flex: '1 1 100%', padding: '0.75rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', borderRadius: '0.5rem', fontWeight: 600, cursor: 'pointer', marginTop: '0.5rem' }}>
-                  Añadir Horario
+                <button type="button" onClick={() => addUnavailableTime(2)} style={{ flex: '1 1 100%', padding: '0.75rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', borderRadius: '0.5rem', fontWeight: 600, cursor: 'pointer', marginTop: '0.5rem' }}>
+                  Añadir No-Disponibilidad (J2)
                 </button>
               </div>
 
-              {unavailableTimes.length > 0 && (
+              {unavailableTimes2.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  {unavailableTimes.map(pref => (
+                  {unavailableTimes2.map(pref => (
                      <div key={pref.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', backgroundColor: '#FFF0F2', border: '1px solid #FFE4E6', borderRadius: '0.5rem', fontSize: '0.85rem', color: '#BE123C', fontWeight: 600 }}>
-                       <span>🚫 No disponible {pref.label}</span>
-                       <button type="button" onClick={() => removeUnavailableTime(pref.id)} style={{ background: 'none', border: 'none', color: '#BE123C', cursor: 'pointer', fontSize: '1rem', padding: 0 }}>×</button>
+                       <span>🚫 {pref.label.split('(')[0].trim()}</span>
+                       <button type="button" onClick={() => removeUnavailableTime(pref.id, 2)} style={{ background: 'none', border: 'none', color: '#BE123C', cursor: 'pointer', fontSize: '1rem', padding: 0 }}>×</button>
                      </div>
                   ))}
                 </div>
