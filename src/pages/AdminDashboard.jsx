@@ -128,6 +128,7 @@ const AdminDashboard = () => {
   const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
   const [moveTargetTime, setMoveTargetTime] = useState('');
   const [moveSlotInfo, setMoveSlotInfo] = useState(null); // null | 'checking' | 'available' | 'conflict'
+  const [showStats, setShowStats] = useState(true);
 
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked] = await Promise.all([
@@ -416,7 +417,7 @@ const AdminDashboard = () => {
         }
         .sidebar-overlay.open { opacity: 1; pointer-events: auto; }
 
-        .admin-main { flex: 1; display: flex; flex-direction: column; width: 100%; min-height: 100vh; }
+        .admin-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 100vh; }
         .admin-header { background: white; border-bottom: 1px solid var(--color-border); padding: 0.875rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm); }
         .admin-body { flex: 1; padding: 1.5rem 1.25rem; max-width: 100%; width: 100%; }
 
@@ -511,7 +512,18 @@ const AdminDashboard = () => {
           </div>
 
           <div className="admin-body">
+          {/* Stats toggle header */}
+          <button
+            onClick={() => setShowStats(v => !v)}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 0.5rem', color: '#94A3B8', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'inherit' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.2s', transform: showStats ? 'rotate(0deg)' : 'rotate(-90deg)' }}>
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            Dashboard
+          </button>
           {/* Stats */}
+          {showStats && (
           <div className="stats-grid">
             {[
               { label: 'Reservas hoy', value: allBookings.length, color: '#16A34A', bg: '#F0FDF4', border: '#86EFAC' },
@@ -524,6 +536,7 @@ const AdminDashboard = () => {
               </div>
             ))}
           </div>
+          )}
 
           {/* Tabs removed in favor of sidebar */}
 
