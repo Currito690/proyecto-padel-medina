@@ -250,7 +250,6 @@ const AdminDashboard = () => {
     supabase
       .from('bookings')
       .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)')
-      .eq('status', 'confirmed')
       .order('date', { ascending: false })
       .order('time_slot', { ascending: true })
       .then(({ data, error }) => {
@@ -700,7 +699,7 @@ const AdminDashboard = () => {
                       <button onClick={() => {
                         setLoadingAllBookings(true);
                         const today = new Date().toISOString().split('T')[0];
-                        supabase.from('bookings').select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)').eq('status', 'confirmed').gte('date', today).order('date').order('time_slot')
+                        supabase.from('bookings').select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)').gte('date', today).order('date').order('time_slot')
                           .then(({ data }) => { setAllDbBookings(data || []); setLoadingAllBookings(false); });
                       }} style={{ background: 'none', border: '1.5px solid #E2E8F0', borderRadius: '0.625rem', padding: '0.4rem 0.75rem', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: '#475569', fontFamily: 'inherit' }}>↻ Actualizar</button>
                     </div>
@@ -726,7 +725,7 @@ const AdminDashboard = () => {
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                               {grouped[day].map(b => (
-                                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', backgroundColor: 'white', borderRadius: '0.875rem', padding: '0.875rem', border: '1px solid #E2E8F0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+                                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', backgroundColor: b.status === 'cancelled' ? '#FFF7F7' : 'white', borderRadius: '0.875rem', padding: '0.875rem', border: `1px solid ${b.status === 'cancelled' ? '#FECACA' : '#E2E8F0'}`, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: b.status === 'cancelled' ? 0.7 : 1 }}>
                                   <div style={{ width: '40px', height: '40px', borderRadius: '0.625rem', background: b.courts?.gradient || 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                     <span style={{ fontSize: '1rem' }}>{b.courts?.sport === 'Pádel' ? '🎾' : '🏓'}</span>
                                   </div>
@@ -735,21 +734,24 @@ const AdminDashboard = () => {
                                     <p style={{ margin: '0.1rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
                                       {b.time_slot} · {b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente'}
                                       {b.is_free && <span style={{ marginLeft: '0.4rem', backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>GRATIS</span>}
+                                      {b.status === 'cancelled' && <span style={{ marginLeft: '0.4rem', backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>CANCELADA</span>}
                                     </p>
                                   </div>
-                                  <button onClick={() => {
-                                    setMoveBooking({ id: b.id, courtId: b.court_id, courtName: b.courts?.name || 'Pista', date: b.date, time: b.time_slot, client: b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente' });
-                                    setMoveTargetDate(b.date);
-                                    setMoveTargetCourtId(b.court_id);
-                                    setMoveTargetTime(b.time_slot);
-                                    setMoveSlotInfo(null);
-                                  }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
-                                    Mover
-                                  </button>
-                                  <button onClick={() => cancelDbBooking(b.id)}
-                                    style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
-                                    Cancelar
-                                  </button>
+                                  {b.status !== 'cancelled' && <>
+                                    <button onClick={() => {
+                                      setMoveBooking({ id: b.id, courtId: b.court_id, courtName: b.courts?.name || 'Pista', date: b.date, time: b.time_slot, client: b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente' });
+                                      setMoveTargetDate(b.date);
+                                      setMoveTargetCourtId(b.court_id);
+                                      setMoveTargetTime(b.time_slot);
+                                      setMoveSlotInfo(null);
+                                    }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
+                                      Mover
+                                    </button>
+                                    <button onClick={() => cancelDbBooking(b.id)}
+                                      style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
+                                      Cancelar
+                                    </button>
+                                  </>}
                                 </div>
                               ))}
                             </div>
