@@ -416,19 +416,22 @@ const AdminDashboard = () => {
         }
         .sidebar-overlay.open { opacity: 1; pointer-events: auto; }
 
-        .admin-main { flex: 1; display: flex; flex-direction: column; width: 100%; min-height: 100vh; transition: padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .admin-main { flex: 1; display: flex; flex-direction: column; width: 100%; min-height: 100vh; }
         .admin-header { background: white; border-bottom: 1px solid var(--color-border); padding: 0.875rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm); }
-        .admin-body { flex: 1; padding: 1.5rem 1.25rem; max-width: 1060px; margin: 0 auto; width: 100%; }
+        .admin-body { flex: 1; padding: 1.5rem 1.25rem; max-width: 100%; width: 100%; }
 
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
         .slots-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }
+        .courts-list { display: flex; flex-direction: column; gap: 1.25rem; }
 
         @media (min-width: 480px) { .slots-grid { grid-template-columns: repeat(7, 1fr); } }
         @media (min-width: 1024px) {
+          .admin-sidebar { transform: translateX(0) !important; position: sticky; height: 100vh; top: 0; }
           .sidebar-overlay { display: none; }
-          .admin-main.sidebar-open { padding-left: 280px; }
+          .desktop-hide { display: none !important; }
           .admin-header { padding: 0.875rem 2rem; }
           .admin-body { padding: 2rem; }
+          .courts-list { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
         }
         @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
@@ -448,8 +451,8 @@ const AdminDashboard = () => {
             gap: '0.5rem',
             position: 'relative',
           }}>
-            {/* Close button on mobile */}
-            <button className="menu-toggle" onClick={() => setIsSidebarOpen(false)} style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', background: '#F1F5F9', border: 'none', cursor: 'pointer', padding: '0.4rem', borderRadius: '0.5rem', color: '#64748B', display: 'flex' }}>
+            {/* Close button (mobile only) */}
+            <button className="desktop-hide" onClick={() => setIsSidebarOpen(false)} style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', background: '#F1F5F9', border: 'none', cursor: 'pointer', padding: '0.4rem', borderRadius: '0.5rem', color: '#64748B', display: 'flex' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
 
@@ -495,9 +498,9 @@ const AdminDashboard = () => {
         </aside>
 
         {/* Main Content */}
-        <div className={`admin-main${isSidebarOpen ? ' sidebar-open' : ''}`}>
-          {/* Header */}
-          <div className="admin-header">
+        <div className="admin-main">
+          {/* Header (hidden on desktop) */}
+          <div className="admin-header desktop-hide">
             <button aria-label="Abrir panel" onClick={() => setIsSidebarOpen(true)} style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               <img src="/logo.png" alt="Padel Medina" style={{ height: '36px', objectFit: 'contain' }} />
             </button>
@@ -553,7 +556,7 @@ const AdminDashboard = () => {
                     ))}
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  <div className="courts-list">
                     {courts.map(court => {
                       const isCourtActive = activeSlot?.courtId === court.id;
                       const selectedSlotData = isCourtActive ? slots[court.id]?.[activeSlot.time] : null;
