@@ -956,13 +956,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       </div>
                     </div>
             
-            <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'stretch' }}>
               {bracket.data.map((roundMatches, rIdx) => (
                 <div key={`round-${rIdx}`} style={{ display: 'flex', flexDirection: 'column', minWidth: '220px' }}>
-                  <h4 style={{ textAlign: 'center', color: '#16A34A', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 0.75rem 0', padding: '0.4rem 0.75rem', backgroundColor: '#F0FDF4', borderRadius: '0.5rem', border: '1px solid #DCFCE7', whiteSpace: 'nowrap' }}>
+                  <h4 style={{ textAlign: 'center', color: '#16A34A', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 0.5rem 0', padding: '0.35rem 0.75rem', backgroundColor: '#F0FDF4', borderRadius: '0.5rem', border: '1px solid #DCFCE7', whiteSpace: 'nowrap', flexShrink: 0 }}>
                     {getRoundName(rIdx, bracket.data.length)}
                   </h4>
-
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around' }}>
                   {roundMatches.map(match => (
                     <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', margin: '1rem 0', opacity: match.p1?.isBye && match.p2?.isBye ? 0.3 : 1 }}>
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
@@ -1034,6 +1034,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       )}
                     </div>
                   ))}
+                  </div>
                 </div>
               ))}
 
