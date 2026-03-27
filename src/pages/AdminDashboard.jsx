@@ -103,7 +103,7 @@ const AdminDashboard = () => {
 
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('schedule');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
   const [financialStats, setFinancialStats] = useState({ total: 0, month: 0, today: 0, totalBookings: 0 });
   const [savingSettings, setSavingSettings] = useState(false);
@@ -404,31 +404,30 @@ const AdminDashboard = () => {
     <>
       <style>{`
         .admin-layout { display: flex; min-height: 100vh; background: var(--color-bg-secondary); }
-        .admin-sidebar { 
+        .admin-sidebar {
           width: 280px; background: white; border-right: 1px solid var(--color-border);
           display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
           transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .admin-sidebar.open { transform: translateX(0); }
-        .sidebar-overlay { 
+        .sidebar-overlay {
           position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40;
           opacity: 0; pointer-events: none; transition: opacity 0.3s;
         }
         .sidebar-overlay.open { opacity: 1; pointer-events: auto; }
-        
-        .admin-main { flex: 1; display: flex; flex-direction: column; width: 100%; min-height: 100vh; }
+
+        .admin-main { flex: 1; display: flex; flex-direction: column; width: 100%; min-height: 100vh; transition: padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .admin-header { background: white; border-bottom: 1px solid var(--color-border); padding: 0.875rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm); }
         .admin-body { flex: 1; padding: 1.5rem 1.25rem; max-width: 1060px; margin: 0 auto; width: 100%; }
-        
+
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
         .slots-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }
-        
+
         @media (min-width: 480px) { .slots-grid { grid-template-columns: repeat(7, 1fr); } }
-        @media (min-width: 1024px) { 
-          .admin-sidebar { transform: translateX(0); position: sticky; height: 100vh; }
+        @media (min-width: 1024px) {
           .sidebar-overlay { display: none; }
-          .menu-toggle { display: none; }
-          .admin-header { padding: 1.25rem 2rem; }
+          .admin-main.sidebar-open { padding-left: 280px; }
+          .admin-header { padding: 0.875rem 2rem; }
           .admin-body { padding: 2rem; }
         }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -496,9 +495,9 @@ const AdminDashboard = () => {
         </aside>
 
         {/* Main Content */}
-        <div className="admin-main">
-          {/* Header Only on Mobile/Tablet */}
-          <div className="admin-header menu-toggle">
+        <div className={`admin-main${isSidebarOpen ? ' sidebar-open' : ''}`}>
+          {/* Header */}
+          <div className="admin-header">
             <button aria-label="Abrir panel" onClick={() => setIsSidebarOpen(true)} style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               <img src="/logo.png" alt="Padel Medina" style={{ height: '36px', objectFit: 'contain' }} />
             </button>
