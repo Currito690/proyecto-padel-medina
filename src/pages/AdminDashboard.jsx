@@ -271,8 +271,19 @@ const AdminDashboard = () => {
 
     if (action === 'reserve') {
       const bookUserId = selectedUserId || user.id;
+      const bookedUserName = allUsers.find(u => u.id === bookUserId)?.name || user.name || 'Cliente';
+      const courtName = courts.find(c => c.id === courtId)?.name || 'Pista';
       const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true });
       actionError = error;
+      if (!error) {
+        supabase.functions.invoke('send-push', {
+          body: {
+            title: 'Nueva reserva',
+            body: `${bookedUserName} — ${courtName} · ${time} · ${formatDate(selectedDate)}`,
+            url: '/admin',
+          },
+        }).catch(() => {});
+      }
       setSelectedUserId(null);
       setShowUserPicker(false);
     } else if (action === 'block') {
