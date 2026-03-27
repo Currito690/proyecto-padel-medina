@@ -215,10 +215,10 @@ export default function TournamentRegistration() {
               Jugador 1
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <input type="text" required placeholder="Nombre Completo" value={p1Name} onChange={e => setP1Name(e.target.value)} style={{ padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1' }} />
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <input type="email" placeholder="Correo (Opcional)" value={p1Email} onChange={e => setP1Email(e.target.value)} style={{ flex: 1, padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1' }} />
-                <input type="tel" placeholder="Teléfono" value={p1Phone} onChange={e => setP1Phone(e.target.value)} style={{ flex: 1, padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1' }} />
+              <input type="text" required placeholder="Nombre Completo" value={p1Name} onChange={e => setP1Name(e.target.value)} style={{ padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', width: '100%', boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <input type="email" placeholder="Correo (Opcional)" value={p1Email} onChange={e => setP1Email(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
+                <input type="tel" placeholder="Teléfono" value={p1Phone} onChange={e => setP1Phone(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
               </div>
             </div>
           </section>
@@ -230,10 +230,10 @@ export default function TournamentRegistration() {
               Jugador 2
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <input type="text" required placeholder="Nombre Completo" value={p2Name} onChange={e => setP2Name(e.target.value)} style={{ padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1' }} />
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <input type="email" placeholder="Correo (Opcional)" value={p2Email} onChange={e => setP2Email(e.target.value)} style={{ flex: 1, padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1' }} />
-                <input type="tel" placeholder="Teléfono" value={p2Phone} onChange={e => setP2Phone(e.target.value)} style={{ flex: 1, padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1' }} />
+              <input type="text" required placeholder="Nombre Completo" value={p2Name} onChange={e => setP2Name(e.target.value)} style={{ padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', width: '100%', boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <input type="email" placeholder="Correo (Opcional)" value={p2Email} onChange={e => setP2Email(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
+                <input type="tel" placeholder="Teléfono" value={p2Phone} onChange={e => setP2Phone(e.target.value)} style={{ flex: '1 1 150px', padding: '0.875rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', boxSizing: 'border-box' }} />
               </div>
             </div>
           </section>
@@ -248,22 +248,24 @@ export default function TournamentRegistration() {
               <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#64748B' }}>Añade qué días y a qué horas <strong>NO podéis jugar</strong> por trabajo u otros motivos.</p>
               
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
-                <select value={selectedDay} onChange={e => setSelectedDay(e.target.value)} style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer' }}>
+                <select value={selectedDay} onChange={e => setSelectedDay(e.target.value)} style={{ flex: '1 1 120px', padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
                   <option value="">-- Día --</option>
                   {activeDays.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
-                <span style={{ fontSize: '0.85rem', color: '#64748B' }}>de</span>
-                <select value={startHour} onChange={e => setStartHour(e.target.value)} style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer' }}>
-                  <option value="">-- H --</option>
-                  {activeHours.slice(0, activeHours.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
-                </select>
-                <span style={{ fontSize: '0.85rem', color: '#64748B' }}>a</span>
-                <select value={endHour} onChange={e => setEndHour(e.target.value)} style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer' }}>
-                  <option value="">-- H --</option>
-                  {activeHours.slice(activeHours.indexOf(startHour) + 1).map(h => <option key={h} value={h}>{h}</option>)}
-                </select>
-                <button type="button" onClick={addUnavailableTime} style={{ padding: '0.5rem 1rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', borderRadius: '0.5rem', fontWeight: 600, cursor: 'pointer' }}>
-                  Añadir
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flex: '2 1 200px' }}>
+                  <span style={{ fontSize: '0.85rem', color: '#64748B' }}>de</span>
+                  <select value={startHour} onChange={e => setStartHour(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                    <option value="">-- H --</option>
+                    {activeHours.slice(0, activeHours.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  <span style={{ fontSize: '0.85rem', color: '#64748B' }}>a</span>
+                  <select value={endHour} onChange={e => setEndHour(e.target.value)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', cursor: 'pointer', boxSizing: 'border-box' }}>
+                    <option value="">-- H --</option>
+                    {activeHours.slice(activeHours.indexOf(startHour) + 1).map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </div>
+                <button type="button" onClick={addUnavailableTime} style={{ flex: '1 1 100%', padding: '0.75rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', borderRadius: '0.5rem', fontWeight: 600, cursor: 'pointer', marginTop: '0.5rem' }}>
+                  Añadir Horario
                 </button>
               </div>
 
