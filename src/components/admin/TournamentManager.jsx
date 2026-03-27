@@ -619,8 +619,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const roundsLeft = totalRounds - roundIndex;
     if (roundsLeft === 1) return 'Final';
     if (roundsLeft === 2) return 'Semifinales';
-    if (roundsLeft === 3) return 'Cuartos';
-    if (roundsLeft === 4) return 'Octavos';
+    if (roundsLeft === 3) return 'Cuartos de Final';
+    if (roundsLeft === 4) return 'Octavos de Final';
+    if (roundsLeft === 5) return 'Dieciseisavos';
+    if (roundsLeft === 6) return 'Treintaidosavos';
+    if (roundsLeft === 7) return 'Sesentaicuatroavos';
     return `Ronda ${roundIndex + 1}`;
   };
 
