@@ -51,9 +51,18 @@ export default function TournamentRegistration() {
         setTournament(data);
         const categories = data.config?.categories?.split(',').map(c => c.trim()).filter(Boolean) || [];
         setCat(categories[0] || '');
-        setSelectedDay(data.config?.startDay || '');
-        setStartHour(data.config?.startHour || '');
-        setEndHour(HOURS[HOURS.indexOf(data.config?.startHour || '09:00') + 1] || '22:00');
+        
+        const initStartHour = data.config?.startHour || '09:00';
+        const initEndHour = HOURS[HOURS.indexOf(initStartHour) + 1] || '22:00';
+        const initStartDay = data.config?.startDay || '';
+
+        setSelectedDay1(initStartDay);
+        setStartHour1(initStartHour);
+        setEndHour1(initEndHour);
+
+        setSelectedDay2(initStartDay);
+        setStartHour2(initStartHour);
+        setEndHour2(initEndHour);
       }
       setLoading(false);
     };
