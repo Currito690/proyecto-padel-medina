@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
 import TournamentManager from '../components/admin/TournamentManager';
+import DateSelector from '../components/booking/DateSelector';
 
 const TIMES = ['09:00 - 10:30', '10:30 - 12:00', '12:00 - 13:30', '16:00 - 17:30', '17:30 - 19:00', '19:00 - 20:30', '20:30 - 22:00'];
 
@@ -121,6 +122,7 @@ const AdminDashboard = () => {
   const [showUserPicker, setShowUserPicker] = useState(false);
   const [allDbBookings, setAllDbBookings] = useState([]);
   const [loadingAllBookings, setLoadingAllBookings] = useState(false);
+  const [bookingsDate, setBookingsDate] = useState(new Date().toISOString().split('T')[0]);
   const [moveBooking, setMoveBooking] = useState(null); // { id, courtId, courtName, date, time, client }
   const [moveTargetDate, setMoveTargetDate] = useState('');
   const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
@@ -251,7 +253,7 @@ const AdminDashboard = () => {
       const { data: bookings, error } = await supabase
         .from('bookings')
         .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)')
-        .order('date', { ascending: false })
+        .eq('date', bookingsDate)
         .order('time_slot', { ascending: true });
       if (error) { console.error('Error cargando reservas:', error); setLoadingAllBookings(false); return; }
       const rows = bookings || [];
@@ -266,7 +268,7 @@ const AdminDashboard = () => {
       }
       setLoadingAllBookings(false);
     })();
-  }, [activeTab]);
+  }, [activeTab, bookingsDate]);
 
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -689,61 +691,43 @@ const AdminDashboard = () => {
 
               {/* ── TAB: RESERVAS ── */}
               {activeTab === 'bookings' && (() => {
-                // Agrupar reservas por fecha
-                const grouped = {};
-                allDbBookings.forEach(b => {
-                  if (!grouped[b.date]) grouped[b.date] = [];
-                  grouped[b.date].push(b);
-                });
-                const days = Object.keys(grouped).sort();
+                const today = new Date().toISOString().split('T')[0];
+                const maxDate = new Date(); maxDate.setDate(maxDate.getDate() + 60);
+                const maxDateStr = maxDate.getFullYear() + '-' + String(maxDate.getMonth()+1).padStart(2,'0') + '-' + String(maxDate.getDate()).padStart(2,'0');
+                const startDate = new Date(); startDate.setDate(startDate.getDate() - 30);
+                const startDateStr = startDate.getFullYear() + '-' + String(startDate.getMonth()+1).padStart(2,'0') + '-' + String(startDate.getDate()).padStart(2,'0');
                 const fmtDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
                 const cancelDbBooking = async (id) => {
                   await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', id);
-                  setAllDbBookings(prev => prev.filter(b => b.id !== id));
+                  setAllDbBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
                 };
                 return (
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-                      <p className="section-label" style={{ margin: 0 }}>Todas las reservas ({allDbBookings.length})</p>
-                      <button onClick={async () => {
-                        setLoadingAllBookings(true);
-                        const today = new Date().toISOString().split('T')[0];
-                        const { data: bookings } = await supabase.from('bookings').select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)').gte('date', today).order('date').order('time_slot');
-                        const rows = bookings || [];
-                        if (rows.length > 0) {
-                          const userIds = [...new Set(rows.map(b => b.user_id))];
-                          const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
-                          const profileMap = {};
-                          (profiles || []).forEach(p => { profileMap[p.id] = p; });
-                          setAllDbBookings(rows.map(b => ({ ...b, profiles: profileMap[b.user_id] || null })));
-                        } else {
-                          setAllDbBookings([]);
-                        }
-                        setLoadingAllBookings(false);
-                      }} style={{ background: 'none', border: '1.5px solid #E2E8F0', borderRadius: '0.625rem', padding: '0.4rem 0.75rem', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: '#475569', fontFamily: 'inherit' }}>↻ Actualizar</button>
+                    <div style={{ marginBottom: '1.25rem' }}>
+                      <DateSelector
+                        selectedDate={bookingsDate}
+                        maxValidDate={maxDateStr}
+                        startDate={startDateStr}
+                        onSelectDate={setBookingsDate}
+                      />
+                      <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#94A3B8', textTransform: 'capitalize', textAlign: 'center' }}>
+                        {fmtDate(bookingsDate)} · {allDbBookings.length} reserva{allDbBookings.length !== 1 ? 's' : ''}
+                      </p>
                     </div>
                     {loadingAllBookings ? (
                       <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>
                         <div style={{ width: '28px', height: '28px', border: '3px solid #DCFCE7', borderTopColor: '#16A34A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
                       </div>
-                    ) : days.length === 0 ? (
+                    ) : allDbBookings.length === 0 ? (
                       <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: '#94A3B8' }}>
                         <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 0.875rem', display: 'block' }}>
                           <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
                         </svg>
-                        <p style={{ fontWeight: 700, margin: 0, color: '#64748B' }}>No hay reservas próximas</p>
+                        <p style={{ fontWeight: 700, margin: 0, color: '#64748B' }}>No hay reservas este día</p>
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                        {days.map(day => (
-                          <div key={day}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '0.625rem' }}>
-                              <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#16A34A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{fmtDate(day)}</span>
-                              <div style={{ flex: 1, height: '1px', backgroundColor: '#E2E8F0' }} />
-                              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8' }}>{grouped[day].length} reserva{grouped[day].length !== 1 ? 's' : ''}</span>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                              {grouped[day].map(b => (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {allDbBookings.map(b => (
                                 <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', backgroundColor: b.status === 'cancelled' ? '#FFF7F7' : 'white', borderRadius: '0.875rem', padding: '0.875rem', border: `1px solid ${b.status === 'cancelled' ? '#FECACA' : '#E2E8F0'}`, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: b.status === 'cancelled' ? 0.7 : 1 }}>
                                   <div style={{ width: '40px', height: '40px', borderRadius: '0.625rem', background: b.courts?.gradient || 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                     <span style={{ fontSize: '1rem' }}>{b.courts?.sport === 'Pádel' ? '🎾' : '🏓'}</span>
@@ -772,9 +756,6 @@ const AdminDashboard = () => {
                                     </button>
                                   </>}
                                 </div>
-                              ))}
-                            </div>
-                          </div>
                         ))}
                       </div>
                     )}

@@ -1,15 +1,20 @@
 import React, { useRef, useEffect } from 'react';
 
-const DateSelector = ({ selectedDate, maxValidDate, onSelectDate }) => {
+const DateSelector = ({ selectedDate, maxValidDate, onSelectDate, startDate }) => {
   const scrollRef = useRef(null);
 
-  // Generar array de fechas desde hoy hasta maxValidDate
+  // Generar array de fechas desde startDate (o hoy) hasta maxValidDate
   const getValidDates = () => {
     const dates = [];
     const now = new Date();
-    // Start at today local
-    let current = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
-    
+    let current;
+    if (startDate) {
+      const parts = startDate.split('-');
+      current = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]), 12, 0, 0);
+    } else {
+      current = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+    }
+
     const maxParts = maxValidDate.split('-');
     const end = new Date(parseInt(maxParts[0]), parseInt(maxParts[1]) - 1, parseInt(maxParts[2]), 12, 0, 0);
 
