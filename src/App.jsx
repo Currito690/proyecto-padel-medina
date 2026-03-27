@@ -1,15 +1,24 @@
-import { useEffect } from 'react';
+import { useEffect, Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { supabase } from './services/supabase';
 import { subscribeAdminToPush } from './services/pushNotifications';
 import MainLayout from './components/layout/MainLayout';
-import BookingDashboard from './pages/BookingDashboard';
-import MyBookings from './pages/MyBookings';
-import Profile from './pages/Profile';
-import AdminDashboard from './pages/AdminDashboard';
+
+const BookingDashboard = lazy(() => import('./pages/BookingDashboard'));
+const MyBookings = lazy(() => import('./pages/MyBookings'));
+const Profile = lazy(() => import('./pages/Profile'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 import Login from './pages/Login';
 import PaymentGateway from './pages/PaymentGateway';
+import TournamentRegistration from './pages/TournamentRegistration';
+
+const PageLoader = () => (
+  <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ width: '40px', height: '40px', border: '3px solid var(--color-bg-elevated)', borderTopColor: 'var(--color-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+    <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+  </div>
+);
 
 function App() {
   const { user, loading } = useAuth();
@@ -47,38 +56,41 @@ function App() {
 
   return (
     <div className="app-container">
-      <Routes>
-        {/* Public Route */}
-        <Route
-          path="/login"
-          element={!user ? <Login /> : <Navigate to="/" replace />}
-        />
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          {/* Public Route */}
+          <Route
+            path="/login"
+            element={!user ? <Login /> : <Navigate to="/" replace />}
+          />
+          <Route path="/torneos/:id" element={<TournamentRegistration />} />
 
-        {/* Admin Routes */}
-        {user?.role === 'admin' && (
-          <Route path="/*" element={<AdminDashboard />} />
-        )}
+          {/* Admin Routes */}
+          {user?.role === 'admin' && (
+            <Route path="/*" element={<AdminDashboard />} />
+          )}
 
-        {/* Client Routes - No Layout */}
-        {user?.role === 'client' && (
-          <Route path="/checkout" element={<PaymentGateway />} />
-        )}
+          {/* Client Routes - No Layout */}
+          {user?.role === 'client' && (
+            <Route path="/checkout" element={<PaymentGateway />} />
+          )}
 
-        {/* Client Routes - With Layout */}
-        {user?.role === 'client' && (
-          <Route element={<MainLayout />}>
-            <Route path="/" element={<BookingDashboard />} />
-            <Route path="/mis-reservas" element={<MyBookings />} />
-            <Route path="/perfil" element={<Profile />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        )}
+          {/* Client Routes - With Layout */}
+          {user?.role === 'client' && (
+            <Route element={<MainLayout />}>
+              <Route path="/" element={<BookingDashboard />} />
+              <Route path="/mis-reservas" element={<MyBookings />} />
+              <Route path="/perfil" element={<Profile />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          )}
 
-        {/* Catch-all fallback */}
-        {!user && (
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        )}
-      </Routes>
+          {/* Catch-all fallback */}
+          {!user && (
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          )}
+        </Routes>
+      </Suspense>
     </div>
   );
 }

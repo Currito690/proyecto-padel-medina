@@ -231,9 +231,10 @@ const BookingDashboard = () => {
           <p style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-accent)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Hola, {firstName}
           </p>
-          <h1 style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
+          <h1 className="sr-only">Padel Medina - Club de Pádel</h1>
+          <h2 style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
             ¿Dónde juegas hoy?
-          </h1>
+          </h2>
         </header>
 
         {slotsLocked && (

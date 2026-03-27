@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { supabase } from '../../services/supabase';
 
 const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const HOURS = [
@@ -23,7 +24,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const savedData = loadSavedState();
+  console.log("DEBUG: TournamentManager rendered, publishedId =", savedData?.publishedId);
   const [phase, setPhase] = useState(savedData?.phase || 'config'); 
+  const [publishedId, setPublishedId] = useState(savedData?.publishedId || null);
+  const [syncing, setSyncing] = useState(false);
   
   const [tConfig, setTConfig] = useState(() => {
     const fallback = {
@@ -74,8 +78,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [selectedHourEnd, setSelectedHourEnd] = useState(HOURS[1]);
 
   useEffect(() => {
-    localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds }));
-  }, [phase, tConfig, participants, rounds, consRounds, tournamentKey]);
+    localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
+  }, [phase, tConfig, participants, rounds, consRounds, publishedId, tournamentKey]);
 
   const handleResetTournament = () => {
     if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
@@ -88,7 +92,65 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       setNewCouple('');
       setNewCoupleCategory('');
       setNewPreferences([]);
+      setPublishedId(null);
     }
+  };
+
+  const handlePublish = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data, error } = await supabase.from('tournaments')
+        .insert({ name: tConfig.name, config: tConfig, admin_id: user?.id })
+        .select()
+        .single();
+        
+      if (error) throw error;
+      setPublishedId(data.id);
+      alert('¡Torneo publicado! Ya puedes enviar el enlace a los jugadores.');
+    } catch (e) {
+      console.error(e);
+      alert('Error al publicar el torneo. Comprueba tu conexión o verifica que la base de datos esté lista.');
+    }
+  };
+
+  const syncRegistrations = async () => {
+    if (!publishedId) return;
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.from('tournament_registrations')
+        .select('*')
+        .eq('tournament_id', publishedId);
+      
+      if (error) throw error;
+      
+      const newParticipants = [];
+      data.forEach(reg => {
+        const prefRules = reg.unavailable_times || [];
+        const prefNames = prefRules.map(p => p.label);
+        const exists = participants.some(p => p.name === `${reg.player1_name} y ${reg.player2_name}` || p.id === reg.id);
+        
+        if (!exists) {
+          newParticipants.push({
+            id: reg.id,
+            name: `${reg.player1_name} y ${reg.player2_name}`,
+            category: reg.category,
+            prefRules,
+            prefNames
+          });
+        }
+      });
+      
+      if (newParticipants.length > 0) {
+        setParticipants([...participants, ...newParticipants]);
+        alert(`Se han añadido ${newParticipants.length} nuevas parejas desde la web.`);
+      } else {
+        alert('No hay inscripciones nuevas online.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error al sincronizar las inscripciones online.');
+    }
+    setSyncing(false);
   };
 
   const addPreference = () => {
@@ -747,7 +809,45 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            </button>
         </div>
         <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-        <p className="section-label" style={{ marginBottom: '1rem' }}>{tConfig.name ? `Fase 2: Inscripción - ${tConfig.name}` : 'Inscripción de Torneo'}</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <p className="section-label" style={{ margin: 0 }}>{tConfig.name ? `Fase 2: Inscripción - ${tConfig.name}` : 'Inscripción de Torneo'}</p>
+          
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {!publishedId ? (
+              <button onClick={handlePublish} style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                Publicar Link
+              </button>
+            ) : (
+              <button disabled style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#DCFCE7', color: '#16A34A', border: '1px solid #BBF7D0', fontWeight: 700, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                Link Público Activo
+              </button>
+            )}
+            
+            {publishedId && (
+              <button onClick={syncRegistrations} disabled={syncing} style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#0F172A', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: syncing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <svg style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                Sincronizar (Web)
+              </button>
+            )}
+          </div>
+        </div>
+
+        {publishedId && (
+          <div style={{ backgroundColor: '#F8FAFC', padding: '1rem', borderRadius: '1rem', border: '1px dashed #CBD5E1', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <p style={{ margin: '0 0 0.25rem', fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Enlace para jugadores:</p>
+              <a href={`${window.location.origin}/torneos/${publishedId}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.9rem', color: '#2563EB', fontWeight: 600, textDecoration: 'none', wordBreak: 'break-all' }}>
+                {window.location.host}/torneos/{publishedId}
+              </a>
+            </div>
+            <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/torneos/${publishedId}`); alert('¡Enlace copiado al portapapeles!'); }} style={{ marginLeft: '1rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#334155', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+              Copiar
+            </button>
+          </div>
+        )}
+
         <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <form onSubmit={addParticipant} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
