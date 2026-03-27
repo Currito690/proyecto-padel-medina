@@ -15,9 +15,26 @@ function App() {
   const { user, loading } = useAuth();
 
   useEffect(() => {
-    if (user?.role === 'admin') {
-      subscribeAdminToPush(supabase, user.id);
-    }
+    if (user?.role !== 'admin') return;
+
+    subscribeAdminToPush(supabase, user.id);
+
+    const triggerPush = async (title, body) => {
+      await supabase.functions.invoke('send-push', {
+        body: { title, body, url: '/admin' },
+        headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY }
+      });
+    };
+
+    const channel = supabase.channel('admin-push-channel')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bookings' }, () => {
+        triggerPush('Nueva reserva', `Se ha realizado una nueva reserva`);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   if (loading) {
@@ -32,11 +49,11 @@ function App() {
     <div className="app-container">
       <Routes>
         {/* Public Route */}
-        <Route 
-          path="/login" 
-          element={!user ? <Login /> : <Navigate to="/" replace />} 
+        <Route
+          path="/login"
+          element={!user ? <Login /> : <Navigate to="/" replace />}
         />
-        
+
         {/* Admin Routes */}
         {user?.role === 'admin' && (
           <Route path="/*" element={<AdminDashboard />} />

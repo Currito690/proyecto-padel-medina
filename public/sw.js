@@ -2,28 +2,39 @@
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
 
-self.addEventListener('push', (e) => {
-  const data = e.data?.json() ?? { title: 'Padel Medina', body: 'Nueva notificación' };
-  e.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: '/logo.png',
-      badge: '/logo.png',
-      tag: 'padel-reserva',
-      renotify: true,
-      data: { url: data.url || '/' },
-    })
-  );
+self.addEventListener('push', function (event) {
+    const data = event.data ? event.data.json() : {};
+    const title = data.title || 'Padel Medina';
+    const options = {
+        body: data.body || 'Nueva notificación',
+        icon: '/logo.png',
+        badge: '/logo.png',
+        vibrate: [200, 100, 200],
+        requireInteraction: true,
+        data: {
+            url: data.url || '/'
+        }
+    };
+
+    event.waitUntil(
+        self.registration.showNotification(title, options)
+    );
 });
 
-self.addEventListener('notificationclick', (e) => {
-  e.notification.close();
-  e.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const client of list) {
-        if ('focus' in client) return client.focus();
-      }
-      return clients.openWindow(e.notification.data?.url || '/');
-    })
-  );
+self.addEventListener('notificationclick', function (event) {
+    event.notification.close();
+    const url = event.notification.data?.url || '/';
+
+    event.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
+            for (const client of clientList) {
+                if (client.url.includes(self.location.origin) && 'focus' in client) {
+                    return client.focus();
+                }
+            }
+            if (clients.openWindow) {
+                return clients.openWindow(url);
+            }
+        })
+    );
 });

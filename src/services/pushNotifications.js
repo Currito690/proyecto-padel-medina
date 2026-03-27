@@ -13,17 +13,21 @@ export async function subscribeAdminToPush(supabase, userId) {
   if (!VAPID_PUBLIC_KEY) return null;
 
   try {
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+
+    // Limpiar suscripciones antiguas para evitar errores de key mismatch
+    const existingSub = await registration.pushManager.getSubscription();
+    if (existingSub) {
+      await existingSub.unsubscribe();
+    }
+
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') return null;
 
-    let subscription = await registration.pushManager.getSubscription();
-    if (!subscription) {
-      subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-      });
-    }
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
 
     const subJSON = subscription.toJSON();
     await supabase.from('push_subscriptions').upsert(
