@@ -11,7 +11,7 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[window.location.pathname]}>
       <AuthProvider>
         <App />
       </AuthProvider>
