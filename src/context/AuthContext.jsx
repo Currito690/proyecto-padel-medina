@@ -5,7 +5,6 @@ const AuthContext = createContext();
 
 const ADMIN_EMAILS = ['admin@padelmedina.com'];
 
-// Construye el objeto user desde los datos de sesión (sin red, instantáneo)
 const buildUser = (u) => ({
   id: u.id,
   email: u.email,
@@ -27,10 +26,8 @@ export function AuthProvider({ children }) {
       setLoading(false);
     };
 
-    // Timeout de seguridad: si nada responde en 5s, desbloquea la app
     const timeout = setTimeout(() => finish(null), 5000);
 
-    // Obtiene sesión de localStorage (rápido, sin red en la mayoría de casos)
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         clearTimeout(timeout);
@@ -41,7 +38,6 @@ export function AuthProvider({ children }) {
         finish(null);
       });
 
-    // Escucha cambios: login, logout, refresco de token
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'INITIAL_SESSION') return;
       setUser(session?.user ? buildUser(session.user) : null);
@@ -53,6 +49,7 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  // Login con Google
   const loginWithGoogle = async () => {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -60,27 +57,39 @@ export function AuthProvider({ children }) {
     });
   };
 
-  const sendOtpCode = async (email, name) => {
-    const { error } = await supabase.auth.signInWithOtp({ 
-      email, 
-      options: { 
-        data: { name: name || '' },
-        shouldCreateUser: true
-      } 
-    });
+  // Login con email + contraseña
+  const loginWithPassword = async (email, password) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
   };
 
-  const verifyOtpCode = async (email, code) => {
-    const { error, data } = await supabase.auth.verifyOtp({
+  // Registro: crea el usuario y envía email de verificación con código OTP
+  const signupWithEmail = async (email, password, name, phone) => {
+    const { error } = await supabase.auth.signUp({
       email,
-      token: code,
-      type: 'email',
+      password,
+      options: {
+        data: { name: name || '', phone: phone || '' },
+        emailRedirectTo: window.location.origin,
+      },
     });
     if (error) throw error;
-    return data;
+
+    // Guardamos el teléfono en profiles si el usuario ya existe (upsert seguro)
+    // El trigger de Supabase crea el perfil; actualizamos teléfono aquí tras verificación
   };
 
+  // Verificar código OTP de registro
+  const verifySignupOtp = async (email, token) => {
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'signup',
+    });
+    if (error) throw error;
+  };
+
+  // Logout
   const logout = async () => {
     await supabase.auth.signOut();
     setUser(null);
@@ -99,7 +108,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loginWithGoogle, sendOtpCode, verifyOtpCode, logout, loading }}>
+    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

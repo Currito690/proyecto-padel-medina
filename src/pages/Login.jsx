@@ -3,48 +3,55 @@ import { useAuth } from '../context/AuthContext';
 import { sanitizeInput } from '../utils/sanitize';
 
 const Login = () => {
-  const { loginWithGoogle, sendOtpCode, verifyOtpCode } = useAuth();
-  const [isLogin, setIsLogin] = useState(true); // true = Entrar, false = Registrarse
-  const [step, setStep] = useState(1); // 1 = Petición de email, 2 = Petición de código
+  const { loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp } = useAuth();
+  const [isLogin, setIsLogin] = useState(true);
+  const [step, setStep] = useState(1); // 1 = formulario, 2 = código OTP (solo registro)
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState('');
 
-  const handleSendOtp = async (e) => {
+  // Enviar formulario de login o registro
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setSuccessMsg('');
     try {
-      const safeName = sanitizeInput(name);
-      await sendOtpCode(email, safeName);
-      setSuccessMsg(
-        isLogin
-          ? `Hemos enviado un código de verificación a ${email}. Revisa tu bandeja de entrada.`
-          : `¡Casi listo! Hemos enviado un código de activación a ${email}. Introdúcelo para verificar tu cuenta.`
-      );
-      setStep(2);
+      if (isLogin) {
+        // LOGIN: email + contraseña
+        await loginWithPassword(sanitizeInput(email), password);
+      } else {
+        // REGISTRO: crea la cuenta y envia código OTP al correo
+        await signupWithEmail(
+          sanitizeInput(email),
+          password,
+          sanitizeInput(name),
+          sanitizeInput(phone)
+        );
+        setSuccessMsg(`¡Cuenta creada! Hemos enviado un código de verificación a ${email}. Introdúcelo para activar tu cuenta.`);
+        setStep(2);
+      }
     } catch (err) {
-      setError(err.message || 'Error al enviar el código');
+      setError(err.message || 'Error al procesar la solicitud');
     } finally {
       setLoading(false);
     }
   };
 
+  // Verificar el código OTP de registro
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      // sanitizeInput elimina espacios también, útil para el código
-      const safeCode = sanitizeInput(otpCode);
-      await verifyOtpCode(email, safeCode);
-      // Tras el éxito el AuthContext cambiará de estado y redirigirá solo.
+      await verifySignupOtp(email, sanitizeInput(otpCode));
     } catch (err) {
-      setError('El código es incorrecto o ha expirado. Por favor, revisa bien tu correo.');
+      setError('Código incorrecto o expirado. Revisa tu correo e inténtalo de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -326,9 +333,7 @@ const Login = () => {
 
             {/* Title */}
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 1.25rem', letterSpacing: '-0.02em' }}>
-              {step === 2
-                ? (isLogin ? 'Confirma tu identidad' : 'Verifica tu correo')
-                : (isLogin ? 'Bienvenido de nuevo' : 'Crea tu cuenta')}
+              {step === 2 ? 'Verifica tu correo' : (isLogin ? 'Bienvenido de nuevo' : 'Crea tu cuenta')}
             </h2>
 
             {/* Error */}
@@ -351,52 +356,39 @@ const Login = () => {
             )}
 
             {step === 1 ? (
-              <form onSubmit={handleSendOtp}>
+              <form onSubmit={handleSubmit}>
                 {!isLogin && (
                   <div className="login-input-group">
                     <label className="login-label">Nombre completo</label>
-                    <input
-                      className="login-input"
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      required={!isLogin}
-                      placeholder="Juan García"
-                    />
+                    <input className="login-input" type="text" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Juan García" />
                   </div>
                 )}
 
                 <div className="login-input-group">
                   <label className="login-label">Email</label>
-                  <input
-                    className="login-input"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    placeholder="tu@email.com"
-                  />
-                  <p style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '0.5rem' }}>
-                    {isLogin
-                      ? 'Recibirás un código de un solo uso para confirmar que eres tú.'
-                      : 'Te enviaremos un código de verificación para activar tu cuenta. Sin contraseñas.'}
-                  </p>
+                  <input className="login-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="tu@email.com" />
+                </div>
+
+                {!isLogin && (
+                  <div className="login-input-group">
+                    <label className="login-label">Teléfono</label>
+                    <input className="login-input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="+34 600 000 000" />
+                  </div>
+                )}
+
+                <div className="login-input-group">
+                  <label className="login-label">Contraseña</label>
+                  <input className="login-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder={isLogin ? 'Tu contraseña' : 'Mínimo 6 caracteres'} minLength={6} />
                 </div>
 
                 <button type="submit" disabled={loading} className="login-submit">
                   {loading ? (
-                    <>
-                      <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 12a9 9 0 11-6.219-8.56" />
-                      </svg>
-                      Enviando...
-                    </>
-                  ) : isLogin ? 'Enviar código de acceso' : 'Enviar código de verificación'}
+                    <><svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>Cargando...</>
+                  ) : isLogin ? 'Entrar' : 'Crear cuenta y verificar'}
                 </button>
               </form>
             ) : (
               <form onSubmit={handleVerifyOtp}>
-                {/* Email icon + instruction */}
                 <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
                   <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem' }}>
                     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -404,18 +396,11 @@ const Login = () => {
                       <polyline points="22,6 12,13 2,6"/>
                     </svg>
                   </div>
-                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569' }}>
-                    Código enviado a <strong>{email}</strong>
-                  </p>
-                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: '#94A3B8' }}>
-                    {isLogin ? 'Válido durante 10 minutos' : 'Introduce el código para activar tu cuenta'}
-                  </p>
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569' }}>Código enviado a <strong>{email}</strong></p>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: '#94A3B8' }}>Introduce el código de 6 dígitos para activar tu cuenta</p>
                 </div>
-
                 <div className="login-input-group">
-                  <label className="login-label">
-                    {isLogin ? 'Código de acceso' : 'Código de verificación'}
-                  </label>
+                  <label className="login-label">Código de verificación</label>
                   <input
                     autoFocus
                     className="login-input"
@@ -430,13 +415,12 @@ const Login = () => {
                     style={{ textAlign: 'center', letterSpacing: '0.35em', fontSize: '1.5rem', fontWeight: 700, padding: '1rem' }}
                   />
                 </div>
-                
                 <button type="submit" disabled={loading} className="login-submit">
-                  {loading ? 'Verificando...' : (isLogin ? 'Entrar' : '✓ Verificar y crear cuenta')}
+                  {loading ? 'Verificando...' : '✓ Verificar y crear cuenta'}
                 </button>
                 <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                   <button type="button" onClick={() => { setStep(1); setError(null); setSuccessMsg(''); setOtpCode(''); }} style={{ background: 'transparent', border: 'none', color: '#64748B', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline' }}>
-                    ← Volver o cambiar email
+                    ← Volver
                   </button>
                 </div>
               </form>
