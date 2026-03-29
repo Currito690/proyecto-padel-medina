@@ -21,7 +21,11 @@ const Login = () => {
     try {
       const safeName = sanitizeInput(name);
       await sendOtpCode(email, safeName);
-      setSuccessMsg('Te hemos enviado un código de 6 dígitos a tu correo.');
+      setSuccessMsg(
+        isLogin
+          ? `Hemos enviado un código de verificación a ${email}. Revisa tu bandeja de entrada.`
+          : `¡Casi listo! Hemos enviado un código de activación a ${email}. Introdúcelo para verificar tu cuenta.`
+      );
       setStep(2);
     } catch (err) {
       setError(err.message || 'Error al enviar el código');
@@ -322,7 +326,9 @@ const Login = () => {
 
             {/* Title */}
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 1.25rem', letterSpacing: '-0.02em' }}>
-              {isLogin ? 'Bienvenido de nuevo' : 'Crea tu cuenta'}
+              {step === 2
+                ? (isLogin ? 'Confirma tu identidad' : 'Verifica tu correo')
+                : (isLogin ? 'Bienvenido de nuevo' : 'Crea tu cuenta')}
             </h2>
 
             {/* Error */}
@@ -371,7 +377,9 @@ const Login = () => {
                     placeholder="tu@email.com"
                   />
                   <p style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '0.5rem' }}>
-                    Te enviaremos un código seguro a tu correo, sin necesidad de contraseñas.
+                    {isLogin
+                      ? 'Recibirás un código de un solo uso para confirmar que eres tú.'
+                      : 'Te enviaremos un código de verificación para activar tu cuenta. Sin contraseñas.'}
                   </p>
                 </div>
 
@@ -381,32 +389,54 @@ const Login = () => {
                       <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 12a9 9 0 11-6.219-8.56" />
                       </svg>
-                      Cargando...
+                      Enviando...
                     </>
-                  ) : 'Recibir Código Seguro'}
+                  ) : isLogin ? 'Enviar código de acceso' : 'Enviar código de verificación'}
                 </button>
               </form>
             ) : (
               <form onSubmit={handleVerifyOtp}>
+                {/* Email icon + instruction */}
+                <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+                  <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem' }}>
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                      <polyline points="22,6 12,13 2,6"/>
+                    </svg>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569' }}>
+                    Código enviado a <strong>{email}</strong>
+                  </p>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: '#94A3B8' }}>
+                    {isLogin ? 'Válido durante 10 minutos' : 'Introduce el código para activar tu cuenta'}
+                  </p>
+                </div>
+
                 <div className="login-input-group">
-                  <label className="login-label">Código de Verificación (OTP)</label>
+                  <label className="login-label">
+                    {isLogin ? 'Código de acceso' : 'Código de verificación'}
+                  </label>
                   <input
+                    autoFocus
                     className="login-input"
                     type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
                     value={otpCode}
-                    onChange={(e) => setOtpCode(e.target.value)}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
                     required
-                    placeholder="Ej. 123456"
-                    style={{ textAlign: 'center', letterSpacing: '0.2em', fontSize: '1.2rem' }}
+                    placeholder="123456"
+                    style={{ textAlign: 'center', letterSpacing: '0.35em', fontSize: '1.5rem', fontWeight: 700, padding: '1rem' }}
                   />
                 </div>
                 
                 <button type="submit" disabled={loading} className="login-submit">
-                  {loading ? 'Verificando...' : 'Verificar y Entrar'}
+                  {loading ? 'Verificando...' : (isLogin ? 'Entrar' : '✓ Verificar y crear cuenta')}
                 </button>
                 <div style={{ textAlign: 'center', marginTop: '1rem' }}>
-                  <button type="button" onClick={() => { setStep(1); setError(null); }} style={{ background: 'transparent', border: 'none', color: '#64748B', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline' }}>
-                    Volver o cambiar email
+                  <button type="button" onClick={() => { setStep(1); setError(null); setSuccessMsg(''); setOtpCode(''); }} style={{ background: 'transparent', border: 'none', color: '#64748B', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline' }}>
+                    ← Volver o cambiar email
                   </button>
                 </div>
               </form>
