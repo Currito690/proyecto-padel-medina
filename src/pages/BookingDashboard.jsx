@@ -235,6 +235,16 @@ const BookingDashboard = () => {
           <h2 style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
             ¿Dónde juegas hoy?
           </h2>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginTop: '0.75rem', color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '0.15rem', color: 'var(--color-accent)' }}>
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+              <circle cx="12" cy="10" r="3" />
+            </svg>
+            <span style={{ lineHeight: 1.4, fontWeight: 500 }}>
+              Calle Alemania, 4-20, 11170<br />
+              Medina Sidonia, Cádiz
+            </span>
+          </div>
         </header>
 
         {slotsLocked && (

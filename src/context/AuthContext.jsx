@@ -60,19 +60,25 @@ export function AuthProvider({ children }) {
     });
   };
 
-  const loginWithEmail = async (email, password) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const sendOtpCode = async (email, name) => {
+    const { error } = await supabase.auth.signInWithOtp({ 
+      email, 
+      options: { 
+        data: { name: name || '' },
+        shouldCreateUser: true
+      } 
+    });
     if (error) throw error;
   };
 
-  const signupWithEmail = async (email, password, name) => {
-    const { data, error } = await supabase.auth.signUp({
+  const verifyOtpCode = async (email, code) => {
+    const { error, data } = await supabase.auth.verifyOtp({
       email,
-      password,
-      options: { data: { name } },
+      token: code,
+      type: 'email',
     });
     if (error) throw error;
-    return { needsConfirmation: !data.session };
+    return data;
   };
 
   const logout = async () => {
@@ -93,7 +99,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithEmail, signupWithEmail, logout, loading }}>
+    <AuthContext.Provider value={{ user, loginWithGoogle, sendOtpCode, verifyOtpCode, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

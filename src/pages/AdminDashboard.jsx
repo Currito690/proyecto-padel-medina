@@ -18,6 +18,90 @@ const slotColors = {
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
+const UserRow = ({ u, togglingId, toggleBan, onDeleted, supabase }) => {
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-user', {
+        body: { userId: u.id },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      onDeleted(u.id);
+    } catch (err) {
+      alert('Error al eliminar el usuario: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setDeleting(false);
+      setShowConfirmDelete(false);
+    }
+  };
+
+  return (
+    <>
+      {showConfirmDelete && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: 'white', borderRadius: '1.25rem', padding: '2rem 1.75rem', maxWidth: '420px', width: '100%', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', border: '1px solid #FEE2E2' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', marginBottom: '1.25rem' }}>
+              <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#FEF2F2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                </svg>
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>Eliminar usuario</h3>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.82rem', color: '#64748B' }}>Esta acción no se puede deshacer</p>
+              </div>
+            </div>
+            <div style={{ background: '#FEF2F2', borderRadius: '0.75rem', padding: '0.875rem 1rem', marginBottom: '1.25rem', border: '1px solid #FECACA' }}>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: '#7F1D1D', fontWeight: 600 }}>¿Seguro que quieres eliminar permanentemente a <strong>{u.name || u.email}</strong>?</p>
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.78rem', color: '#991B1B' }}>⚠️ Se eliminarán su perfil y todas sus reservas. El acceso a la app quedará revocado.</p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button onClick={() => setShowConfirmDelete(false)} disabled={deleting} style={{ flex: 1, padding: '0.75rem', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer' }}>Cancelar</button>
+              <button onClick={handleDelete} disabled={deleting} style={{ flex: 1, padding: '0.75rem', border: 'none', borderRadius: '0.75rem', background: deleting ? '#FCA5A5' : '#DC2626', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem', cursor: deleting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                {deleting ? (
+                  <><svg style={{ animation: 'spin 0.8s linear infinite' }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>Eliminando...</>
+                ) : '🗑 Eliminar para siempre'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.875rem 1rem', backgroundColor: u.banned ? '#FEF2F2' : 'white', borderRadius: '0.875rem', border: `1px solid ${u.banned ? '#FECACA' : '#E2E8F0'}`, opacity: u.banned ? 0.85 : 1, transition: 'all 0.2s' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, color: u.banned ? '#94A3B8' : '#0F172A', fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || '—'}</span>
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '999px', backgroundColor: u.role === 'admin' ? '#FEF9C3' : '#F0FDF4', color: u.role === 'admin' ? '#92400E' : '#15803D', textTransform: 'uppercase' }}>{u.role || 'cliente'}</span>
+            {u.banned && <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '999px', backgroundColor: '#FEF2F2', color: '#DC2626', textTransform: 'uppercase' }}>Baja</span>}
+          </div>
+          <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email || '—'}{u.phone ? ` · ${u.phone}` : ''}</p>
+        </div>
+        {u.role !== 'admin' && (
+          <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+            <button disabled={togglingId === u.id} onClick={() => toggleBan(u)} style={{ padding: '0.4rem 0.875rem', borderRadius: '0.5rem', border: `1.5px solid ${u.banned ? '#16A34A' : '#DC2626'}`, backgroundColor: u.banned ? '#F0FDF4' : '#FEF2F2', color: u.banned ? '#16A34A' : '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: togglingId === u.id ? 'not-allowed' : 'pointer', transition: 'all 0.2s', opacity: togglingId === u.id ? 0.6 : 1 }}>
+              {togglingId === u.id ? '...' : u.banned ? 'Reactivar' : 'Dar de baja'}
+            </button>
+            <button
+              onClick={() => setShowConfirmDelete(true)}
+              title="Eliminar usuario permanentemente"
+              style={{ padding: '0.4rem 0.55rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#94A3B8', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center' }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = '#DC2626'; e.currentTarget.style.backgroundColor = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.backgroundColor = 'white'; e.currentTarget.style.color = '#94A3B8'; }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+};
+
 const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
   const [search, setSearch] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -73,24 +157,14 @@ const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {filtered.map(u => (
-            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.875rem 1rem', backgroundColor: u.banned ? '#FEF2F2' : 'white', borderRadius: '0.875rem', border: `1px solid ${u.banned ? '#FECACA' : '#E2E8F0'}`, opacity: u.banned ? 0.85 : 1, transition: 'all 0.2s' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <span style={{ fontWeight: 700, color: u.banned ? '#94A3B8' : '#0F172A', fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || '—'}</span>
-                  <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '999px', backgroundColor: u.role === 'admin' ? '#FEF9C3' : '#F0FDF4', color: u.role === 'admin' ? '#92400E' : '#15803D', textTransform: 'uppercase' }}>{u.role || 'cliente'}</span>
-                  {u.banned && <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '999px', backgroundColor: '#FEF2F2', color: '#DC2626', textTransform: 'uppercase' }}>Baja</span>}
-                </div>
-                <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email || '—'}{u.phone ? ` · ${u.phone}` : ''}</p>
-              </div>
-              {u.role !== 'admin' && (
-                <button
-                  disabled={togglingId === u.id}
-                  onClick={() => toggleBan(u)}
-                  style={{ padding: '0.4rem 0.875rem', borderRadius: '0.5rem', border: `1.5px solid ${u.banned ? '#16A34A' : '#DC2626'}`, backgroundColor: u.banned ? '#F0FDF4' : '#FEF2F2', color: u.banned ? '#16A34A' : '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: togglingId === u.id ? 'not-allowed' : 'pointer', flexShrink: 0, transition: 'all 0.2s', opacity: togglingId === u.id ? 0.6 : 1 }}>
-                  {togglingId === u.id ? '...' : u.banned ? 'Reactivar' : 'Dar de baja'}
-                </button>
-              )}
-            </div>
+            <UserRow
+              key={u.id}
+              u={u}
+              togglingId={togglingId}
+              toggleBan={toggleBan}
+              onDeleted={(id) => setAllUsers(prev => prev.filter(p => p.id !== id))}
+              supabase={supabase}
+            />
           ))}
           <p style={{ color: '#94A3B8', fontSize: '0.78rem', textAlign: 'right', marginTop: '0.25rem' }}>{filtered.length} jugadores · {filtered.filter(u => u.banned).length} dados de baja</p>
         </div>

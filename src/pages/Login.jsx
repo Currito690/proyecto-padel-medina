@@ -1,37 +1,50 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { sanitizeInput } from '../utils/sanitize';
 
 const Login = () => {
-  const { loginWithGoogle, loginWithEmail, signupWithEmail } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
+  const { loginWithGoogle, sendOtpCode, verifyOtpCode } = useAuth();
+  const [isLogin, setIsLogin] = useState(true); // true = Entrar, false = Registrarse
+  const [step, setStep] = useState(1); // 1 = Petición de email, 2 = Petición de código
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [confirmationSent, setConfirmationSent] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
 
-  const handleSubmit = async (e) => {
+  const handleSendOtp = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    setConfirmationSent(false);
+    setSuccessMsg('');
     try {
-      if (isLogin) {
-        await loginWithEmail(email, password);
-      } else {
-        const result = await signupWithEmail(email, password, name);
-        if (result?.needsConfirmation) {
-          setConfirmationSent(true);
-        }
-      }
+      const safeName = sanitizeInput(name);
+      await sendOtpCode(email, safeName);
+      setSuccessMsg('Te hemos enviado un código de 6 dígitos a tu correo.');
+      setStep(2);
     } catch (err) {
-      setError(err.message || (isLogin ? 'Error al iniciar sesión' : 'Error al crear cuenta'));
+      setError(err.message || 'Error al enviar el código');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleVerifyOtp = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      // sanitizeInput elimina espacios también, útil para el código
+      const safeCode = sanitizeInput(otpCode);
+      await verifyOtpCode(email, safeCode);
+      // Tras el éxito el AuthContext cambiará de estado y redirigirá solo.
+    } catch (err) {
+      setError('El código es incorrecto o ha expirado. Por favor, revisa bien tu correo.');
+    } finally {
+      setLoading(false);
+    }
+  };
   const BrandPanel = () => (
     <div className="login-brand">
       {/* Decorative blobs */}
@@ -322,80 +335,100 @@ const Login = () => {
               </div>
             )}
 
-            {/* Confirmación de email */}
-            {confirmationSent && (
+            {successMsg && (
               <div style={{ background: '#F0FDF4', color: '#15803D', padding: '0.875rem 1rem', borderRadius: '0.625rem', marginBottom: '1rem', fontSize: '0.875rem', fontWeight: 500, border: '1px solid #BBF7D0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <polyline points="20 6 9 17 4 12"/>
                 </svg>
-                Cuenta creada. Revisa tu email y confirma tu dirección para poder entrar.
+                {successMsg}
               </div>
             )}
 
-            <form onSubmit={handleSubmit}>
-              {!isLogin && (
+            {step === 1 ? (
+              <form onSubmit={handleSendOtp}>
+                {!isLogin && (
+                  <div className="login-input-group">
+                    <label className="login-label">Nombre completo</label>
+                    <input
+                      className="login-input"
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      required={!isLogin}
+                      placeholder="Juan García"
+                    />
+                  </div>
+                )}
+
                 <div className="login-input-group">
-                  <label className="login-label">Nombre completo</label>
+                  <label className="login-label">Email</label>
+                  <input
+                    className="login-input"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    placeholder="tu@email.com"
+                  />
+                  <p style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '0.5rem' }}>
+                    Te enviaremos un código seguro a tu correo, sin necesidad de contraseñas.
+                  </p>
+                </div>
+
+                <button type="submit" disabled={loading} className="login-submit">
+                  {loading ? (
+                    <>
+                      <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 12a9 9 0 11-6.219-8.56" />
+                      </svg>
+                      Cargando...
+                    </>
+                  ) : 'Recibir Código Seguro'}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyOtp}>
+                <div className="login-input-group">
+                  <label className="login-label">Código de Verificación (OTP)</label>
                   <input
                     className="login-input"
                     type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required={!isLogin}
-                    placeholder="Juan García"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value)}
+                    required
+                    placeholder="Ej. 123456"
+                    style={{ textAlign: 'center', letterSpacing: '0.2em', fontSize: '1.2rem' }}
                   />
                 </div>
-              )}
+                
+                <button type="submit" disabled={loading} className="login-submit">
+                  {loading ? 'Verificando...' : 'Verificar y Entrar'}
+                </button>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                  <button type="button" onClick={() => { setStep(1); setError(null); }} style={{ background: 'transparent', border: 'none', color: '#64748B', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline' }}>
+                    Volver o cambiar email
+                  </button>
+                </div>
+              </form>
+            )}
 
-              <div className="login-input-group">
-                <label className="login-label">Email</label>
-                <input
-                  className="login-input"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  placeholder="tu@email.com"
-                />
-              </div>
+            {step === 1 && (
+              <>
+                <div className="login-divider">
+                  <hr /><span>o</span><hr />
+                </div>
 
-              <div className="login-input-group">
-                <label className="login-label">Contraseña</label>
-                <input
-                  className="login-input"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  placeholder="••••••••"
-                />
-              </div>
-
-              <button type="submit" disabled={loading} className="login-submit">
-                {loading ? (
-                  <>
-                    <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 12a9 9 0 11-6.219-8.56" />
-                    </svg>
-                    Cargando...
-                  </>
-                ) : (isLogin ? 'Entrar' : 'Crear cuenta')}
-              </button>
-            </form>
-
-            <div className="login-divider">
-              <hr /><span>o</span><hr />
-            </div>
-
-            <button onClick={loginWithGoogle} disabled={loading} className="login-google">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-              </svg>
-              Continuar con Google
-            </button>
+                <button onClick={loginWithGoogle} disabled={loading} className="login-google">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                  </svg>
+                  Continuar con Google
+                </button>
+              </>
+            )}
 
           </div>
         </div>
