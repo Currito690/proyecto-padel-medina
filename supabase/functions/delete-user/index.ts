@@ -8,13 +8,15 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+// Lista de emails con permisos de admin
+const ADMIN_EMAILS = ['admin@padelmedina.com'];
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS });
   }
 
   try {
-    // 1. Verify the caller is an authenticated admin
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -25,68 +27,70 @@ Deno.serve(async (req: Request) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
     // Admin client (full privileges)
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-    // Regular client to verify the caller's identity/role
-    const callerClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    // Verify the caller's identity
+    const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
-    // Get the caller's profile to verify they are admin
     const { data: { user: callerUser }, error: callerError } = await callerClient.auth.getUser();
     if (callerError || !callerUser) {
-      return new Response(JSON.stringify({ error: 'Could not verify caller identity' }), {
+      return new Response(JSON.stringify({ error: 'Could not verify identity' }), {
         status: 401,
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
 
-    const { data: callerProfile } = await adminClient
-      .from('profiles')
-      .select('role')
-      .eq('id', callerUser.id)
-      .single();
+    // Check admin by email OR by role in profiles table
+    const isAdminByEmail = ADMIN_EMAILS.includes(callerUser.email ?? '');
+    let isAdminByRole = false;
 
-    if (!callerProfile || callerProfile.role !== 'admin') {
-      return new Response(JSON.stringify({ error: 'Forbidden: only admins can delete users' }), {
+    if (!isAdminByEmail) {
+      const { data: profile } = await adminClient
+        .from('profiles')
+        .select('role')
+        .eq('id', callerUser.id)
+        .single();
+      isAdminByRole = profile?.role === 'admin';
+    }
+
+    if (!isAdminByEmail && !isAdminByRole) {
+      return new Response(JSON.stringify({ error: 'Forbidden: admins only' }), {
         status: 403,
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
 
-    // 2. Get target user ID from request body
+    // Get target user ID
     const { userId } = await req.json();
     if (!userId) {
-      return new Response(JSON.stringify({ error: 'Missing userId in request body' }), {
+      return new Response(JSON.stringify({ error: 'Missing userId' }), {
         status: 400,
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
 
-    // Safety: prevent admin from deleting themselves
+    // Safety: prevent self-deletion
     if (userId === callerUser.id) {
-      return new Response(JSON.stringify({ error: 'Cannot delete your own admin account' }), {
+      return new Response(JSON.stringify({ error: 'No puedes eliminarte a ti mismo' }), {
         status: 400,
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
 
-    // 3. Delete all bookings
+    // Delete bookings, push subscriptions, profile, auth user
     await adminClient.from('bookings').delete().eq('user_id', userId);
-
-    // 4. Delete push subscriptions
     await adminClient.from('push_subscriptions').delete().eq('user_id', userId);
-
-    // 5. Delete profile
     await adminClient.from('profiles').delete().eq('id', userId);
 
-    // 6. Delete auth user (requires service_role)
     const { error: deleteAuthError } = await adminClient.auth.admin.deleteUser(userId);
     if (deleteAuthError) {
-      console.error('Error deleting auth user:', deleteAuthError);
-      // Profile already deleted — not fatal, user can't log in anyway
+      console.warn('Auth user deletion warning:', deleteAuthError.message);
+      // Not fatal — profile already deleted, user can't log in
     }
 
     return new Response(JSON.stringify({ success: true }), {
@@ -102,3 +106,4 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
+
