@@ -31,7 +31,9 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         clearTimeout(timeout);
-        finish(session?.user ?? null);
+        const supaUser = session?.user;
+        // Solo restaurar sesión si el email está verificado
+        finish(supaUser?.email_confirmed_at ? supaUser : null);
       })
       .catch(() => {
         clearTimeout(timeout);
@@ -40,7 +42,13 @@ export function AuthProvider({ children }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'INITIAL_SESSION') return;
-      setUser(session?.user ? buildUser(session.user) : null);
+      const supaUser = session?.user;
+      // Solo loguear si el email está verificado
+      if (supaUser && !supaUser.email_confirmed_at) {
+        setUser(null);
+        return;
+      }
+      setUser(supaUser ? buildUser(supaUser) : null);
     });
 
     return () => {
