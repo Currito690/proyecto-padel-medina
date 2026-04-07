@@ -1,54 +1,52 @@
 // supabase/functions/redsys-create/index.ts
 // Genera los parámetros firmados para redirigir al TPV de Redsys
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import crypto from 'node:crypto';
-import { Buffer } from 'node:buffer';
+import CryptoJS from 'https://esm.sh/crypto-js@4.2.0';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// ── Credenciales (cambiar por las reales cuando tengas el contrato) ──
-const MERCHANT_CODE = Deno.env.get('REDSYS_MERCHANT_CODE') ?? '335274171'; // test
-const TERMINAL      = Deno.env.get('REDSYS_TERMINAL')      ?? '1';          // test
-const SECRET_KEY    = Deno.env.get('REDSYS_SECRET_KEY')    ?? 'sq7HjrUOBfKmC576ILgskD5srU870gJ7'; // test
+// ── Credenciales ──
+const MERCHANT_CODE = Deno.env.get('REDSYS_MERCHANT_CODE') ?? '335274171';
+const TERMINAL      = Deno.env.get('REDSYS_TERMINAL')      ?? '1';
+const SECRET_KEY    = Deno.env.get('REDSYS_SECRET_KEY')     ?? 'sq7HjrUOBfKmC576ILgskD5srU870gJ7';
 
 // ── URL del TPV ──
 const REDSYS_URL = Deno.env.get('REDSYS_ENV') === 'production'
   ? 'https://sis.redsys.es/sis/realizarPago'
   : 'https://sis-t.redsys.es:25443/sis/realizarPago';
 
-// ── Genera número de pedido único (12 chars, empieza por dígito) ──
+// ── Genera número de pedido único (12 chars, empieza por 4 dígitos) ──
 function generateOrderId(): string {
   const ts = Date.now().toString().slice(-8);
   const rand = Math.floor(Math.random() * 9000 + 1000).toString();
   return (ts + rand).slice(0, 12);
 }
 
-// ── 1. Deriva la clave por pedido usando 3DES ──
-function deriveKey(secretBase64: string, orderId: string): Buffer {
-  const key = Buffer.from(secretBase64, 'base64');
-  const iv = Buffer.alloc(8, 0); // Redsys usa IV vacío (ceros)
-  const cipher = crypto.createCipheriv('des-ede3-cbc', key, iv);
-  cipher.setAutoPadding(false);
+// ── 1. Deriva la clave por pedido usando 3DES-CBC ──
+function deriveKey(secretBase64: string, orderId: string): CryptoJS.lib.WordArray {
+  const key = CryptoJS.enc.Base64.parse(secretBase64);
+  const iv = CryptoJS.enc.Hex.parse('0000000000000000');
 
-  // Redsys exige pad de ceros (\0) hasta que sea múltiplo de 8
-  let paddedOrder = orderId;
-  while (paddedOrder.length % 8 !== 0) {
-    paddedOrder += '\0';
-  }
+  // Pad con ceros hasta múltiplo de 8
+  let padded = orderId;
+  while (padded.length % 8 !== 0) padded += '\0';
 
-  const res1 = cipher.update(paddedOrder, 'utf8');
-  const res2 = cipher.final();
-  return Buffer.concat([res1, res2]);
+  const encrypted = CryptoJS.TripleDES.encrypt(
+    CryptoJS.enc.Utf8.parse(padded),
+    key,
+    { iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.NoPadding }
+  );
+
+  return encrypted.ciphertext;
 }
 
-// ── 2. MAC SHA256 de los parámetros con la clave derivada ──
-function signHMACSHA256(derivedKey: Buffer, paramsB64: string): string {
-  const hmac = crypto.createHmac('sha256', derivedKey);
-  hmac.update(paramsB64);
-  return hmac.digest('base64');
+// ── 2. HMAC-SHA256 con la clave derivada ──
+function signHMACSHA256(derivedKey: CryptoJS.lib.WordArray, paramsB64: string): string {
+  const hmac = CryptoJS.HmacSHA256(paramsB64, derivedKey);
+  return CryptoJS.enc.Base64.stringify(hmac);
 }
 
 serve(async (req) => {
@@ -58,28 +56,25 @@ serve(async (req) => {
     const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl } = await req.json();
 
     const orderId = customOrderId ?? generateOrderId();
-    const amountCents = Math.round(amount * 100).toString().padStart(4, '0'); // en céntimos
+    const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
 
     const params = {
       DS_MERCHANT_MERCHANTCODE: MERCHANT_CODE,
       DS_MERCHANT_TERMINAL: TERMINAL,
-      DS_MERCHANT_TRANSACTIONTYPE: '0',       // Cargo
+      DS_MERCHANT_TRANSACTIONTYPE: '0',
       DS_MERCHANT_ORDER: orderId,
       DS_MERCHANT_AMOUNT: amountCents,
-      DS_MERCHANT_CURRENCY: '978',            // EUR
+      DS_MERCHANT_CURRENCY: '978',
       DS_MERCHANT_URLOK: successUrl,
       DS_MERCHANT_URLKO: failUrl,
       DS_MERCHANT_MERCHANTURL: notifyUrl,
-      DS_MERCHANT_CONSUMERLANGUAGE: '002',    // Español
-      DS_MERCHANT_PRODUCTDESCRIPTION: `Pista de pádel ${date} ${timeSlot}`,
-      // Metadata para el webhook
+      DS_MERCHANT_CONSUMERLANGUAGE: '002',
+      DS_MERCHANT_PRODUCTDESCRIPTION: `Pista padel ${date} ${timeSlot}`,
       DS_MERCHANT_MERCHANTDATA: JSON.stringify({ courtId, userId, date, timeSlot }),
     };
 
-    const paramsStr = JSON.stringify(params);
-    const paramsB64 = Buffer.from(paramsStr).toString('base64');
+    const paramsB64 = btoa(JSON.stringify(params));
 
-    // Firma HMAC SHA-256 con clave derivada de 3DES del order
     const derivedKey = deriveKey(SECRET_KEY, orderId);
     const signature = signHMACSHA256(derivedKey, paramsB64);
 
