@@ -2,32 +2,43 @@
 // Recibe la notificación de Redsys cuando se completa un pago
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import crypto from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 const SECRET_KEY = Deno.env.get('REDSYS_SECRET_KEY') ?? 'sq7HjrUOBfKmC576ILgskD5srU870gJ7';
 
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  return Uint8Array.from(binary, c => c.charCodeAt(0));
-}
+// ── 1. Deriva la clave por pedido usando 3DES (igual que en redsys-create) ──
+function deriveKey(secretBase64: string, orderId: string): Buffer {
+  const key = Buffer.from(secretBase64, 'base64');
+  const iv = Buffer.alloc(8, 0);
+  const cipher = crypto.createCipheriv('des-ede3-cbc', key, iv);
+  cipher.setAutoPadding(false);
 
-function bytesToBase64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
-}
-
-async function verifySignature(params: string, receivedSig: string): Promise<boolean> {
-  try {
-    const secretBytes = base64ToBytes(SECRET_KEY);
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw', secretBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
-    );
-    const sig = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(params));
-    const computed = bytesToBase64(new Uint8Array(sig));
-    // Normalizar: reemplazar + por - y / por _ (URL-safe base64)
-    const normalize = (s: string) => s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    return normalize(computed) === normalize(receivedSig);
-  } catch {
-    return false;
+  let paddedOrder = orderId;
+  while (paddedOrder.length % 8 !== 0) {
+    paddedOrder += '\0';
   }
+
+  const res1 = cipher.update(paddedOrder, 'utf8');
+  const res2 = cipher.final();
+  return Buffer.concat([res1, res2]);
+}
+
+// ── 2. MAC SHA256 de los parámetros con la clave derivada ──
+function signHMACSHA256(derivedKey: Buffer, paramsB64: string): string {
+  const hmac = crypto.createHmac('sha256', derivedKey);
+  hmac.update(paramsB64);
+  return hmac.digest('base64');
+}
+
+// ── 3. Verifica la firma recibida de Redsys ──
+function verifySignature(paramsB64: string, receivedSig: string, orderId: string): boolean {
+  const derivedKey = deriveKey(SECRET_KEY, orderId);
+  const expectedSig = signHMACSHA256(derivedKey, paramsB64);
+
+  // Normalizar base64 URL-safe para comparación
+  const normalize = (s: string) => s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return normalize(expectedSig) === normalize(receivedSig);
 }
 
 serve(async (req) => {
@@ -35,18 +46,19 @@ serve(async (req) => {
     const body = await req.text();
     const params = new URLSearchParams(body);
 
-    const dsParams     = params.get('Ds_MerchantParameters') ?? '';
-    const dsSignature  = params.get('Ds_Signature') ?? '';
+    const dsParams    = params.get('Ds_MerchantParameters') ?? '';
+    const dsSignature = params.get('Ds_Signature') ?? '';
 
-    // Verificar firma
-    const valid = await verifySignature(dsParams, dsSignature);
-    if (!valid) {
+    // Decodificar parámetros primero para obtener el orderId
+    const decoded = JSON.parse(Buffer.from(dsParams, 'base64').toString('utf8'));
+    const orderId = decoded.Ds_Order ?? '';
+
+    // Verificar firma con clave derivada por 3DES del orderId
+    if (!verifySignature(dsParams, dsSignature, orderId)) {
       console.error('Redsys: firma inválida');
       return new Response('KO', { status: 400 });
     }
 
-    // Decodificar parámetros
-    const decoded = JSON.parse(atob(dsParams));
     const responseCode = parseInt(decoded.Ds_Response ?? '9999', 10);
     const merchantData = JSON.parse(decoded.Ds_MerchantData ?? '{}');
     const { courtId, userId, date, timeSlot } = merchantData;
@@ -65,8 +77,6 @@ serve(async (req) => {
         time_slot: timeSlot,
         status:    'confirmed',
         is_free:   false,
-        payment_method: 'redsys',
-        redsys_order: decoded.Ds_Order,
       });
 
       if (error) {

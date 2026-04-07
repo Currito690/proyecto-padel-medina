@@ -31,7 +31,7 @@ const PaymentGateway = () => {
       const failUrl    = `${window.location.origin}/mis-reservas?pago=error`;
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
-      const { data, error: fnError } = await supabase.functions.invoke('redsys-create', {
+      const res = await supabase.functions.invoke('redsys-create', {
         body: {
           amount: price,
           courtId,
@@ -44,7 +44,18 @@ const PaymentGateway = () => {
         },
       });
 
-      if (fnError || data?.error) throw new Error(fnError?.message || data?.error);
+      if (res.error) {
+        throw new Error(res.error?.message || 'No se pudo conectar con la pasarela de pago');
+      }
+
+      const data = res.data;
+      if (!data || data.error) {
+        throw new Error(data?.error || 'Respuesta vacía del servidor');
+      }
+
+      if (!data.Ds_MerchantParameters || !data.Ds_Signature || !data.redsysUrl) {
+        throw new Error('Datos de pago incompletos');
+      }
 
       // Crear formulario dinámico y enviarlo a Redsys
       const form = document.createElement('form');
@@ -67,7 +78,7 @@ const PaymentGateway = () => {
       form.submit();
     } catch (err) {
       console.error('Error Redsys:', err);
-      setError('Error al conectar con la pasarela de pago. Inténtalo de nuevo.');
+      setError(`Error: ${err.message}`);
       setLoading(false);
     }
   };

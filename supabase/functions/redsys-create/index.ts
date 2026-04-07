@@ -1,6 +1,8 @@
 // supabase/functions/redsys-create/index.ts
 // Genera los parámetros firmados para redirigir al TPV de Redsys
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import crypto from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -24,48 +26,29 @@ function generateOrderId(): string {
   return (ts + rand).slice(0, 12);
 }
 
-// ── Deriva la clave por pedido usando 3DES ──
-async function deriveKey(secretBase64: string, orderId: string): Promise<CryptoKey> {
-  const secretBytes = base64ToBytes(secretBase64);
-  const key = await crypto.subtle.importKey('raw', secretBytes, { name: 'AES-CBC' }, false, ['encrypt']);
-  // Redsys usa 3DES pero como alternativa en Web Crypto usamos la clave tal cual y HMAC SHA256
-  // (el estándar real de Redsys HMAC-SHA-256)
-  return crypto.subtle.importKey('raw', secretBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+// ── 1. Deriva la clave por pedido usando 3DES ──
+function deriveKey(secretBase64: string, orderId: string): Buffer {
+  const key = Buffer.from(secretBase64, 'base64');
+  const iv = Buffer.alloc(8, 0); // Redsys usa IV vacío (ceros)
+  const cipher = crypto.createCipheriv('des-ede3-cbc', key, iv);
+  cipher.setAutoPadding(false);
+
+  // Redsys exige pad de ceros (\0) hasta que sea múltiplo de 8
+  let paddedOrder = orderId;
+  while (paddedOrder.length % 8 !== 0) {
+    paddedOrder += '\0';
+  }
+
+  const res1 = cipher.update(paddedOrder, 'utf8');
+  const res2 = cipher.final();
+  return Buffer.concat([res1, res2]);
 }
 
-// 3DES encryption of order number (correct Redsys method)
-async function encrypt3DES(secretBase64: string, orderId: string): Promise<Uint8Array> {
-  const secretBytes = base64ToBytes(secretBase64);
-  // Pad secret to 24 bytes for 3DES (key1+key2+key1)
-  const key24 = new Uint8Array(24);
-  key24.set(secretBytes.slice(0, 16));
-  key24.set(secretBytes.slice(0, 8), 16);
-  
-  // Import as AES-CBC with first 16 bytes (Web Crypto doesn't support 3DES)
-  // Use HMAC SHA-256 approach instead (Redsys v2 supports this)
-  const hmacKey = await crypto.subtle.importKey(
-    'raw', secretBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
-  );
-  const orderBytes = new TextEncoder().encode(orderId);
-  const sig = await crypto.subtle.sign('HMAC', hmacKey, orderBytes);
-  return new Uint8Array(sig).slice(0, 8); // Redsys expects 8 bytes for derived key
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  return Uint8Array.from(binary, c => c.charCodeAt(0));
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
-}
-
-async function signHMACSHA256(key: Uint8Array, data: string): Promise<string> {
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
-  );
-  const sig = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(data));
-  return bytesToBase64(new Uint8Array(sig));
+// ── 2. MAC SHA256 de los parámetros con la clave derivada ──
+function signHMACSHA256(derivedKey: Buffer, paramsB64: string): string {
+  const hmac = crypto.createHmac('sha256', derivedKey);
+  hmac.update(paramsB64);
+  return hmac.digest('base64');
 }
 
 serve(async (req) => {
@@ -93,11 +76,12 @@ serve(async (req) => {
       DS_MERCHANT_MERCHANTDATA: JSON.stringify({ courtId, userId, date, timeSlot }),
     };
 
-    const paramsB64 = btoa(JSON.stringify(params));
+    const paramsStr = JSON.stringify(params);
+    const paramsB64 = Buffer.from(paramsStr).toString('base64');
 
     // Firma HMAC SHA-256 con clave derivada de 3DES del order
-    const secretBytes = base64ToBytes(SECRET_KEY);
-    const signature = await signHMACSHA256(secretBytes, paramsB64);
+    const derivedKey = deriveKey(SECRET_KEY, orderId);
+    const signature = signHMACSHA256(derivedKey, paramsB64);
 
     return new Response(JSON.stringify({
       Ds_SignatureVersion: 'HMAC_SHA256_V1',
