@@ -10,7 +10,7 @@ const CORS = {
 };
 
 // ── Credenciales (cambiar por las reales cuando tengas el contrato) ──
-const MERCHANT_CODE = Deno.env.get('REDSYS_MERCHANT_CODE') ?? '999008881'; // test
+const MERCHANT_CODE = Deno.env.get('REDSYS_MERCHANT_CODE') ?? '335274171'; // test
 const TERMINAL      = Deno.env.get('REDSYS_TERMINAL')      ?? '1';          // test
 const SECRET_KEY    = Deno.env.get('REDSYS_SECRET_KEY')    ?? 'sq7HjrUOBfKmC576ILgskD5srU870gJ7'; // test
 
