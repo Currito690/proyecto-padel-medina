@@ -46,10 +46,51 @@ function App() {
     };
   }, [user]);
 
+  // === MODO MANTENIMIENTO ===
+  const MAINTENANCE_MODE = true;
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: 'var(--color-text-secondary)' }}>Cargando...</p>
+      </div>
+    );
+  }
+
+  if (MAINTENANCE_MODE && user?.role !== 'admin') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+        color: '#fff',
+        textAlign: 'center',
+        padding: '2rem',
+        fontFamily: 'Inter, sans-serif'
+      }}>
+        <div style={{
+          fontSize: '4rem',
+          marginBottom: '1.5rem'
+        }}>🚧</div>
+        <h1 style={{
+          fontSize: '2rem',
+          fontWeight: 800,
+          marginBottom: '1rem',
+          background: 'linear-gradient(90deg, #3B82F6, #8B5CF6)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent'
+        }}>Página en desarrollo</h1>
+        <p style={{
+          fontSize: '1.1rem',
+          color: '#94A3B8',
+          maxWidth: '400px',
+          lineHeight: 1.6
+        }}>
+          Estamos trabajando para ofrecerte la mejor experiencia. Vuelve pronto.
+        </p>
       </div>
     );
   }
