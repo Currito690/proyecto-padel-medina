@@ -81,17 +81,30 @@ serve(async (req) => {
         return new Response('KO', { status: 500 });
       }
 
+      // Obtener nombre de pista y usuario para la notificación
+      const [courtRes, userRes] = await Promise.all([
+        supabase.from('courts').select('name').eq('id', courtId).single(),
+        supabase.from('profiles').select('name').eq('id', userId).single(),
+      ]);
+
+      const courtName = courtRes.data?.name || 'Pista';
+      const userName = userRes.data?.name || 'Usuario';
+
+      // Formatear fecha
+      const [y, m, d] = date.split('-');
+      const dateStr = `${d}/${m}/${y}`;
+
       // Notificar al admin via push
       const pushUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push`;
-      fetch(pushUrl, {
+      await fetch(pushUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
         body: JSON.stringify({
-          title: 'Nueva reserva (Redsys)',
-          body: `Pista ${courtId} · ${timeSlot} · ${date}`,
+          title: '💳 Reserva pagada con tarjeta',
+          body: `${userName} ha reservado ${courtName} · ${dateStr} · ${timeSlot}`,
           url: '/',
         }),
       }).catch(console.warn);
