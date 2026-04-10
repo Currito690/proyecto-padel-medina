@@ -12,6 +12,7 @@ const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 import Login from './pages/Login';
 import PaymentGateway from './pages/PaymentGateway';
 import TournamentRegistration from './pages/TournamentRegistration';
+import Cart from './pages/Cart';
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -250,6 +251,7 @@ function App() {
           {user?.role === 'client' && (
             <Route element={<MainLayout />}>
               <Route path="/" element={<BookingDashboard />} />
+              <Route path="/carrito" element={<Cart />} />
               <Route path="/mis-reservas" element={<MyBookings />} />
               <Route path="/perfil" element={<Profile />} />
               <Route path="*" element={<Navigate to="/" replace />} />

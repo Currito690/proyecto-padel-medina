@@ -1,7 +1,9 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
+import { useCart } from '../../context/CartContext';
 
 const MainLayout = () => {
   const location = useLocation();
+  const { count } = useCart();
   const isActive = (path) => location.pathname === path;
 
   const navItems = [
@@ -14,6 +16,18 @@ const MainLayout = () => {
           <line x1="16" y1="2" x2="16" y2="6" />
           <line x1="8" y1="2" x2="8" y2="6" />
           <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      ),
+    },
+    {
+      path: '/carrito',
+      label: 'Carrito',
+      badge: count,
+      icon: (active) => (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="9" cy="21" r="1" />
+          <circle cx="20" cy="21" r="1" />
+          <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
         </svg>
       ),
     },
@@ -124,6 +138,28 @@ const MainLayout = () => {
           letter-spacing: 0.01em;
           white-space: nowrap;
         }
+        .nav-icon-wrap {
+          position: relative;
+          display: inline-flex;
+        }
+        .nav-badge {
+          position: absolute;
+          top: -6px;
+          right: -9px;
+          min-width: 16px;
+          height: 16px;
+          padding: 0 4px;
+          border-radius: 8px;
+          background: #DC2626;
+          color: white;
+          font-size: 0.62rem;
+          font-weight: 800;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1.5px solid white;
+          box-sizing: border-box;
+        }
 
         @media (min-width: 640px) {
           .bottom-nav { height: 68px; }
@@ -162,7 +198,7 @@ const MainLayout = () => {
         </main>
 
         <nav className="bottom-nav">
-          {navItems.map(({ path, label, icon }) => {
+          {navItems.map(({ path, label, icon, badge }) => {
             const active = isActive(path);
             return (
               <Link
@@ -171,7 +207,10 @@ const MainLayout = () => {
                 className={`nav-link ${active ? 'nav-link-active' : 'nav-link-inactive'}`}
               >
                 {active && <span className="nav-active-dot" />}
-                {icon(active)}
+                <span className="nav-icon-wrap">
+                  {icon(active)}
+                  {badge > 0 && <span className="nav-badge">{badge > 99 ? '99+' : badge}</span>}
+                </span>
                 <span className="nav-label">{label}</span>
               </Link>
             );

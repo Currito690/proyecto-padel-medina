@@ -1,20 +1,32 @@
-import { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { useCart } from '../context/CartContext';
 
 const PaymentGateway = () => {
   const navigate = useNavigate();
-  const location = useLocation();
   const { user } = useAuth();
-
-  const booking = location.state || {};
-  const { courtId, courtName, sport, gradient, date, timeSlot, price = 18 } = booking;
+  const { items, total, clearCart } = useCart();
 
   const [paymentMethod, setPaymentMethod] = useState('redsys');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
+
+  // Si el carrito está vacío, volver al inicio
+  useEffect(() => {
+    if (items.length === 0) {
+      navigate('/', { replace: true });
+    }
+  }, [items.length, navigate]);
+
+  // Redsys sólo soporta pago de un item a la vez con la integración actual
+  useEffect(() => {
+    if (items.length > 1 && paymentMethod === 'redsys') {
+      setPaymentMethod('club');
+    }
+  }, [items.length, paymentMethod]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
@@ -23,7 +35,12 @@ const PaymentGateway = () => {
   };
 
   const handleRedsysPay = async () => {
-    if (!user) return;
+    if (!user || items.length === 0) return;
+    if (items.length > 1) {
+      setError('El pago con tarjeta sólo admite una reserva a la vez. Usa "Pago en el Club" o elimina reservas del carrito.');
+      return;
+    }
+    const item = items[0];
     setLoading(true);
     setError(null);
     try {
@@ -33,11 +50,11 @@ const PaymentGateway = () => {
 
       const res = await supabase.functions.invoke('redsys-create', {
         body: {
-          amount: price,
-          courtId,
+          amount: item.price,
+          courtId: item.courtId,
           userId: user.id,
-          date,
-          timeSlot,
+          date: item.date,
+          timeSlot: item.timeSlot,
           successUrl,
           failUrl,
           notifyUrl,
@@ -56,6 +73,9 @@ const PaymentGateway = () => {
       if (!data.Ds_MerchantParameters || !data.Ds_Signature || !data.redsysUrl) {
         throw new Error('Datos de pago incompletos');
       }
+
+      // Limpiamos el carrito antes de redirigir al banco
+      clearCart();
 
       // Crear formulario dinámico y enviarlo a Redsys
       const form = document.createElement('form');
@@ -84,27 +104,34 @@ const PaymentGateway = () => {
   };
 
   const handleClubPayment = async () => {
+    if (items.length === 0) return;
     setProcessingClub(true);
     try {
-      const { error } = await supabase.from('bookings').insert({
-        court_id: courtId,
+      const rows = items.map((item) => ({
+        court_id: item.courtId,
         user_id: user.id,
-        date,
-        time_slot: timeSlot,
+        date: item.date,
+        time_slot: item.timeSlot,
         status: 'confirmed',
         is_free: false,
-      });
+      }));
+
+      const { error } = await supabase.from('bookings').insert(rows);
       if (error) throw error;
 
       // Notificar al admin
+      const summary = items.length === 1
+        ? `${user.name} — ${items[0].courtName} · ${items[0].timeSlot}`
+        : `${user.name} — ${items.length} reservas`;
       supabase.functions.invoke('send-push', {
         body: {
           title: 'Nueva reserva',
-          body: `${user.name} — ${courtName} · ${timeSlot}`,
+          body: summary,
           url: '/',
         },
       }).catch(() => {});
 
+      clearCart();
       navigate('/mis-reservas');
     } catch (err) {
       console.error('Error al reservar:', err);
@@ -112,6 +139,10 @@ const PaymentGateway = () => {
       setProcessingClub(false);
     }
   };
+
+  if (items.length === 0) return null;
+
+  const isMulti = items.length > 1;
 
   return (
     <div style={{ backgroundColor: 'var(--color-bg-secondary)', minHeight: '100vh', padding: '1.5rem 1rem' }}>
@@ -121,13 +152,14 @@ const PaymentGateway = () => {
         .pay-tab { flex: 1; padding: 0.75rem; border-radius: 0.625rem; border: none; font-weight: 600; font-size: 0.875rem; cursor: pointer; transition: all 0.2s; font-family: inherit; }
         .pay-tab-active  { background: white; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .pay-tab-inactive { background: transparent; color: #64748B; }
+        .pay-tab-disabled { opacity: 0.5; cursor: not-allowed; }
       `}</style>
       <div style={{ maxWidth: '780px', margin: '0 auto' }}>
-        <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', padding: 0 }}>
+        <button onClick={() => navigate('/carrito')} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', padding: 0 }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
           </svg>
-          Volver
+          Volver al carrito
         </button>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
@@ -135,13 +167,24 @@ const PaymentGateway = () => {
           <div>
             {/* Selector método */}
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
-              <button onClick={() => setPaymentMethod('redsys')} className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
+              <button
+                onClick={() => !isMulti && setPaymentMethod('redsys')}
+                disabled={isMulti}
+                className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
+                title={isMulti ? 'Sólo disponible con una reserva' : ''}
+              >
                 💳 Tarjeta / Bizum
               </button>
               <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
                 🏪 Pago en el Club
               </button>
             </div>
+
+            {isMulti && (
+              <div style={{ backgroundColor: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#9A3412' }}>
+                El pago con tarjeta sólo admite una reserva. Para pagar varias a la vez, usa "Pago en el Club".
+              </div>
+            )}
 
             <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
               {paymentMethod === 'redsys' ? (
@@ -189,7 +232,7 @@ const PaymentGateway = () => {
                           Conectando con el banco...
                         </>
                       ) : (
-                        `Pagar ${price.toFixed(2).replace('.', ',')} € →`
+                        `Pagar ${total.toFixed(2).replace('.', ',')} € →`
                       )}
                     </button>
 
@@ -210,11 +253,11 @@ const PaymentGateway = () => {
                     </div>
                     <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', color: '#0F172A', fontWeight: 800 }}>Pago en Recepción</h3>
                     <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B', lineHeight: '1.5' }}>
-                      Tu pista quedará reservada inmediatamente y abonarás los {price.toFixed(2).replace('.', ',')} € en el mostrador del club.
+                      {isMulti ? `Tus ${items.length} pistas quedarán reservadas inmediatamente` : 'Tu pista quedará reservada inmediatamente'} y abonarás los {total.toFixed(2).replace('.', ',')} € en el mostrador del club.
                     </p>
                   </div>
                   <button onClick={handleClubPayment} disabled={processingClub} style={{ width: '100%', padding: '1rem', fontSize: '1rem', background: '#16A34A', color: 'white', border: 'none', borderRadius: '0.75rem', fontFamily: 'inherit', fontWeight: 700, cursor: processingClub ? 'not-allowed' : 'pointer' }}>
-                    {processingClub ? 'Confirmando...' : `Confirmar Reserva (${price.toFixed(2).replace('.', ',')} €)`}
+                    {processingClub ? 'Confirmando...' : `Confirmar ${isMulti ? 'Reservas' : 'Reserva'} (${total.toFixed(2).replace('.', ',')} €)`}
                   </button>
                 </div>
               )}
@@ -224,32 +267,29 @@ const PaymentGateway = () => {
           {/* ── Resumen del pedido ── */}
           <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', padding: '1.5rem', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border)' }}>
             <p className="section-label">Resumen del pedido</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '0.875rem', background: gradient || 'linear-gradient(135deg, #16A34A, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <span style={{ fontSize: '1.5rem' }}>{sport === 'Pádel' ? '🎾' : '🏓'}</span>
-              </div>
-              <div>
-                <h4 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 0.15rem', letterSpacing: '-0.01em' }}>{courtName || 'Pista'} · {sport}</h4>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>90 minutos</p>
-              </div>
-            </div>
 
-            <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
-              {[
-                { label: 'Fecha', value: formatDate(date) },
-                { label: 'Hora',  value: timeSlot || '—' },
-                { label: 'Sesión', value: '90 min' },
-              ].map(({ label, value }) => (
-                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
-                  <span style={{ color: 'var(--color-text-muted)' }}>{label}</span>
-                  <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{value}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
+              {items.map((item) => (
+                <div key={item.cartId} style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', paddingBottom: '0.875rem', borderBottom: '1px solid var(--color-border)' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '0.75rem', background: item.gradient || 'linear-gradient(135deg, #16A34A, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span style={{ fontSize: '1.25rem' }}>{item.sport === 'Pádel' ? '🎾' : '🏓'}</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h4 style={{ fontSize: '0.9rem', fontWeight: 800, margin: '0 0 0.15rem', letterSpacing: '-0.01em' }}>{item.courtName} · {item.sport}</h4>
+                    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>
+                      {formatDate(item.date)} · {item.timeSlot}
+                    </p>
+                  </div>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 800, color: '#0F172A', flexShrink: 0 }}>
+                    {Number(item.price).toFixed(2).replace('.', ',')} €
+                  </span>
                 </div>
               ))}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', backgroundColor: 'var(--color-accent-light)', borderRadius: '0.875rem' }}>
               <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-accent-hover)' }}>Total</span>
-              <span style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--color-accent-hover)', letterSpacing: '-1px' }}>{price.toFixed(2).replace('.', ',')} €</span>
+              <span style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--color-accent-hover)', letterSpacing: '-1px' }}>{total.toFixed(2).replace('.', ',')} €</span>
             </div>
           </div>
         </div>

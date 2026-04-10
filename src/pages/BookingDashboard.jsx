@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase';
 import TimeSlotList from '../components/booking/TimeSlotList';
 import DateSelector from '../components/booking/DateSelector';
 import { useAuth } from '../context/AuthContext';
+import { useCart } from '../context/CartContext';
 
 const SCHEDULE_TIMES = [
   '09:00 - 10:30',
@@ -35,6 +36,7 @@ const PickleballIcon = () => (
 
 const BookingDashboard = () => {
   const { user } = useAuth();
+  const { addItem } = useCart();
   const navigate = useNavigate();
   const [courts, setCourts] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -158,17 +160,16 @@ const BookingDashboard = () => {
   const handleBook = () => {
     const slot = slots.find(s => s.id === selectedSlot);
     const court = courts.find(c => c.id === selectedCourt);
-    navigate('/checkout', {
-      state: {
-        courtId: selectedCourt,
-        courtName: court.name,
-        sport: court.sport,
-        gradient: court.gradient,
-        date: selectedDate,
-        timeSlot: slot.time,
-        price: siteSettings.court_price
-      },
+    addItem({
+      courtId: selectedCourt,
+      courtName: court.name,
+      sport: court.sport,
+      gradient: court.gradient,
+      date: selectedDate,
+      timeSlot: slot.time,
+      price: siteSettings.court_price,
     });
+    navigate('/carrito');
   };
 
   const currentCourt = courts.find(c => c.id === selectedCourt);
