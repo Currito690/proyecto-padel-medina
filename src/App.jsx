@@ -52,7 +52,7 @@ function App() {
   }, [user]);
 
   // === MODO MANTENIMIENTO ===
-  const MAINTENANCE_MODE = true;
+  const MAINTENANCE_MODE = false;
   const MAINTENANCE_PASSWORD = 'Ivan2013';
 
   const handleMaintenanceSubmit = (e) => {

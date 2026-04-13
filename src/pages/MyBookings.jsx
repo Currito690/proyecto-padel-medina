@@ -1,15 +1,25 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 
 const MyBookings = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const pagoStatus = searchParams.get('pago'); // 'ok' | 'error' | null
 
   useEffect(() => {
     loadBookings();
   }, []);
+
+  const dismissBanner = () => {
+    searchParams.delete('pago');
+    setSearchParams(searchParams, { replace: true });
+  };
 
   const loadBookings = async () => {
     setLoading(true);
