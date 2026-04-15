@@ -294,11 +294,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // Calcular potencia de 2 más cercana
        let pow = 2;
        while (pow < catParts.length) pow *= 2;
-       
+
        const byesCount = pow - catParts.length;
-       for (let i = 0; i < byesCount; i++) {
-           catParts.push({ id: `bye-${cat}-${i}`, name: '---', isBye: true });
+       // Intercalar BYEs entre parejas reales para evitar partidos BYE vs BYE
+       // y que ninguna pareja llegue a la final sin haber jugado antes
+       const paddedParts = [];
+       let byeAdded = 0;
+       for (let i = 0; i < catParts.length; i++) {
+         paddedParts.push(catParts[i]);
+         if (byeAdded < byesCount) {
+           paddedParts.push({ id: `bye-${cat}-${byeAdded}`, name: '---', isBye: true });
+           byeAdded++;
+         }
        }
+       catParts = paddedParts;
        
        const numRounds = Math.log2(pow);
        const catRounds = [];
@@ -573,9 +582,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     let pow = 2;
     while (pow < p.length) pow *= 2;
     const byesCount = pow - p.length;
-    for (let i = 0; i < byesCount; i++) {
-        p.push({ id: `cons-bye-${cat}-${i}`, name: '---', isBye: true });
+    // Intercalar BYEs entre parejas reales para evitar BYE vs BYE
+    // y que ninguna pareja llegue directamente a la final sin jugar
+    const paddedP = [];
+    let byeAdded = 0;
+    for (let i = 0; i < p.length; i++) {
+      paddedP.push(p[i]);
+      if (byeAdded < byesCount) {
+        paddedP.push({ id: `cons-bye-${cat}-${byeAdded}`, name: '---', isBye: true });
+        byeAdded++;
+      }
     }
+    p = paddedP;
 
     const numRounds = Math.log2(pow);
     const newRounds = [];
@@ -1062,12 +1080,26 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {!isExporting && (
-            <button 
-              onClick={() => setPhase('setup')}
-              style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
-            >
-              Atrás a Inscripción
-            </button>
+            <>
+              <button
+                onClick={() => setPhase('setup')}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+              >
+                Atrás a Inscripción
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm('¿Reiniciar el torneo? Se perderán todos los resultados y el cuadro generado. Las parejas inscritas se mantendrán.')) {
+                    setRounds({});
+                    setConsRounds({});
+                    setPhase('setup');
+                  }
+                }}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: 'white', color: '#DC2626', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+              >
+                🔄 Reiniciar Torneo
+              </button>
+            </>
           )}
         </div>
       </div>
