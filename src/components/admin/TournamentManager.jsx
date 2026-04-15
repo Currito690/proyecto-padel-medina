@@ -1126,10 +1126,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </button>
               <button
                 onClick={() => {
-                  if (window.confirm('¿Reiniciar el torneo? Se perderán todos los resultados y el cuadro generado. Las parejas inscritas se mantendrán.')) {
-                    setRounds({});
-                    setConsRounds({});
-                    setPhase('setup');
+                  if (window.confirm('¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro.')) {
+                    const resetRounds = (allRounds) =>
+                      Object.fromEntries(
+                        Object.entries(allRounds).map(([cat, catRounds]) => [
+                          cat,
+                          catRounds.map((roundMatches, rIdx) =>
+                            roundMatches.map(m => ({
+                              ...m,
+                              winner: null,
+                              score: null,
+                              // Only keep p1/p2 in round 0; clear propagated players in later rounds
+                              p1: rIdx === 0 ? m.p1 : null,
+                              p2: rIdx === 0 ? m.p2 : null,
+                            }))
+                          ),
+                        ])
+                      );
+                    setRounds(prev => resetRounds(prev));
+                    setConsRounds(prev => resetRounds(prev));
                   }
                 }}
                 style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: 'white', color: '#DC2626', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
