@@ -1151,6 +1151,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               >
                 🔄 Reiniciar Torneo
               </button>
+              <button
+                onClick={() => {
+                  if (window.confirm('¿Volver a sortear el cuadro? Se perderán todos los resultados actuales y se generará un nuevo orden aleatorio con las mismas parejas.')) {
+                    generateBracket();
+                  }
+                }}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', backgroundColor: 'white', color: '#B45309', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+              >
+                🎲 Re-sortear Cuadro
+              </button>
             </>
           )}
         </div>
