@@ -545,10 +545,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        return null;
     }).filter(Boolean);
 
-    const consPlayers = [...losersR0, ...losersR1WithBye];
+    let consPlayers = [...losersR0, ...losersR1WithBye];
+
+    // Si aún no hay eliminados, generar el cuadro con marcadores de posición
+    // basados en los participantes de la categoría (para poder programar horarios)
     if (consPlayers.length < 2) {
-        alert(`Faltan jugadores eliminados en sus primeros partidos para formar el cuadro de consolación de ${cat}.`);
+      const catParticipants = participants.filter(p => p.category === cat);
+      if (catParticipants.length < 2) {
+        alert(`No hay suficientes participantes en la categoría "${cat}" para generar el cuadro de consolación.`);
         return;
+      }
+      // Crear placeholders: "Perdedor P.X" para cada pareja esperada
+      const expectedLosers = Math.ceil(catParticipants.length / 2);
+      consPlayers = catParticipants.slice(0, expectedLosers).map((_part, i) => ({
+        id: `cons-placeholder-${cat}-${i}`,
+        name: `Perdedor P.${i + 1}`,
+        isPlaceholder: true,
+      }));
     }
 
     let p = [...consPlayers];
