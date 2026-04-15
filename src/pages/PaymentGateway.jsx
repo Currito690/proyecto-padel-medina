@@ -45,7 +45,7 @@ const PaymentGateway = () => {
     setError(null);
     try {
       const successUrl = `${window.location.origin}/mis-reservas?pago=ok`;
-      const failUrl    = `${window.location.origin}/mis-reservas?pago=error`;
+      const failUrl    = `${window.location.origin}/?pago=cancelado`;
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {
