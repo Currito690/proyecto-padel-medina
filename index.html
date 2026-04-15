@@ -2,39 +2,178 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- ─── Iconos & PWA ─── -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
     <link rel="apple-touch-icon" href="/favicon-192.png" />
     <link rel="manifest" href="/manifest.json" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0F172A" />
+    <meta name="theme-color" content="#16A34A" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Padel Medina" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <title>Padel Medina - Reserva tu pista online</title>
-    <meta name="description" content="Reserva tu pista de pádel online en Padel Medina. Gestión rápida, tus reservas al instante y el mejor ambiente deportivo. ¡Ven a jugar con nosotros!" />
-    <meta name="keywords" content="padel, pista de padel, reserva padel, torneos padel, padel medina, club padel, medina" />
+
+    <!-- ─── Performance: Preconnect & DNS Prefetch ─── -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+    <link rel="preload" as="image" href="/logo.png" fetchpriority="high" />
+
+    <!-- Fuente: carga optimizada -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+    <!-- ─── SEO Básico ─── -->
+    <title>Padel Medina | Club de Pádel en Medina Sidonia · Reservas Online</title>
+    <!-- Google Site Verification -->
+    <meta name="google-site-verification" content="YvULCNK-ZP_Zqnh3c3BQ-r5ynJk5Fk1BaNot6yl7AQ0" />
+    <meta name="description" content="Padel Medina - Club oficial de pádel en Medina Sidonia (Cádiz). Reserva tu pista de pádel y pickleball online, torneos, clases y el mejor ambiente deportivo. ¡Reserva ya!" />
+    <meta name="keywords" content="padel medina, padelmedina, padel medina sidonia, club padel medina sidonia, reservar pista padel medina, pistas padel cadiz, pickleball medina, torneos padel medina sidonia, clases padel cadiz, padel cadiz" />
     <meta name="author" content="Padel Medina" />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow" />
+    <meta name="language" content="Spanish" />
+    <meta name="geo.region" content="ES-CA" />
+    <meta name="geo.placename" content="Medina Sidonia, Cádiz" />
+    <meta name="geo.position" content="36.4573;-5.9268" />
+    <meta name="ICBM" content="36.4573, -5.9268" />
+    <meta name="rating" content="general" />
+    <meta name="revisit-after" content="3 days" />
     <link rel="canonical" href="https://padelmedina.com/" />
-    
-    <!-- Open Graph / WhatsApp / Facebook -->
-    <meta property="og:title" content="Padel Medina - Reserva tu pista online" />
-    <meta property="og:description" content="Gestiona y reserva tus pistas de pádel rápidamente. Las mejores instalaciones en Padel Medina." />
+
+    <!-- ─── Open Graph (Facebook/WhatsApp/LinkedIn) ─── -->
+    <meta property="og:site_name" content="Padel Medina" />
+    <meta property="og:title" content="Padel Medina | Club de Pádel en Medina Sidonia" />
+    <meta property="og:description" content="Reserva tu pista de pádel y pickleball online en Padel Medina, Medina Sidonia (Cádiz). Torneos, clases y las mejores instalaciones." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://padelmedina.com/" />
-    <meta property="og:image" content="/logo.png" />
-    
-    <!-- Twitter Cards -->
+    <meta property="og:image" content="https://padelmedina.com/logo.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Padel Medina - Club de Pádel en Medina Sidonia" />
+    <meta property="og:locale" content="es_ES" />
+
+    <!-- ─── Twitter Cards ─── -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Padel Medina - Reserva tu pista online" />
-    <meta name="twitter:description" content="Gestiona y reserva tus pistas de pádel rápidamente. Las mejores instalaciones en Padel Medina." />
-    <meta name="twitter:image" content="/logo.png" />
+    <meta name="twitter:title" content="Padel Medina | Club de Pádel en Medina Sidonia" />
+    <meta name="twitter:description" content="Reserva online tu pista de pádel y pickleball en Medina Sidonia (Cádiz). Torneos, clases y el mejor ambiente." />
+    <meta name="twitter:image" content="https://padelmedina.com/logo.png" />
+    <meta name="twitter:image:alt" content="Padel Medina - Club de Pádel" />
+
+    <!-- ─── Structured Data: Local Business (Google Knowledge Panel) ─── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SportsActivityLocation",
+      "@id": "https://padelmedina.com/#organization",
+      "name": "Padel Medina",
+      "alternateName": ["PadelMedina", "Padel Medina Sidonia", "Club Padel Medina"],
+      "description": "Club de pádel y pickleball en Medina Sidonia, Cádiz. Reservas online, torneos y clases.",
+      "url": "https://padelmedina.com/",
+      "logo": "https://padelmedina.com/logo.png",
+      "image": "https://padelmedina.com/logo.png",
+      "telephone": "+34",
+      "email": "info@padelmedina.com",
+      "priceRange": "€€",
+      "sport": ["Pádel", "Pickleball"],
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "Calle Alemania, 4-20",
+        "addressLocality": "Medina Sidonia",
+        "addressRegion": "Cádiz",
+        "postalCode": "11170",
+        "addressCountry": "ES"
+      },
+      "geo": {
+        "@type": "GeoCoordinates",
+        "latitude": 36.4573,
+        "longitude": -5.9268
+      },
+      "openingHoursSpecification": [{
+        "@type": "OpeningHoursSpecification",
+        "dayOfWeek": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
+        "opens": "09:00",
+        "closes": "22:00"
+      }],
+      "areaServed": {
+        "@type": "City",
+        "name": "Medina Sidonia"
+      },
+      "sameAs": [
+        "https://padelmedina.com/"
+      ],
+      "potentialAction": {
+        "@type": "ReserveAction",
+        "target": "https://padelmedina.com/",
+        "name": "Reservar pista"
+      }
+    }
+    </script>
+
+    <!-- ─── Structured Data: WebSite (SearchBox + Sitelinks) ─── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "@id": "https://padelmedina.com/#website",
+      "url": "https://padelmedina.com/",
+      "name": "Padel Medina",
+      "description": "Reserva de pistas de pádel en Medina Sidonia",
+      "publisher": { "@id": "https://padelmedina.com/#organization" },
+      "inLanguage": "es-ES"
+    }
+    </script>
+
+    <!-- ─── Structured Data: Breadcrumb ─── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": [{
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Inicio",
+        "item": "https://padelmedina.com/"
+      }]
+    }
+    </script>
+
+    <!-- ─── CSS crítico inline para evitar FOUC ─── -->
+    <style>
+      html, body { margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F8FAFC; color: #0F172A; }
+      #initial-loader { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #F8FAFC; z-index: 9999; }
+      #initial-loader .spinner { width: 40px; height: 40px; border: 3px solid #DCFCE7; border-top-color: #16A34A; border-radius: 50%; animation: padelSpin 0.8s linear infinite; }
+      @keyframes padelSpin { to { transform: rotate(360deg); } }
+      .seo-content { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Loader visible instantáneo antes de hidratar React -->
+    <div id="initial-loader"><div class="spinner" aria-label="Cargando Padel Medina"></div></div>
+
+    <!-- Contenido SEO visible para crawlers mientras React carga -->
+    <div id="root">
+      <div class="seo-content">
+        <h1>Padel Medina - Club de Pádel en Medina Sidonia, Cádiz</h1>
+        <p>Padel Medina es el club oficial de pádel y pickleball en Medina Sidonia (Cádiz). Reserva tu pista de pádel online de forma rápida y segura. Ofrecemos pistas de pádel, pistas de pickleball, torneos, clases y el mejor ambiente deportivo de la comarca.</p>
+        <h2>Reservas online de pistas de pádel</h2>
+        <p>Con Padel Medina puedes reservar tu pista en segundos, pagar online con tarjeta o Bizum, y gestionar todas tus reservas desde tu móvil.</p>
+        <h2>Dirección</h2>
+        <address>Calle Alemania, 4-20, 11170 Medina Sidonia, Cádiz, España</address>
+        <h2>Horario</h2>
+        <p>Abierto todos los días de 9:00 a 22:00.</p>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // Ocultar loader cuando React hidrate
+      window.addEventListener('load', () => {
+        const loader = document.getElementById('initial-loader');
+        if (loader) setTimeout(() => loader.remove(), 300);
+      });
+    </script>
   </body>
 </html>

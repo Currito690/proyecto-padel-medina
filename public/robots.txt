@@ -1,4 +1,20 @@
 User-agent: *
 Allow: /
+Disallow: /admin
+Disallow: /checkout
+Disallow: /carrito
+Disallow: /mis-reservas
+Disallow: /perfil
 
+# Sitemaps
 Sitemap: https://padelmedina.com/sitemap.xml
+
+# Crawl-delay (optional)
+Crawl-delay: 1
+
+# Bots especiales
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /

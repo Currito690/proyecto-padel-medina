@@ -9,10 +9,10 @@ const BookingDashboard = lazy(() => import('./pages/BookingDashboard'));
 const MyBookings = lazy(() => import('./pages/MyBookings'));
 const Profile = lazy(() => import('./pages/Profile'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
-import Login from './pages/Login';
-import PaymentGateway from './pages/PaymentGateway';
-import TournamentRegistration from './pages/TournamentRegistration';
-import Cart from './pages/Cart';
+const Login = lazy(() => import('./pages/Login'));
+const PaymentGateway = lazy(() => import('./pages/PaymentGateway'));
+const TournamentRegistration = lazy(() => import('./pages/TournamentRegistration'));
+const Cart = lazy(() => import('./pages/Cart'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

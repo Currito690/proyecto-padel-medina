@@ -58,6 +58,12 @@ body {
   padding: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  text-size-adjust: 100%;
+}
+
+a, button, input, [role="button"] {
+  touch-action: manipulation; /* Elimina retraso de 300ms en toque de móvil */
 }
 
 html {
@@ -95,6 +101,9 @@ button {
   font-family: inherit;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 input, select, textarea {

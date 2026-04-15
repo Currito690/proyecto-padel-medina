@@ -1,5 +1,5 @@
 // supabase/functions/redsys-create/index.ts
-// Genera los parámetros firmados para redirigir al TPV de Redsys
+// Genera los parámetros firmados para redirigir al TPV de Redsys (Producción)
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import CryptoJS from 'https://esm.sh/crypto-js@4.2.0';
 
@@ -8,15 +8,13 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// ── Credenciales ──
-const MERCHANT_CODE = Deno.env.get('REDSYS_MERCHANT_CODE') ?? '335274171';
-const TERMINAL      = Deno.env.get('REDSYS_TERMINAL')      ?? '1';
-const SECRET_KEY    = Deno.env.get('REDSYS_SECRET_KEY')     ?? 'sq7HjrUOBfKmC576ILgskD5srU870gJ7';
+// ── Credenciales de producción (configurar en Supabase Dashboard > Settings > Secrets) ──
+const MERCHANT_CODE = Deno.env.get('REDSYS_MERCHANT_CODE');
+const TERMINAL      = Deno.env.get('REDSYS_TERMINAL') ?? '1';
+const SECRET_KEY    = Deno.env.get('REDSYS_SECRET_KEY');
 
-// ── URL del TPV ──
-const REDSYS_URL = Deno.env.get('REDSYS_ENV') === 'production'
-  ? 'https://sis.redsys.es/sis/realizarPago'
-  : 'https://sis-t.redsys.es:25443/sis/realizarPago';
+// ── URL del TPV Virtual Redsys (Producción Real) ──
+const REDSYS_URL = 'https://sis.redsys.es/sis/realizarPago';
 
 // ── Genera número de pedido único (12 chars, empieza por 4 dígitos) ──
 function generateOrderId(): string {
@@ -30,7 +28,6 @@ function deriveKey(secretBase64: string, orderId: string): CryptoJS.lib.WordArra
   const key = CryptoJS.enc.Base64.parse(secretBase64);
   const iv = CryptoJS.enc.Hex.parse('0000000000000000');
 
-  // Pad con ceros hasta múltiplo de 8
   let padded = orderId;
   while (padded.length % 8 !== 0) padded += '\0';
 
@@ -52,6 +49,15 @@ function signHMACSHA256(derivedKey: CryptoJS.lib.WordArray, paramsB64: string): 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
+  // Validar credenciales configuradas
+  if (!SECRET_KEY || !MERCHANT_CODE) {
+    console.error('Faltan credenciales Redsys: REDSYS_SECRET_KEY o REDSYS_MERCHANT_CODE no configurados en Supabase Secrets');
+    return new Response(JSON.stringify({ error: 'Configuración Redsys incompleta. Contacta con el administrador.' }), {
+      status: 500,
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+    });
+  }
+
   try {
     const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl } = await req.json();
 
@@ -59,22 +65,21 @@ serve(async (req) => {
     const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
 
     const params = {
-      DS_MERCHANT_MERCHANTCODE: MERCHANT_CODE,
-      DS_MERCHANT_TERMINAL: TERMINAL,
+      DS_MERCHANT_MERCHANTCODE:    MERCHANT_CODE,
+      DS_MERCHANT_TERMINAL:        TERMINAL,
       DS_MERCHANT_TRANSACTIONTYPE: '0',
-      DS_MERCHANT_ORDER: orderId,
-      DS_MERCHANT_AMOUNT: amountCents,
-      DS_MERCHANT_CURRENCY: '978',
-      DS_MERCHANT_URLOK: successUrl,
-      DS_MERCHANT_URLKO: failUrl,
-      DS_MERCHANT_MERCHANTURL: notifyUrl,
-      DS_MERCHANT_CONSUMERLANGUAGE: '002',
+      DS_MERCHANT_ORDER:           orderId,
+      DS_MERCHANT_AMOUNT:          amountCents,
+      DS_MERCHANT_CURRENCY:        '978', // EUR
+      DS_MERCHANT_URLOK:           successUrl,
+      DS_MERCHANT_URLKO:           failUrl,
+      DS_MERCHANT_MERCHANTURL:     notifyUrl,
+      DS_MERCHANT_CONSUMERLANGUAGE: '002', // Español
       DS_MERCHANT_PRODUCTDESCRIPTION: `Pista padel ${date} ${timeSlot}`,
-      DS_MERCHANT_MERCHANTDATA: JSON.stringify({ courtId, userId, date, timeSlot }),
+      DS_MERCHANT_MERCHANTDATA:    JSON.stringify({ courtId, userId, date, timeSlot }),
     };
 
     const paramsB64 = btoa(JSON.stringify(params));
-
     const derivedKey = deriveKey(SECRET_KEY, orderId);
     const signature = signHMACSHA256(derivedKey, paramsB64);
 
@@ -87,6 +92,7 @@ serve(async (req) => {
     }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
 
   } catch (err) {
+    console.error('Redsys create error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...CORS, 'Content-Type': 'application/json' },

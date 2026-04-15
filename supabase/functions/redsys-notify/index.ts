@@ -1,10 +1,11 @@
 // supabase/functions/redsys-notify/index.ts
-// Recibe la notificación de Redsys cuando se completa un pago
+// Recibe la notificación de Redsys cuando se completa un pago (Producción)
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import CryptoJS from 'https://esm.sh/crypto-js@4.2.0';
 
-const SECRET_KEY = Deno.env.get('REDSYS_SECRET_KEY') ?? 'sq7HjrUOBfKmC576ILgskD5srU870gJ7';
+// ── Clave SHA-256 de producción (configurar en Supabase Dashboard > Settings > Secrets) ──
+const SECRET_KEY = Deno.env.get('REDSYS_SECRET_KEY');
 
 // ── Deriva la clave por pedido usando 3DES-CBC ──
 function deriveKey(secretBase64: string, orderId: string): CryptoJS.lib.WordArray {
@@ -31,15 +32,20 @@ function signHMACSHA256(derivedKey: CryptoJS.lib.WordArray, paramsB64: string): 
 
 // ── Verifica la firma recibida de Redsys ──
 function verifySignature(paramsB64: string, receivedSig: string, orderId: string): boolean {
+  if (!SECRET_KEY) return false;
   const derivedKey = deriveKey(SECRET_KEY, orderId);
   const expectedSig = signHMACSHA256(derivedKey, paramsB64);
-
   const normalize = (s: string) => s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
   return normalize(expectedSig) === normalize(receivedSig);
 }
 
 serve(async (req) => {
   try {
+    if (!SECRET_KEY) {
+      console.error('REDSYS_SECRET_KEY no configurado en Supabase Secrets');
+      return new Response('KO', { status: 500 });
+    }
+
     const body = await req.text();
     const params = new URLSearchParams(body);
 
@@ -52,7 +58,7 @@ serve(async (req) => {
 
     // Verificar firma con clave derivada por 3DES del orderId
     if (!verifySignature(dsParams, dsSignature, orderId)) {
-      console.error('Redsys: firma inválida');
+      console.error('Redsys notify: firma inválida para pedido', orderId);
       return new Response('KO', { status: 400 });
     }
 
@@ -81,7 +87,7 @@ serve(async (req) => {
         return new Response('KO', { status: 500 });
       }
 
-      // Obtener nombre de pista y usuario para la notificación
+      // Obtener nombre de pista y usuario para la notificación push
       const [courtRes, userRes] = await Promise.all([
         supabase.from('courts').select('name').eq('id', courtId).single(),
         supabase.from('profiles').select('name').eq('id', userId).single(),
@@ -90,7 +96,6 @@ serve(async (req) => {
       const courtName = courtRes.data?.name || 'Pista';
       const userName = userRes.data?.name || 'Usuario';
 
-      // Formatear fecha
       const [y, m, d] = date.split('-');
       const dateStr = `${d}/${m}/${y}`;
 
@@ -108,8 +113,10 @@ serve(async (req) => {
           url: '/',
         }),
       }).catch(console.warn);
+
+      console.log(`Redsys OK: reserva creada para ${userName} - ${courtName} ${date} ${timeSlot}`);
     } else {
-      console.log(`Redsys: pago rechazado con código ${responseCode}`);
+      console.log(`Redsys: pago rechazado con código ${responseCode} para pedido ${orderId}`);
     }
 
     return new Response('OK', { status: 200 });
