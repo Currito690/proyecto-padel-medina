@@ -37,7 +37,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       startHour: '09:00', endHour: '22:00',
       firstDayStartHour: '16:00',
       courtsCount: 2,
-      matchDuration: 90,
+      matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 },
     };
     if (savedData?.tConfig) {
       return { ...fallback, ...savedData.tConfig, categories: savedData.tConfig.categories || 'Masculino, Femenino' };
@@ -86,7 +86,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
       localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
       setPhase('config');
-      setTConfig({ name: '', categories: 'Masculino, Femenino', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, matchDuration: 90 });
+      setTConfig({ name: '', categories: 'Masculino, Femenino', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 } });
       setParticipants([]);
       setRounds({});
       setConsRounds({});
@@ -785,25 +785,38 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </select>
             </div>
 
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>
-                Duración de cada partido
+            <div style={{ padding: '1rem', backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
+              <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.85rem', fontWeight: 800, color: '#334155' }}>
+                ⏱ Duración de partido por categoría
               </label>
-              <select
-                value={tConfig.matchDuration ?? 90}
-                onChange={e => setTConfig({...tConfig, matchDuration: parseInt(e.target.value)})}
-                style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}
-              >
-                <option value={30}>30 minutos</option>
-                <option value={45}>45 minutos</option>
-                <option value={60}>60 minutos (1 hora)</option>
-                <option value={75}>75 minutos</option>
-                <option value={90}>90 minutos (1h 30min)</option>
-                <option value={105}>105 minutos</option>
-                <option value={120}>120 minutos (2 horas)</option>
-              </select>
-              <p style={{ margin: '0.4rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>
-                Tiempo estimado por partido incluyendo calentamiento.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(cat => (
+                  <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <span style={{ minWidth: '100px', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>{cat}</span>
+                    <select
+                      value={tConfig.matchDurationByCategory?.[cat] ?? 90}
+                      onChange={e => setTConfig({
+                        ...tConfig,
+                        matchDurationByCategory: {
+                          ...tConfig.matchDurationByCategory,
+                          [cat]: parseInt(e.target.value)
+                        }
+                      })}
+                      style={{ flex: 1, padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', fontSize: '0.875rem', cursor: 'pointer', backgroundColor: 'white' }}
+                    >
+                      <option value={30}>30 min</option>
+                      <option value={45}>45 min</option>
+                      <option value={60}>60 min (1h)</option>
+                      <option value={75}>75 min</option>
+                      <option value={90}>90 min (1h 30min)</option>
+                      <option value={105}>105 min</option>
+                      <option value={120}>120 min (2h)</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <p style={{ margin: '0.6rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>
+                Tiempo estimado por partido incluyendo calentamiento, por cada categoría.
               </p>
             </div>
           </div>
@@ -1026,7 +1039,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Torneo: {tConfig.name}</h2>
           <p style={{ margin: '0.2rem 0', fontSize: '0.85rem', color: '#64748B', fontWeight: 600 }}>{tConfig.startDay} a {tConfig.endDay} ({tConfig.startHour} - {tConfig.endHour})</p>
           <p style={{ margin: '0.1rem 0', fontSize: '0.8rem', color: '#64748B', fontWeight: 600 }}>
-            ⏱ Duración por partido: <strong>{tConfig.matchDuration ?? 90} min</strong>
+            ⏱{' '}
+            {tConfig.matchDurationByCategory
+              ? Object.entries(tConfig.matchDurationByCategory).map(([cat, dur]) => `${cat}: ${dur} min`).join(' · ')
+              : `${tConfig.matchDuration ?? 90} min`
+            }
           </p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Haz clic en el ganador de cada partido para avanzar ronda.</p>
         </div>
