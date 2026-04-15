@@ -133,7 +133,7 @@ const PaymentGateway = () => {
       }).catch(() => {});
 
       clearCart();
-      navigate('/mis-reservas');
+      navigate('/mis-reservas?pago=ok');
     } catch (err) {
       console.error('Error al reservar:', err);
       alert('Error al procesar la reserva: ' + err.message);

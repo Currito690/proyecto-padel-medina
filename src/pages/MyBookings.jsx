@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 
 const MyBookings = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -80,6 +79,39 @@ const MyBookings = () => {
 
   return (
     <div className="dashboard-container">
+
+      {pagoStatus === 'ok' && (
+        <div style={{
+          background: 'linear-gradient(135deg, #16A34A, #059669)',
+          borderRadius: '1.25rem',
+          padding: '1.5rem',
+          marginBottom: '1.5rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          boxShadow: '0 8px 24px rgba(22,163,74,0.35)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '1.5rem' }}>
+              🎾
+            </div>
+            <div>
+              <p style={{ margin: '0 0 0.2rem', fontWeight: 900, color: 'white', fontSize: '1.05rem' }}>
+                ¡Enhorabuena! Reserva confirmada
+              </p>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: 'rgba(255,255,255,0.85)' }}>
+                Tu pista está reservada. ¡Que disfrutes del partido!
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={dismissBanner}
+            style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', color: 'white', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >✕</button>
+        </div>
+      )}
+
       <header style={{ marginBottom: '2rem' }}>
         <h1 style={{ fontSize: '1.875rem', fontWeight: 900, letterSpacing: '-0.03em', margin: '0 0 0.25rem' }}>
           Tus Reservas
