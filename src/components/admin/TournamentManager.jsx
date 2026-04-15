@@ -13,6 +13,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [editingScoreId, setEditingScoreId] = useState(null);
   const [scoreInput, setScoreInput] = useState('');
+  const [swapMode, setSwapMode] = useState({}); // keyed by `${isCons}-${cat}`
+  const [selectedSwapSlot, setSelectedSwapSlot] = useState(null); // {key, cat, isCons, matchIdx, side}
   const loadSavedState = () => {
     try {
       const saved = localStorage.getItem(`padel_medina_tournament_${tournamentKey}`);
@@ -369,6 +371,41 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setRounds(newAllRounds);
     setConsRounds({});
     setPhase('bracket');
+  };
+
+  const handleSwapPlayers = (cat, isCons, matchIdx, side) => {
+    const key = `${isCons}-${cat}`;
+    if (!selectedSwapSlot) {
+      setSelectedSwapSlot({ key, cat, isCons, matchIdx, side });
+      return;
+    }
+    // Cancel if clicking the same slot
+    if (selectedSwapSlot.key === key && selectedSwapSlot.matchIdx === matchIdx && selectedSwapSlot.side === side) {
+      setSelectedSwapSlot(null);
+      return;
+    }
+    // Only swap within the same bracket
+    if (selectedSwapSlot.key !== key) {
+      setSelectedSwapSlot({ key, cat, isCons, matchIdx, side });
+      return;
+    }
+    const targetRoundsGlob = isCons ? consRounds : rounds;
+    const targetRounds = targetRoundsGlob[cat];
+    const newRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+    const match1 = newRounds[0][selectedSwapSlot.matchIdx];
+    const match2 = newRounds[0][matchIdx];
+    const player1 = match1[selectedSwapSlot.side];
+    const player2 = match2[side];
+    match1[selectedSwapSlot.side] = player2;
+    match2[side] = player1;
+    if (isCons) setConsRounds({ ...consRounds, [cat]: newRounds });
+    else setRounds({ ...rounds, [cat]: newRounds });
+    setSelectedSwapSlot(null);
+  };
+
+  const toggleSwapMode = (key) => {
+    setSwapMode(prev => ({ ...prev, [key]: !prev[key] }));
+    setSelectedSwapSlot(null);
   };
 
   const handleEditTime = (match, isCons = false, cat) => {
@@ -1125,6 +1162,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 { title: `🥈 C. ${cat}`, data: catCons, isCons: true, id: `export-cons-${cat.replace(/\s+/g, '_')}` }
               ].map(bracket => {
                 if (!bracket.data || bracket.data.length === 0) return null;
+                const swapKey = `${bracket.isCons}-${cat}`;
+                const isSwapping = !!swapMode[swapKey];
                 return (
                   <div id={bracket.id} key={bracket.title} style={{ padding: '1.5rem', backgroundColor: '#FAFAF9', borderRadius: '1rem', marginBottom: '3rem', borderTop: bracket.isCons ? '2px dashed #E2E8F0' : 'none', marginTop: bracket.isCons ? '2rem' : '0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -1133,16 +1172,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       </h3>
                       <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                         {!isExporting && (
-                          <button onClick={() => handleDownloadPDF(bracket.id, bracket.title)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            Exportar PDF
-                          </button>
+                          <>
+                            <button
+                              onClick={() => toggleSwapMode(swapKey)}
+                              style={{ background: 'none', border: 'none', color: isSwapping ? '#D97706' : '#7C3AED', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                            >
+                              🔀 {isSwapping ? (selectedSwapSlot?.key === swapKey ? 'Selecciona 2ª pareja…' : 'Cancelar edición') : 'Editar orden'}
+                            </button>
+                            <button onClick={() => handleDownloadPDF(bracket.id, bracket.title)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                              Exportar PDF
+                            </button>
+                          </>
                         )}
                         {bracket.isCons && !isExporting && (
                            <button onClick={() => setConsRounds(prev => ({...prev, [cat]: []}))} style={{ background: 'none', border: 'none', color: '#EF4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Restaurar Consolación</button>
                         )}
                       </div>
                     </div>
+                    {isSwapping && (
+                      <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '0.5rem', padding: '0.6rem 1rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#92400E', fontWeight: 600 }}>
+                        🔀 Modo edición: haz clic en dos parejas de la <strong>primera ronda</strong> para intercambiarlas de posición.
+                      </div>
+                    )}
             
             <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'stretch' }}>
               {bracket.data.map((roundMatches, rIdx) => (
@@ -1166,33 +1218,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         </div>
                       )}
                       
-                      <div onClick={() => handleSetWinner(match, match.p1, bracket.isCons, cat)} style={{ padding: '0.6rem 0.75rem', backgroundColor: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : 'transparent', borderBottom: '1.5px solid #F1F5F9', cursor: match.p1?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ fontSize: '0.82rem', fontWeight: match.winner?.id === match.p1?.id ? 800 : 600, color: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {match.p1 ? match.p1.name : '\u00A0'}
-                        </span>
-                        {match.score && (
-                          <div style={{ display: 'flex', gap: '0.2rem', flexShrink: 0 }}>
-                            {parseScore(match.score, 0).map((s, i) => (
-                              <span key={i} style={{ fontSize: '0.72rem', fontWeight: 800, background: match.winner?.id === match.p1?.id ? (bracket.isCons ? '#F59E0B' : '#16A34A') : '#E2E8F0', color: match.winner?.id === match.p1?.id ? 'white' : '#475569', borderRadius: '3px', padding: '0.05rem 0.3rem', minWidth: '1.2rem', textAlign: 'center' }}>{s}</span>
-                            ))}
+                      {(['p1', 'p2']).map((side, sIdx) => {
+                        const player = match[side];
+                        const isWinner = match.winner?.id === player?.id;
+                        const isSelected = isSwapping && selectedSwapSlot?.key === swapKey && selectedSwapSlot?.matchIdx === match.matchIndex && selectedSwapSlot?.side === side && rIdx === 0;
+                        const swappable = isSwapping && rIdx === 0 && !player?.isBye;
+                        const baseBg = isWinner ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : (sIdx === 1 ? '#F8FAFC' : 'transparent');
+                        const bg = isSelected ? '#EDE9FE' : baseBg;
+                        return (
+                          <div
+                            key={side}
+                            onClick={() => swappable ? handleSwapPlayers(cat, bracket.isCons, match.matchIndex, side) : handleSetWinner(match, player, bracket.isCons, cat)}
+                            style={{ padding: '0.6rem 0.75rem', backgroundColor: bg, borderBottom: sIdx === 0 ? '1.5px solid #F1F5F9' : 'none', cursor: (player?.isBye && !swappable) ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem', outline: isSelected ? '2px solid #7C3AED' : 'none' }}
+                          >
+                            {swappable && <span style={{ fontSize: '0.7rem', color: isSelected ? '#7C3AED' : '#A78BFA', flexShrink: 0 }}>⇄</span>}
+                            <span style={{ fontSize: '0.82rem', fontWeight: isWinner ? 800 : 600, color: isSelected ? '#7C3AED' : (isWinner ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155'), flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {player ? player.name : '\u00A0'}
+                            </span>
+                            {match.score && (
+                              <div style={{ display: 'flex', gap: '0.2rem', flexShrink: 0 }}>
+                                {parseScore(match.score, sIdx).map((s, i) => (
+                                  <span key={i} style={{ fontSize: '0.72rem', fontWeight: 800, background: isWinner ? (bracket.isCons ? '#F59E0B' : '#16A34A') : '#E2E8F0', color: isWinner ? 'white' : '#475569', borderRadius: '3px', padding: '0.05rem 0.3rem', minWidth: '1.2rem', textAlign: 'center' }}>{s}</span>
+                                ))}
+                              </div>
+                            )}
+                            {isWinner && <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>🏆</span>}
                           </div>
-                        )}
-                        {match.winner?.id === match.p1?.id && <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>🏆</span>}
-                      </div>
-
-                      <div onClick={() => handleSetWinner(match, match.p2, bracket.isCons, cat)} style={{ padding: '0.6rem 0.75rem', backgroundColor: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : '#F8FAFC', cursor: match.p2?.isBye ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ fontSize: '0.82rem', fontWeight: match.winner?.id === match.p2?.id ? 800 : 600, color: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {match.p2 ? match.p2.name : '\u00A0'}
-                        </span>
-                        {match.score && (
-                          <div style={{ display: 'flex', gap: '0.2rem', flexShrink: 0 }}>
-                            {parseScore(match.score, 1).map((s, i) => (
-                              <span key={i} style={{ fontSize: '0.72rem', fontWeight: 800, background: match.winner?.id === match.p2?.id ? (bracket.isCons ? '#F59E0B' : '#16A34A') : '#E2E8F0', color: match.winner?.id === match.p2?.id ? 'white' : '#475569', borderRadius: '3px', padding: '0.05rem 0.3rem', minWidth: '1.2rem', textAlign: 'center' }}>{s}</span>
-                            ))}
-                          </div>
-                        )}
-                        {match.winner?.id === match.p2?.id && <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>🏆</span>}
-                      </div>
+                        );
+                      })}
 
                       {(!match.p1?.isBye && !match.p2?.isBye) && !isExporting && (
                         <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
