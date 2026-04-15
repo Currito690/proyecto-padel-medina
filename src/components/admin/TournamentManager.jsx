@@ -190,7 +190,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       prefNames: newPreferences.map(p => p.label)
     }]);
     setNewCouple('');
-    setNewCoupleCategory(catList[0] || ''); // reset to first category, not empty
+    // Mantener la categoría seleccionada para poder seguir añadiendo en la misma
     setNewPreferences([]);
   };
 
