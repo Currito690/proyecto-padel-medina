@@ -59,25 +59,30 @@ serve(async (req) => {
   }
 
   try {
-    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl } = await req.json();
+    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod } = await req.json();
 
     const orderId = customOrderId ?? generateOrderId();
     const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
 
-    const params = {
-      DS_MERCHANT_MERCHANTCODE:    MERCHANT_CODE,
-      DS_MERCHANT_TERMINAL:        TERMINAL,
-      DS_MERCHANT_TRANSACTIONTYPE: '0',
-      DS_MERCHANT_ORDER:           orderId,
-      DS_MERCHANT_AMOUNT:          amountCents,
-      DS_MERCHANT_CURRENCY:        '978', // EUR
-      DS_MERCHANT_URLOK:           successUrl,
-      DS_MERCHANT_URLKO:           failUrl,
-      DS_MERCHANT_MERCHANTURL:     notifyUrl,
-      DS_MERCHANT_CONSUMERLANGUAGE: '002', // Español
+    const params: Record<string, string> = {
+      DS_MERCHANT_MERCHANTCODE:       MERCHANT_CODE,
+      DS_MERCHANT_TERMINAL:           TERMINAL,
+      DS_MERCHANT_TRANSACTIONTYPE:    '0',
+      DS_MERCHANT_ORDER:              orderId,
+      DS_MERCHANT_AMOUNT:             amountCents,
+      DS_MERCHANT_CURRENCY:           '978', // EUR
+      DS_MERCHANT_URLOK:              successUrl,
+      DS_MERCHANT_URLKO:              failUrl,
+      DS_MERCHANT_MERCHANTURL:        notifyUrl,
+      DS_MERCHANT_CONSUMERLANGUAGE:   '002', // Español
       DS_MERCHANT_PRODUCTDESCRIPTION: `Pista padel ${date} ${timeSlot}`,
-      DS_MERCHANT_MERCHANTDATA:    JSON.stringify({ courtId, userId, date, timeSlot }),
+      DS_MERCHANT_MERCHANTDATA:       JSON.stringify({ courtId, userId, date, timeSlot }),
     };
+
+    // Forzar Bizum si se solicita explícitamente
+    if (paymentMethod === 'bizum') {
+      params.DS_MERCHANT_PAYMENT_METHODS = 'BIZUM';
+    }
 
     const paramsB64 = btoa(JSON.stringify(params));
     const derivedKey = deriveKey(SECRET_KEY, orderId);

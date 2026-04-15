@@ -34,10 +34,10 @@ const PaymentGateway = () => {
     return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
   };
 
-  const handleRedsysPay = async () => {
+  const handleRedsysPay = async (method = 'card') => {
     if (!user || items.length === 0) return;
     if (items.length > 1) {
-      setError('El pago con tarjeta sólo admite una reserva a la vez. Usa "Pago en el Club" o elimina reservas del carrito.');
+      setError('El pago online sólo admite una reserva a la vez. Usa "Pago en el Club" o elimina reservas del carrito.');
       return;
     }
     const item = items[0];
@@ -58,6 +58,7 @@ const PaymentGateway = () => {
           successUrl,
           failUrl,
           notifyUrl,
+          paymentMethod: method === 'bizum' ? 'bizum' : 'card',
         },
       });
 
@@ -166,17 +167,25 @@ const PaymentGateway = () => {
           {/* ── Panel de pago ── */}
           <div>
             {/* Selector método */}
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
+            <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
               <button
                 onClick={() => !isMulti && setPaymentMethod('redsys')}
                 disabled={isMulti}
                 className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
                 title={isMulti ? 'Sólo disponible con una reserva' : ''}
               >
-                💳 Tarjeta / Bizum
+                💳 Tarjeta
+              </button>
+              <button
+                onClick={() => !isMulti && setPaymentMethod('bizum')}
+                disabled={isMulti}
+                className={`pay-tab ${paymentMethod === 'bizum' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
+                title={isMulti ? 'Sólo disponible con una reserva' : ''}
+              >
+                📱 Bizum
               </button>
               <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
-                🏪 Pago en el Club
+                🏪 Club
               </button>
             </div>
 
@@ -187,32 +196,48 @@ const PaymentGateway = () => {
             )}
 
             <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
-              {paymentMethod === 'redsys' ? (
+              {(paymentMethod === 'redsys' || paymentMethod === 'bizum') ? (
                 <>
-                  {/* Header Redsys */}
+                  {/* Header */}
                   <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
                       </svg>
-                      <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Pago Seguro con Redsys</span>
+                      <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                        {paymentMethod === 'bizum' ? 'Pagar con Bizum' : 'Pago con Tarjeta'}
+                      </span>
                     </div>
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.7rem', fontWeight: 800, backgroundColor: '#EFF6FF', color: '#1D4ED8', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>VISA</span>
-                      <span style={{ fontSize: '0.7rem', fontWeight: 800, backgroundColor: '#FFF7ED', color: '#C2410C', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>MC</span>
-                      <span style={{ fontSize: '0.7rem', fontWeight: 800, backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>BIZUM</span>
+                      {paymentMethod === 'redsys' ? (
+                        <>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 800, backgroundColor: '#EFF6FF', color: '#1D4ED8', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>VISA</span>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 800, backgroundColor: '#FFF7ED', color: '#C2410C', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>MC</span>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: '0.7rem', fontWeight: 800, backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>BIZUM</span>
+                      )}
                     </div>
                   </div>
 
                   <div style={{ padding: '1.75rem 1.5rem', textAlign: 'center' }}>
-                    <div style={{ width: '52px', height: '52px', borderRadius: '50%', backgroundColor: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1D4ED8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
-                      </svg>
+                    <div style={{ width: '52px', height: '52px', borderRadius: '50%', backgroundColor: paymentMethod === 'bizum' ? '#F0FDF4' : '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+                      {paymentMethod === 'bizum' ? (
+                        <span style={{ fontSize: '1.5rem' }}>📱</span>
+                      ) : (
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1D4ED8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+                        </svg>
+                      )}
                     </div>
-                    <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 800, color: '#0F172A' }}>TPV Virtual Redsys</h3>
+                    <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 800, color: '#0F172A' }}>
+                      {paymentMethod === 'bizum' ? 'Bizum vía Redsys' : 'TPV Virtual Redsys'}
+                    </h3>
                     <p style={{ margin: '0 0 1.5rem', fontSize: '0.85rem', color: '#64748B', lineHeight: 1.5 }}>
-                      Serás redirigido a la pasarela de pago segura del banco donde podrás pagar con tarjeta o Bizum.
+                      {paymentMethod === 'bizum'
+                        ? 'Serás redirigido directamente al pago con Bizum. Solo necesitas tu número de teléfono y confirmar en tu app bancaria.'
+                        : 'Serás redirigido a la pasarela de pago segura del banco donde podrás pagar con tarjeta.'
+                      }
                     </p>
 
                     {error && (
@@ -222,17 +247,17 @@ const PaymentGateway = () => {
                     )}
 
                     <button
-                      onClick={handleRedsysPay}
+                      onClick={() => handleRedsysPay(paymentMethod)}
                       disabled={loading}
-                      style={{ width: '100%', padding: '1rem', backgroundColor: loading ? '#94A3B8' : '#1D4ED8', color: 'white', border: 'none', borderRadius: '0.75rem', fontFamily: 'inherit', fontSize: '1rem', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'background-color 0.2s' }}
+                      style={{ width: '100%', padding: '1rem', backgroundColor: loading ? '#94A3B8' : paymentMethod === 'bizum' ? '#15803D' : '#1D4ED8', color: 'white', border: 'none', borderRadius: '0.75rem', fontFamily: 'inherit', fontSize: '1rem', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'background-color 0.2s' }}
                     >
                       {loading ? (
                         <>
                           <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
-                          Conectando con el banco...
+                          Conectando...
                         </>
                       ) : (
-                        `Pagar ${total.toFixed(2).replace('.', ',')} € →`
+                        `${paymentMethod === 'bizum' ? 'Pagar con Bizum' : 'Pagar con Tarjeta'} · ${total.toFixed(2).replace('.', ',')} €`
                       )}
                     </button>
 
