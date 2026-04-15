@@ -39,8 +39,17 @@ const BookingDashboard = () => {
   const { addItem } = useCart();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const pagoCancelado = searchParams.get('pago') === 'cancelado';
+  const [pagoCancelado, setPagoCancelado] = useState(false);
   const [courts, setCourts] = useState([]);
+
+  // Leer el param, mostrarlo en estado y limpiar la URL de inmediato
+  useEffect(() => {
+    if (searchParams.get('pago') === 'cancelado') {
+      setPagoCancelado(true);
+      searchParams.delete('pago');
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, []);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00' });
   const [slotsLocked, setSlotsLocked] = useState(false);
@@ -240,7 +249,7 @@ const BookingDashboard = () => {
                 <p style={{ margin: '0.1rem 0 0', fontSize: '0.8rem', color: '#C2410C' }}>No se ha realizado ningún cargo. Puedes volver a reservar cuando quieras.</p>
               </div>
             </div>
-            <button onClick={() => { searchParams.delete('pago'); setSearchParams(searchParams, { replace: true }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9A3412', fontSize: '1.2rem', padding: '0.25rem', lineHeight: 1 }}>✕</button>
+            <button onClick={() => setPagoCancelado(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9A3412', fontSize: '1.2rem', padding: '0.25rem', lineHeight: 1 }}>✕</button>
           </div>
         )}
 

@@ -8,17 +8,18 @@ const MyBookings = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  const pagoStatus = searchParams.get('pago'); // 'ok' | 'error' | null
+  const [pagoOk, setPagoOk] = useState(false);
 
   useEffect(() => {
+    if (searchParams.get('pago') === 'ok') {
+      setPagoOk(true);
+      searchParams.delete('pago');
+      setSearchParams(searchParams, { replace: true });
+    }
     loadBookings();
   }, []);
 
-  const dismissBanner = () => {
-    searchParams.delete('pago');
-    setSearchParams(searchParams, { replace: true });
-  };
+  const dismissBanner = () => setPagoOk(false);
 
   const loadBookings = async () => {
     setLoading(true);
@@ -80,7 +81,7 @@ const MyBookings = () => {
   return (
     <div className="dashboard-container">
 
-      {pagoStatus === 'ok' && (
+      {pagoOk && (
         <div style={{
           background: 'linear-gradient(135deg, #16A34A, #059669)',
           borderRadius: '1.25rem',
