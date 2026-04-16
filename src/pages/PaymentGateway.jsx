@@ -14,6 +14,9 @@ const PaymentGateway = () => {
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
 
+  const [isSharedPayment, setIsSharedPayment] = useState(false);
+  const [sharedPhones, setSharedPhones] = useState(['', '', '']);
+
   // Si el carrito está vacío, volver al inicio
   useEffect(() => {
     if (items.length === 0) {
@@ -43,7 +46,22 @@ const PaymentGateway = () => {
     const item = items[0];
     setLoading(true);
     setError(null);
-    try {
+      if (isSharedPayment) {
+        const emptyPhones = sharedPhones.filter(p => !p.trim()).length;
+        if (emptyPhones > 0) {
+          setError('Por favor, indica los 3 números de teléfono de los acompañantes.');
+          setLoading(false);
+          return;
+        }
+        if (sharedPhones.some(p => p.replace(/\s+/g, '').length < 9)) {
+          setError('Asegúrate de que los teléfonos introducidos son válidos (mínimo 9 dígitos).');
+          setLoading(false);
+          return;
+        }
+      }
+
+      const finalAmount = isSharedPayment ? Number((item.price / 4).toFixed(2)) : item.price;
+
       const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
       const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok`)}`;
       const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
@@ -51,7 +69,7 @@ const PaymentGateway = () => {
 
       const res = await supabase.functions.invoke('redsys-create', {
         body: {
-          amount: item.price,
+          amount: finalAmount,
           courtId: item.courtId,
           userId: user.id,
           date: item.date,
@@ -60,6 +78,8 @@ const PaymentGateway = () => {
           failUrl,
           notifyUrl,
           paymentMethod: method === 'bizum' ? 'bizum' : 'card',
+          isSharedPayment,
+          sharedPhones: isSharedPayment ? sharedPhones : [],
         },
       });
 
@@ -150,11 +170,13 @@ const PaymentGateway = () => {
     <div style={{ backgroundColor: 'var(--color-bg-secondary)', minHeight: '100vh', padding: '1.5rem 1rem' }}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
         .spin { animation: spin 1s linear infinite; }
         .pay-tab { flex: 1; padding: 0.75rem; border-radius: 0.625rem; border: none; font-weight: 600; font-size: 0.875rem; cursor: pointer; transition: all 0.2s; font-family: inherit; }
         .pay-tab-active  { background: white; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .pay-tab-inactive { background: transparent; color: #64748B; }
         .pay-tab-disabled { opacity: 0.5; cursor: not-allowed; }
+        .input-focus-ring:focus { outline: 2px solid #3B82F6; outline-offset: -1px; }
       `}</style>
       <div style={{ maxWidth: '780px', margin: '0 auto' }}>
         <button onClick={() => navigate('/carrito')} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', padding: 0 }}>
@@ -241,8 +263,58 @@ const PaymentGateway = () => {
                       }
                     </p>
 
+                    <div style={{ backgroundColor: isSharedPayment ? '#F8FAFC' : '#FFFFFF', border: '1px solid', borderColor: isSharedPayment ? '#BFDBFE' : '#E2E8F0', borderRadius: '1rem', padding: '1.25rem', marginBottom: '1.5rem', textAlign: 'left', transition: 'all 0.3s' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', margin: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <div style={{ width: '36px', height: '36px', borderRadius: '0.5rem', backgroundColor: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                              <circle cx="9" cy="7" r="4" />
+                              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                            </svg>
+                          </div>
+                          <div>
+                            <span style={{ display: 'block', fontWeight: 800, fontSize: '0.9rem', color: '#0F172A', letterSpacing: '-0.01em' }}>Pago Compartido</span>
+                            <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748B', marginTop: '0.1rem', fontWeight: 500 }}>Paga solo {Number((total/4).toFixed(2)).toString().replace('.', ',')} € pulsando aquí</span>
+                          </div>
+                        </div>
+                        <div style={{ width: '44px', height: '24px', backgroundColor: isSharedPayment ? '#2563EB' : '#CBD5E1', borderRadius: '12px', position: 'relative', transition: 'background-color 0.2s', flexShrink: 0 }}>
+                          <div style={{ width: '20px', height: '20px', backgroundColor: 'white', borderRadius: '50%', position: 'absolute', top: '2px', left: isSharedPayment ? '22px' : '2px', transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+                        </div>
+                        <input type="checkbox" checked={isSharedPayment} onChange={(e) => { setError(null); setIsSharedPayment(e.target.checked); }} style={{ display: 'none' }} />
+                      </label>
+
+                      {isSharedPayment && (
+                        <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid #E2E8F0', animation: 'fadeIn 0.3s ease-out' }}>
+                          <p style={{ fontSize: '0.8rem', color: '#475569', marginBottom: '1rem', lineHeight: 1.5, fontWeight: 500 }}>
+                            Añade los números de móvil de tus 3 acompañantes. Tras confirmar, ellos podrán pagar el resto para completar la reserva.
+                          </p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                            {[0, 1, 2].map((idx) => (
+                              <div key={idx} style={{ position: 'relative' }}>
+                                <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', fontSize: '0.85rem', fontWeight: 600 }}>+34</span>
+                                <input
+                                  type="tel"
+                                  className="input-focus-ring"
+                                  placeholder={`Teléfono Amigo ${idx + 1}`}
+                                  value={sharedPhones[idx]}
+                                  onChange={(e) => {
+                                    const newPhones = [...sharedPhones];
+                                    newPhones[idx] = e.target.value.replace(/[^\d\s-]/g, '');
+                                    setSharedPhones(newPhones);
+                                  }}
+                                  style={{ width: '100%', padding: '0.85rem 1rem 0.85rem 3.2rem', borderRadius: '0.75rem', border: '1px solid #CBD5E1', color: '#0F172A', fontWeight: 600, fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     {error && (
-                      <div style={{ backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.875rem', borderRadius: '0.6rem', fontSize: '0.85rem', marginBottom: '1rem', border: '1px solid #FECACA' }}>
+                      <div style={{ backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.875rem', borderRadius: '0.6rem', fontSize: '0.85rem', marginBottom: '1rem', border: '1px solid #FECACA', fontWeight: 500 }}>
                         {error}
                       </div>
                     )}
@@ -258,7 +330,7 @@ const PaymentGateway = () => {
                           Conectando...
                         </>
                       ) : (
-                        `${paymentMethod === 'bizum' ? 'Pagar con Bizum' : 'Pagar con Tarjeta'} · ${total.toFixed(2).replace('.', ',')} €`
+                        `${paymentMethod === 'bizum' ? 'Pagar con Bizum' : 'Pagar con Tarjeta'} · ${(isSharedPayment ? total / 4 : total).toFixed(2).replace('.', ',')} €`
                       )}
                     </button>
 
