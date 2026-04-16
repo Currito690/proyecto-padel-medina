@@ -44,8 +44,9 @@ const PaymentGateway = () => {
     setLoading(true);
     setError(null);
     try {
-      const successUrl = `${window.location.origin}/mis-reservas?pago=ok`;
-      const failUrl    = `${window.location.origin}/?pago=cancelado`;
+      const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
+      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok`)}`;
+      const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {

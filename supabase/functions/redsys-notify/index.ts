@@ -108,7 +108,7 @@ serve(async (req) => {
           'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
         body: JSON.stringify({
-          title: '💳 Reserva pagada con tarjeta',
+          title: '💳 Reserva pagada online',
           body: `${userName} ha reservado ${courtName} · ${dateStr} · ${timeSlot}`,
           url: '/',
         }),

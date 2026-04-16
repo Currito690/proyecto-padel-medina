@@ -53,7 +53,7 @@ serve(async (req) => {
   if (!SECRET_KEY || !MERCHANT_CODE) {
     console.error('Faltan credenciales Redsys: REDSYS_SECRET_KEY o REDSYS_MERCHANT_CODE no configurados en Supabase Secrets');
     return new Response(JSON.stringify({ error: 'Configuración Redsys incompleta. Contacta con el administrador.' }), {
-      status: 500,
+      status: 200,
       headers: { ...CORS, 'Content-Type': 'application/json' },
     });
   }
@@ -79,9 +79,10 @@ serve(async (req) => {
       DS_MERCHANT_MERCHANTDATA:       JSON.stringify({ courtId, userId, date, timeSlot }),
     };
 
-    // Forzar Bizum si se solicita explícitamente
     if (paymentMethod === 'bizum') {
-      params.DS_MERCHANT_PAYMENT_METHODS = 'BIZUM';
+      params.DS_MERCHANT_PAYMETHODS = 'z';
+    } else {
+      params.DS_MERCHANT_PAYMETHODS = 'C'; // Tarjeta
     }
 
     const paramsB64 = btoa(JSON.stringify(params));
@@ -98,8 +99,8 @@ serve(async (req) => {
 
   } catch (err) {
     console.error('Redsys create error:', err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
+    return new Response(JSON.stringify({ error: err.message || 'Unknown error' }), {
+      status: 200,
       headers: { ...CORS, 'Content-Type': 'application/json' },
     });
   }
