@@ -203,6 +203,9 @@ const AdminDashboard = () => {
   const [moveTargetTime, setMoveTargetTime] = useState('');
   const [moveSlotInfo, setMoveSlotInfo] = useState(null); // null | 'checking' | 'available' | 'conflict'
   const [showStats, setShowStats] = useState(true);
+  const [courtPriceEdits, setCourtPriceEdits] = useState({});
+  const [savingCourtPrice, setSavingCourtPrice] = useState(null);
+  const [courtPriceMsg, setCourtPriceMsg] = useState({});
 
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked] = await Promise.all([
@@ -427,6 +430,25 @@ const AdminDashboard = () => {
     const updated = courts.map(c => c.id === courtId ? { ...c, active: !c.active } : c);
     courtsRef.current = updated;
     setCourts(updated);
+  };
+
+  const saveCourtPrice = async (courtId) => {
+    const raw = courtPriceEdits[courtId];
+    if (raw === undefined) return;
+    const price = parseFloat(raw);
+    if (isNaN(price) || price < 0) return;
+    setSavingCourtPrice(courtId);
+    const { error } = await supabase.from('courts').update({ price }).eq('id', courtId);
+    setSavingCourtPrice(null);
+    if (error) {
+      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'error', text: error.message } }));
+    } else {
+      const updated = courts.map(c => c.id === courtId ? { ...c, price } : c);
+      courtsRef.current = updated;
+      setCourts(updated);
+      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'ok' } }));
+      setTimeout(() => setCourtPriceMsg(prev => { const n = { ...prev }; delete n[courtId]; return n; }), 2000);
+    }
   };
 
   const handleDateChange = (e) => {
@@ -954,28 +976,66 @@ const AdminDashboard = () => {
                 <div>
                   <p className="section-label" style={{ marginBottom: '1rem' }}>Gestión de pistas</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    {courts.map(court => (
-                      <div key={court.id} style={{ display: 'flex', alignItems: 'center', gap: '1rem', backgroundColor: 'white', borderRadius: '1rem', padding: '1rem', border: '1px solid #E2E8F0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-                        <div style={{ width: '48px', height: '48px', borderRadius: '0.75rem', background: court.gradient, opacity: court.active ? 1 : 0.35, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
-                          <span style={{ fontSize: '1.25rem' }}>{court.sport === 'Pádel' ? '🎾' : '🏓'}</span>
+                    {courts.map(court => {
+                      const editedPrice = courtPriceEdits[court.id];
+                      const displayPrice = editedPrice !== undefined ? editedPrice : (court.price != null ? court.price : siteSettings.court_price);
+                      const isDirty = editedPrice !== undefined && parseFloat(editedPrice) !== (court.price != null ? court.price : siteSettings.court_price);
+                      const msg = courtPriceMsg[court.id];
+                      return (
+                        <div key={court.id} style={{ backgroundColor: 'white', borderRadius: '1rem', padding: '1rem', border: '1px solid #E2E8F0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                            <div style={{ width: '48px', height: '48px', borderRadius: '0.75rem', background: court.gradient, opacity: court.active ? 1 : 0.35, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
+                              <span style={{ fontSize: '1.25rem' }}>{court.sport === 'Pádel' ? '🎾' : '🏓'}</span>
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontWeight: 700, color: court.active ? '#0F172A' : '#94A3B8', fontSize: '0.95rem', transition: 'color 0.2s' }}>{court.name}</p>
+                              <p style={{ margin: '0.15rem 0 0', fontSize: '0.8rem', color: '#94A3B8' }}>{court.sport} · {court.location}</p>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: court.active ? '#16A34A' : '#94A3B8', transition: 'color 0.2s' }}>{court.active ? 'Activa' : 'Inactiva'}</span>
+                              <button onClick={() => toggleCourt(court.id)} aria-label={court.active ? 'Desactivar' : 'Activar'}
+                                style={{ width: '48px', height: '26px', borderRadius: '999px', border: 'none', backgroundColor: court.active ? '#16A34A' : '#CBD5E1', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s', flexShrink: 0 }}>
+                                <span style={{ position: 'absolute', top: '3px', left: court.active ? '25px' : '3px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s' }} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Precio por pista */}
+                          <div style={{ marginTop: '0.875rem', paddingTop: '0.875rem', borderTop: '1px dashed #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748B' }}>Precio:</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={displayPrice}
+                                onChange={e => setCourtPriceEdits(prev => ({ ...prev, [court.id]: e.target.value }))}
+                                style={{ width: '80px', padding: '0.35rem 0.6rem', borderRadius: '0.5rem', border: `1.5px solid ${isDirty ? '#2563EB' : '#CBD5E1'}`, fontSize: '0.9rem', fontWeight: 700, color: '#0F172A', textAlign: 'right' }}
+                              />
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748B' }}>€</span>
+                            </div>
+                            {isDirty && (
+                              <button
+                                onClick={() => saveCourtPrice(court.id)}
+                                disabled={savingCourtPrice === court.id}
+                                style={{ padding: '0.35rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: savingCourtPrice === court.id ? '#94A3B8' : '#2563EB', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
+                              >
+                                {savingCourtPrice === court.id ? '...' : 'Guardar'}
+                              </button>
+                            )}
+                            {msg?.type === 'ok' && <span style={{ fontSize: '0.78rem', color: '#16A34A', fontWeight: 700 }}>✓ Guardado</span>}
+                            {msg?.type === 'error' && <span style={{ fontSize: '0.78rem', color: '#DC2626', fontWeight: 700 }}>Error: {msg.text}</span>}
+                            {court.price == null && !isDirty && (
+                              <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>(precio global: {siteSettings.court_price} €)</span>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ flex: 1 }}>
-                          <p style={{ margin: 0, fontWeight: 700, color: court.active ? '#0F172A' : '#94A3B8', fontSize: '0.95rem', transition: 'color 0.2s' }}>{court.name}</p>
-                          <p style={{ margin: '0.15rem 0 0', fontSize: '0.8rem', color: '#94A3B8' }}>{court.sport} · {court.location}</p>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: court.active ? '#16A34A' : '#94A3B8', transition: 'color 0.2s' }}>{court.active ? 'Activa' : 'Inactiva'}</span>
-                          <button onClick={() => toggleCourt(court.id)} aria-label={court.active ? 'Desactivar' : 'Activar'}
-                            style={{ width: '48px', height: '26px', borderRadius: '999px', border: 'none', backgroundColor: court.active ? '#16A34A' : '#CBD5E1', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s', flexShrink: 0 }}>
-                            <span style={{ position: 'absolute', top: '3px', left: court.active ? '25px' : '3px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s' }} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <div style={{ marginTop: '1.5rem', padding: '1rem', backgroundColor: '#F0FDF4', borderRadius: '0.875rem', border: '1px solid #86EFAC' }}>
                     <p style={{ margin: 0, fontSize: '0.8rem', color: '#15803D', fontWeight: 500, lineHeight: 1.55 }}>
-                      Las pistas desactivadas no aceptan nuevas reservas. Las reservas existentes se mantienen activas.
+                      Las pistas desactivadas no aceptan nuevas reservas. Puedes poner el precio a <strong>0 €</strong> para que una pista sea gratuita. Si no se asigna precio individual, se usa el precio global de Configuración.
                     </p>
                   </div>
                 </div>

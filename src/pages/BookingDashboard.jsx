@@ -179,7 +179,7 @@ const BookingDashboard = () => {
       gradient: court.gradient,
       date: selectedDate,
       timeSlot: slot.time,
-      price: siteSettings.court_price,
+      price: court.price != null ? court.price : siteSettings.court_price,
     });
     navigate('/carrito');
   };
@@ -401,7 +401,7 @@ const BookingDashboard = () => {
               selectedSlot={selectedSlot}
               onSelectSlot={setSelectedSlot}
               onBook={handleBook}
-              price={siteSettings.court_price}
+              price={currentCourt?.price != null ? currentCourt.price : siteSettings.court_price}
             />
           )}
         </main>
