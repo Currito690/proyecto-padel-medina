@@ -12,7 +12,7 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <MemoryRouter initialEntries={[window.location.pathname]}>
+    <MemoryRouter initialEntries={[window.location.pathname + window.location.search]}>
       <AuthProvider>
         <CartProvider>
           <App />
