@@ -17,10 +17,16 @@ const MyBookings = () => {
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  const getRecentSplit = (list) =>
-    (list || [])
-      .filter(b => b.payment_type === 'split' && (b.split_paid || 0) < 4)
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+  // Busca la reserva de pago compartido más reciente (con o sin payment_type='split')
+  const getRecentSplit = (list) => {
+    const sorted = (list || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // 1º intento: reserva marcada como split con pendiente de cobrar
+    const strict = sorted.find(b => b.payment_type === 'split' && (b.split_paid || 0) < 4);
+    if (strict) return strict;
+    // 2º intento: reserva creada en los últimos 5 min (puede que redsys-notify aún no la marcó como split)
+    const fiveMinsAgo = Date.now() - 5 * 60 * 1000;
+    return sorted.find(b => b.status === 'confirmed' && new Date(b.created_at).getTime() > fiveMinsAgo);
+  };
 
   useEffect(() => {
     const isPayOk      = searchParams.get('pago') === 'ok';
@@ -37,13 +43,13 @@ const MyBookings = () => {
     if (isPayOk && isCompartido) {
       setWaLoadingShared(true);
       (async () => {
-        // Primera carga normal (muestra la página)
         let data = await loadBookings();
-        // Reintentos silenciosos (sin spinner de página) hasta encontrar la reserva
-        for (let i = 0; i < 6; i++) {
+        console.log('[WA] Inicio búsqueda reserva compartida. Total reservas:', data.length);
+        for (let i = 0; i < 8; i++) {
           const found = getRecentSplit(data);
+          console.log(`[WA] Intento ${i + 1}: found=`, found?.id, 'payment_type=', found?.payment_type);
           if (found) { await openWaModal(found.id, data); break; }
-          if (i < 5) {
+          if (i < 7) {
             await sleep(3000);
             data = await fetchBookingsSilent();
           }
@@ -86,11 +92,16 @@ const MyBookings = () => {
       .select('phone, token, paid, amount')
       .eq('booking_id', bookingId);
 
-    // Fallback: tokens aún no generados → crearlos desde booking.split_phones
+    console.log('[WA] openWaModal tokens:', tokens);
+
+    // Fallback: tokens aún no generados → crearlos desde booking.split_phones o sessionStorage
     if (!tokens || tokens.length === 0) {
       const src = allBookings || bookings;
       const booking = src.find(b => b.id === bookingId);
-      const phones = (booking?.split_phones || []).filter(Boolean);
+      const splitPhones = (booking?.split_phones || []).filter(Boolean);
+      const ssPhones = (() => { try { return JSON.parse(sessionStorage.getItem('sharedPhones') || '[]'); } catch { return []; } })();
+      const phones = splitPhones.length > 0 ? splitPhones : ssPhones;
+      console.log('[WA] Fallback phones:', phones);
       if (phones.length > 0) {
         // Importe: sessionStorage (guardado antes del redirect) o site_settings
         let splitAmount = 0;
