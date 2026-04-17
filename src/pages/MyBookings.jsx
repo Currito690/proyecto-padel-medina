@@ -169,69 +169,58 @@ const MyBookings = () => {
           <div style={{ background: 'white', borderRadius: '1.5rem 1.5rem 1rem 1rem', width: '100%', maxWidth: '440px', padding: '1.75rem 1.5rem 2rem', animation: 'slideUp .35s cubic-bezier(.34,1.56,.64,1)', boxShadow: '0 -8px 40px rgba(0,0,0,.3)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
               <div>
-                <p style={{ margin: '0 0 .25rem', fontSize: '1.1rem', fontWeight: 900, color: '#0F172A' }}>👯 Avisa a tus amigos</p>
-                <p style={{ margin: 0, fontSize: '.8rem', color: '#64748B', lineHeight: 1.5 }}>Pulsa cada botón — WhatsApp abrirá con el mensaje listo para enviar.</p>
+                <p style={{ margin: '0 0 .25rem', fontSize: '1.1rem', fontWeight: 900, color: '#0F172A' }}>👯 Avisa al grupo</p>
+                <p style={{ margin: 0, fontSize: '.8rem', color: '#64748B', lineHeight: 1.5 }}>Envía un único mensaje por WhatsApp al grupo de pádel con todos los enlaces.</p>
               </div>
               <button onClick={() => setWaModal(null)} style={{ background: '#F1F5F9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', color: '#64748B', flexShrink: 0, marginLeft: '.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
             </div>
 
-            {/* Barra progreso */}
-            <div style={{ display: 'flex', gap: '.375rem', marginBottom: '1.25rem' }}>
-              {waModal.links.map((_, i) => (
-                <div key={i} style={{ flex: 1, height: '4px', borderRadius: '2px', background: waModal.sentIdxs.has(i) ? '#25D366' : '#E2E8F0', transition: 'background .3s' }} />
-              ))}
-            </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
-              {waModal.links.map((sl, idx) => {
-                const isSent = waModal.sentIdxs.has(idx);
-                const isPaid = sl.paid;
-                const isNext = !isSent && !isPaid && [...Array(idx)].every((_, i) => waModal.sentIdxs.has(i) || waModal.links[i].paid);
-                const phoneClean = sl.phone.replace(/\D/g, '').replace(/^(0034|34)/, '');
-                const waMsg = encodeURIComponent(
-                  `🎾 ¡Hola! Te he reservado una pista en Padel Medina.\n\nPaga tu parte (${Number(sl.amount || 0).toFixed(2).replace('.', ',')} €) aquí:\n${sl.link}\n\n⏰ El enlace expira en 48 h. ¡Nos vemos en la pista! 🏓`
-                );
-                const waUrl = `https://wa.me/34${phoneClean}?text=${waMsg}`;
-
-                if (isPaid) {
+              {(() => {
+                const pendingLinks = waModal.links.filter(sl => !sl.paid);
+                const paidLinks = waModal.links.filter(sl => sl.paid);
+                
+                if (pendingLinks.length === 0) {
                   return (
-                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '.875rem', padding: '1rem 1.125rem', borderRadius: '1rem', background: '#F0FDF4', border: '2px solid #86EFAC' }}>
-                      <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>✅</div>
-                      <div>
-                        <p style={{ margin: '0 0 .1rem', fontWeight: 800, fontSize: '.9rem', color: '#15803D' }}>Ya pagado</p>
-                        <p style={{ margin: 0, fontSize: '.75rem', color: '#4ADE80' }}>+34 {sl.phone}</p>
-                      </div>
+                    <div style={{ textAlign: 'center', padding: '1.5rem', background: '#F0FDF4', borderRadius: '1rem', border: '2px solid #86EFAC' }}>
+                      <span style={{ fontSize: '2rem', display: 'block', marginBottom: '.5rem' }}>✅</span>
+                      <p style={{ margin: 0, fontWeight: 800, color: '#15803D' }}>Todos han pagado</p>
                     </div>
                   );
                 }
 
-                return (
-                  <a key={idx} href={waUrl} target="_blank" rel="noopener noreferrer"
-                    onClick={() => setWaModal(prev => ({ ...prev, sentIdxs: new Set([...prev.sentIdxs, idx]) }))}
-                    className={isNext ? 'wa-pulse' : ''}
-                    style={{ display: 'flex', alignItems: 'center', gap: '.875rem', padding: '1rem 1.125rem', borderRadius: '1rem', background: isSent ? '#F0FDF4' : isNext ? '#25D366' : '#F8FAFC', border: `2px solid ${isSent ? '#86EFAC' : isNext ? '#25D366' : '#E2E8F0'}`, textDecoration: 'none', transition: 'all .2s', opacity: !isSent && !isNext ? 0.55 : 1 }}>
-                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: isSent ? '#DCFCE7' : isNext ? 'rgba(255,255,255,.25)' : '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>
-                      {isSent ? '✅' : '📲'}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <p style={{ margin: '0 0 .1rem', fontWeight: 800, fontSize: '.9rem', color: isSent ? '#15803D' : isNext ? 'white' : '#374151' }}>
-                        {isSent ? '¡Enviado!' : `Enviar a Amigo ${idx + 1}`}
-                      </p>
-                      <p style={{ margin: 0, fontSize: '.75rem', color: isSent ? '#4ADE80' : isNext ? 'rgba(255,255,255,.85)' : '#94A3B8', fontWeight: 500 }}>
-                        +34 {sl.phone}
-                      </p>
-                    </div>
-                    {isNext && <span style={{ color: 'white', fontSize: '1.1rem' }}>→</span>}
-                  </a>
-                );
-              })}
-            </div>
+                const waMsgLines = [
+                  '🎾 ¡Hola! He reservado una pista en Padel Medina.',
+                  'Por favor, pagad vuestra parte para confirmar la reserva antes de 48h:',
+                  '',
+                  ...pendingLinks.map((sl, idx) => `➡️ Jugador ${idx + 2} (+34 ${sl.phone}):\n${sl.link}`),
+                  '',
+                  '¡Nos vemos en la pista! 🏓'
+                ];
+                const waMsg = encodeURIComponent(waMsgLines.join('\n'));
+                const waUrl = `https://wa.me/?text=${waMsg}`;
 
-            {waModal.sentIdxs.size + waModal.links.filter(l => l.paid).length === waModal.links.length && (
-              <button onClick={() => setWaModal(null)} style={{ width: '100%', marginTop: '1rem', padding: '.875rem', background: '#16A34A', color: 'white', border: 'none', borderRadius: '.875rem', fontFamily: 'inherit', fontWeight: 800, fontSize: '.95rem', cursor: 'pointer' }}>
-                🎾 ¡Listo! Todos avisados
-              </button>
-            )}
+                return (
+                  <>
+                    <div style={{ padding: '1rem', background: '#F8FAFC', borderRadius: '1rem', border: '1px solid #E2E8F0', fontSize: '.8rem', color: '#475569', lineHeight: 1.6, whiteSpace: 'pre-wrap', maxHeight: '180px', overflowY: 'auto' }}>
+                      {waMsgLines.join('\n')}
+                    </div>
+                    
+                    <a href={waUrl} target="_blank" rel="noopener noreferrer"
+                      onClick={() => setWaModal(null)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '.5rem', padding: '1rem', borderRadius: '1rem', background: '#25D366', color: 'white', textDecoration: 'none', fontWeight: 800, fontSize: '.95rem', transition: 'all .2s', boxShadow: '0 4px 12px rgba(37, 211, 102, 0.3)' }}>
+                      <span style={{ fontSize: '1.2rem' }}>📲</span> Compartir en WhatsApp
+                    </a>
+                    
+                    {paidLinks.length > 0 && (
+                      <p style={{ margin: '0.5rem 0 0', fontSize: '.75rem', color: '#64748B', textAlign: 'center', fontWeight: 600 }}>
+                        {paidLinks.length} amigo(s) ya han pagado su parte.
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
           </div>
         </div>
       )}
