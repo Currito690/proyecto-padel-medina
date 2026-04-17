@@ -9,17 +9,60 @@ const MyBookings = () => {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagoOk, setPagoOk] = useState(false);
+  const [compartido, setCompartido] = useState(false);
+  const [shareLinks, setShareLinks] = useState([]); // [{ phone, link }]
+  const [copiedIdx, setCopiedIdx] = useState(null);
 
   useEffect(() => {
-    if (searchParams.get('pago') === 'ok') {
-      setPagoOk(true);
-      searchParams.delete('pago');
-      setSearchParams(searchParams, { replace: true });
-    }
+    const isOk = searchParams.get('pago') === 'ok';
+    const isCompartido = searchParams.get('compartido') === '1';
+    if (isOk) setPagoOk(true);
+    if (isCompartido) setCompartido(true);
+    searchParams.delete('pago');
+    searchParams.delete('compartido');
+    setSearchParams(searchParams, { replace: true });
     loadBookings();
+    if (isOk && isCompartido) {
+      // Esperar un momento para que Redsys-notify haya procesado los tokens
+      setTimeout(() => loadShareLinks(), 3000);
+    }
   }, []);
 
   const dismissBanner = () => setPagoOk(false);
+
+  const loadShareLinks = async () => {
+    // Buscar la última reserva de este usuario con pago compartido
+    const { data: lastBooking } = await supabase
+      .from('bookings')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('payment_type', 'split')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!lastBooking?.id) return;
+
+    const { data: tokens } = await supabase
+      .from('shared_payment_tokens')
+      .select('phone, token, paid')
+      .eq('booking_id', lastBooking.id);
+
+    if (tokens && tokens.length > 0) {
+      const appUrl = window.location.origin;
+      setShareLinks(tokens.map(t => ({
+        phone: t.phone,
+        link: `${appUrl}/pago-compartido?token=${t.token}`,
+        paid: t.paid,
+      })));
+    }
+  };
+
+  const copyLink = (link, idx) => {
+    navigator.clipboard.writeText(link);
+    setCopiedIdx(idx);
+    setTimeout(() => setCopiedIdx(null), 2000);
+  };
 
   const loadBookings = async () => {
     setLoading(true);
@@ -110,6 +153,55 @@ const MyBookings = () => {
             onClick={dismissBanner}
             style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', color: 'white', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >✕</button>
+        </div>
+      )}
+
+      {/* ── Panel de enlaces de WhatsApp para acompañantes ── */}
+      {compartido && (
+        <div style={{ background: 'white', borderRadius: '1.25rem', padding: '1.25rem 1.5rem', marginBottom: '1.5rem', border: '1px solid #BFDBFE', boxShadow: '0 4px 20px rgba(37,99,235,0.1)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '1rem' }}>
+            <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>👯</div>
+            <div>
+              <p style={{ margin: 0, fontWeight: 800, fontSize: '0.95rem', color: '#0F172A' }}>¡Envía el enlace de pago a tus amigos!</p>
+              <p style={{ margin: 0, fontSize: '0.78rem', color: '#64748B' }}>Cada amigo debe pagar su parte para confirmar la reserva completa.</p>
+            </div>
+          </div>
+
+          {shareLinks.length === 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', background: '#F8FAFC', borderRadius: '0.75rem', fontSize: '0.82rem', color: '#64748B' }}>
+              <div style={{ width: '16px', height: '16px', border: '2px solid #CBD5E1', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+              Preparando los enlaces... (puede tardar unos segundos)
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+              {shareLinks.map((sl, idx) => {
+                const waMsg = encodeURIComponent(`🎾 ¡Te reservé una pista de pádel! Paga tu parte (${sl.link}) y confirmamos la reserva.`);
+                const waUrl = `https://wa.me/34${sl.phone.replace(/\D/g,'')}?text=${waMsg}`;
+                return (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', background: '#F8FAFC', borderRadius: '0.875rem', border: '1px solid #E2E8F0' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: '0 0 0.1rem', fontSize: '0.8rem', fontWeight: 700, color: '#374151' }}>Amigo {idx + 1} · +34 {sl.phone}</p>
+                      <p style={{ margin: 0, fontSize: '0.7rem', color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sl.link}</p>
+                    </div>
+                    <a
+                      href={waUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ flexShrink: 0, padding: '0.5rem 0.75rem', background: '#25D366', color: 'white', borderRadius: '0.625rem', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.3rem', whiteSpace: 'nowrap' }}
+                    >
+                      <span>📲</span> WhatsApp
+                    </a>
+                    <button
+                      onClick={() => copyLink(sl.link, idx)}
+                      style={{ flexShrink: 0, padding: '0.5rem 0.75rem', background: copiedIdx === idx ? '#22C55E' : '#F1F5F9', color: copiedIdx === idx ? 'white' : '#374151', border: 'none', borderRadius: '0.625rem', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s' }}
+                    >
+                      {copiedIdx === idx ? '✓ Copiado' : 'Copiar'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

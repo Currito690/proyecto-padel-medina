@@ -73,7 +73,7 @@ serve(async (req) => {
         Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
       );
 
-      const { error } = await supabase.from('bookings').insert({
+      const { data: bookingRow, error } = await supabase.from('bookings').insert({
         court_id:  courtId,
         user_id:   userId,
         date:      date,
@@ -83,11 +83,41 @@ serve(async (req) => {
         payment_type: isSharedPayment ? 'split' : 'full',
         split_phones: isSharedPayment ? sharedPhones : [],
         split_paid: isSharedPayment ? 1 : 4, // 1 pagado (el creador)
-      });
+      }).select().single();
 
       if (error) {
         console.error('Error guardando reserva Redsys:', error);
         return new Response('KO', { status: 500 });
+      }
+
+      // ── Si es pago compartido, generar tokens para los acompañantes ──
+      let shareLinks: { phone: string; link: string }[] = [];
+      if (isSharedPayment && sharedPhones?.length && bookingRow?.id) {
+        // Calcular importe por persona (precio total / 4 personas)
+        const totalAmount = parseFloat(decoded.Ds_Amount ?? '0') / 100;
+        const splitAmount = Math.round((totalAmount / 0.25) / 4 * 100) / 100; // precio total / 4
+
+        const tokenInserts = sharedPhones.map((phone: string) => ({
+          booking_id: bookingRow.id,
+          phone: phone.replace(/\s/g, ''),
+          amount: splitAmount,
+        }));
+
+        const { data: tokens, error: tokenError } = await supabase
+          .from('shared_payment_tokens')
+          .insert(tokenInserts)
+          .select('token, phone');
+
+        if (!tokenError && tokens) {
+          const appUrl = Deno.env.get('APP_URL') || 'https://padelmedina.vercel.app';
+          shareLinks = tokens.map((t: { token: string; phone: string }) => ({
+            phone: t.phone,
+            link: `${appUrl}/pago-compartido?token=${t.token}`,
+          }));
+          console.log(`Generados ${tokens.length} tokens de pago compartido para reserva ${bookingRow.id}`);
+        } else if (tokenError) {
+          console.error('Error generando tokens de pago compartido:', tokenError);
+        }
       }
 
       // Obtener nombre de pista y usuario para la notificación push
@@ -118,6 +148,15 @@ serve(async (req) => {
           url: '/',
         }),
       }).catch(console.warn);
+
+      // ── Si hay links de pago compartido, escribirlos en una tabla para que el frontend los muestre ──
+      if (shareLinks.length > 0 && bookingRow?.id) {
+        await supabase
+          .from('bookings')
+          .update({ share_links: shareLinks })
+          .eq('id', bookingRow.id)
+          .catch(console.warn);
+      }
 
       console.log(`Redsys OK: reserva creada para ${userName} - ${courtName} ${date} ${timeSlot}`);
     } else {

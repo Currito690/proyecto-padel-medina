@@ -13,6 +13,7 @@ const Login = lazy(() => import('./pages/Login'));
 const PaymentGateway = lazy(() => import('./pages/PaymentGateway'));
 const TournamentRegistration = lazy(() => import('./pages/TournamentRegistration'));
 const Cart = lazy(() => import('./pages/Cart'));
+const SharedPayment = lazy(() => import('./pages/SharedPayment'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -230,12 +231,10 @@ function App() {
     <div className="app-container">
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          {/* Public Route */}
-          <Route
-            path="/login"
-            element={!user ? <Login /> : <Navigate to="/" replace />}
-          />
+          {/* Public Routes */}
+          <Route path="/login" element={!user ? <Login /> : <Navigate to="/" replace />} />
           <Route path="/torneos/:id" element={<TournamentRegistration />} />
+          <Route path="/pago-compartido" element={<SharedPayment />} />
 
           {/* Admin Routes */}
           {user?.role === 'admin' && (

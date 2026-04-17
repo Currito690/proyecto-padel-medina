@@ -65,7 +65,7 @@ const PaymentGateway = () => {
       const finalAmount = isSharedPayment ? Number((item.price / 4).toFixed(2)) : item.price;
 
       const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
-      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok`)}`;
+      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok${isSharedPayment ? '&compartido=1' : ''}`)}`;
       const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
@@ -84,6 +84,7 @@ const PaymentGateway = () => {
           sharedPhones: isSharedPayment ? sharedPhones : [],
         },
       });
+
 
       if (res.error) {
         throw new Error(res.error?.message || 'No se pudo conectar con la pasarela de pago');
