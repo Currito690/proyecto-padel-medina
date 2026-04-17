@@ -15,44 +15,89 @@ const MyBookings = () => {
   const [loadingTokens, setLoadingTokens] = useState(null); // bookingId
 
   useEffect(() => {
-    if (searchParams.get('pago') === 'ok') {
+    const isPayOk = searchParams.get('pago') === 'ok';
+    const isCompartido = searchParams.get('compartido') === '1';
+
+    if (isPayOk) {
       setPagoOk(true);
-      searchParams.delete('pago');
-      setSearchParams(searchParams, { replace: true });
+      const np = new URLSearchParams(searchParams);
+      np.delete('pago');
+      np.delete('compartido');
+      setSearchParams(np, { replace: true });
     }
-    loadBookings();
+
+    loadBookings().then(data => {
+      if (!isPayOk || !isCompartido || !data) return;
+      const split = data.find(b => b.payment_type === 'split' && (b.split_paid || 0) < 4);
+      if (split) {
+        openWaModal(split.id, data);
+      } else {
+        // redsys-notify may not have fired yet — retry once after 4s
+        setTimeout(async () => {
+          const retryData = await loadBookings();
+          const split2 = retryData?.find(b => b.payment_type === 'split' && (b.split_paid || 0) < 4);
+          if (split2) openWaModal(split2.id, retryData);
+        }, 4000);
+      }
+    });
   }, []);
 
+  // Returns the loaded data so callers can act on it immediately
   const loadBookings = async () => {
     setLoading(true);
     const { data } = await supabase
       .from('bookings')
-      .select('*, courts(name, sport, location, gradient)')
+      .select('*, courts(name, sport, location, gradient, price)')
       .eq('user_id', user.id)
       .eq('status', 'confirmed')
       .order('date', { ascending: true })
       .order('time_slot', { ascending: true });
     if (data) setBookings(data);
     setLoading(false);
+    return data || [];
   };
 
-  const openWaModal = async (bookingId) => {
+  // allBookings: optional fresh data to avoid stale closure
+  const openWaModal = async (bookingId, allBookings = null) => {
     setLoadingTokens(bookingId);
-    const { data: tokens } = await supabase
+
+    let { data: tokens } = await supabase
       .from('shared_payment_tokens')
       .select('phone, token, paid, amount')
       .eq('booking_id', bookingId);
-    setLoadingTokens(null);
 
+    // Fallback: tokens not in DB yet → create them from booking.split_phones
+    if (!tokens || tokens.length === 0) {
+      const src = allBookings || bookings;
+      const booking = src.find(b => b.id === bookingId);
+      const phones = booking?.split_phones || [];
+      if (phones.length > 0) {
+        const courtPrice = booking.courts?.price || 0;
+        const splitAmount = Number((courtPrice / 4).toFixed(2));
+        const { data: newTokens } = await supabase
+          .from('shared_payment_tokens')
+          .insert(phones.map(phone => ({
+            booking_id: bookingId,
+            phone: phone.replace(/\s/g, ''),
+            amount: splitAmount,
+          })))
+          .select('phone, token, paid, amount');
+        tokens = newTokens;
+      }
+    }
+
+    setLoadingTokens(null);
     if (!tokens || tokens.length === 0) return;
 
-    const links = tokens.map(t => ({
-      phone: t.phone,
-      link: `${window.location.origin}/pago-compartido?token=${t.token}`,
-      paid: t.paid,
-      amount: t.amount,
-    }));
-    setWaModal({ links, sentIdxs: new Set() });
+    setWaModal({
+      links: tokens.map(t => ({
+        phone: t.phone,
+        link: `${window.location.origin}/pago-compartido?token=${t.token}`,
+        paid: t.paid,
+        amount: t.amount,
+      })),
+      sentIdxs: new Set(),
+    });
   };
 
   const isCancelable = (dateStr, timeStr) => {
