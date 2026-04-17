@@ -66,12 +66,13 @@ const MyBookings = () => {
 
   // Fetch silencioso sin cambiar el estado loading (para reintentos en background)
   const fetchBookingsSilent = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('bookings')
-      .select('*, courts(name, sport, location, gradient, price)')
+      .select('*, courts(name, sport, location, gradient)')
       .eq('user_id', user.id)
       .eq('status', 'confirmed')
       .order('created_at', { ascending: false });
+    if (error) console.error('fetchBookings error:', error.message);
     if (data) setBookings(data);
     return data || [];
   };
@@ -91,18 +92,14 @@ const MyBookings = () => {
       const booking = src.find(b => b.id === bookingId);
       const phones = (booking?.split_phones || []).filter(Boolean);
       if (phones.length > 0) {
+        // Importe: sessionStorage (guardado antes del redirect) o site_settings
         let splitAmount = 0;
-        if (booking.courts?.price != null) {
-          splitAmount = Number((booking.courts.price / 4).toFixed(2));
+        const stored = sessionStorage.getItem('sharedAmount');
+        if (stored && parseFloat(stored) > 0) {
+          splitAmount = parseFloat(stored);
         } else {
-          // Último recurso: leer de sessionStorage o site_settings
-          const stored = sessionStorage.getItem('sharedAmount');
-          if (stored) {
-            splitAmount = Number(stored);
-          } else {
-            const { data: ss } = await supabase.from('site_settings').select('court_price').single();
-            splitAmount = Number(((ss?.court_price || 0) / 4).toFixed(2));
-          }
+          const { data: ss } = await supabase.from('site_settings').select('court_price').single();
+          splitAmount = Number(((ss?.court_price || 0) / 4).toFixed(2));
         }
         const { data: newTokens } = await supabase
           .from('shared_payment_tokens')
