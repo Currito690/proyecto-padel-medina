@@ -59,10 +59,19 @@ serve(async (req) => {
   }
 
   try {
-    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod } = await req.json();
+    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones } = await req.json();
 
     const orderId = customOrderId ?? generateOrderId();
     const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
+
+    const merchantDataObj = { 
+      courtId, 
+      userId, 
+      date, 
+      timeSlot,
+      isSharedPayment: !!isSharedPayment,
+      sharedPhones: isSharedPayment ? sharedPhones : []
+    };
 
     const params: Record<string, string> = {
       DS_MERCHANT_MERCHANTCODE:       MERCHANT_CODE,
@@ -76,7 +85,7 @@ serve(async (req) => {
       DS_MERCHANT_MERCHANTURL:        notifyUrl,
       DS_MERCHANT_CONSUMERLANGUAGE:   '002', // Español
       DS_MERCHANT_PRODUCTDESCRIPTION: `Pista padel ${date} ${timeSlot}`,
-      DS_MERCHANT_MERCHANTDATA:       JSON.stringify({ courtId, userId, date, timeSlot }),
+      DS_MERCHANT_MERCHANTDATA:       JSON.stringify(merchantDataObj),
     };
 
     if (paymentMethod === 'bizum') {

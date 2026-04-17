@@ -64,7 +64,7 @@ serve(async (req) => {
 
     const responseCode = parseInt(decoded.Ds_Response ?? '9999', 10);
     const merchantData = JSON.parse(decoded.Ds_MerchantData ?? '{}');
-    const { courtId, userId, date, timeSlot } = merchantData;
+    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones } = merchantData;
 
     // Códigos 0000–0099 = pago OK
     if (responseCode <= 99) {
@@ -80,6 +80,9 @@ serve(async (req) => {
         time_slot: timeSlot,
         status:    'confirmed',
         is_free:   false,
+        payment_type: isSharedPayment ? 'split' : 'full',
+        split_phones: isSharedPayment ? sharedPhones : [],
+        split_paid: isSharedPayment ? 1 : 4, // 1 pagado (el creador)
       });
 
       if (error) {
@@ -101,6 +104,8 @@ serve(async (req) => {
 
       // Notificar al admin via push
       const pushUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push`;
+      const isSplitStr = isSharedPayment ? ' (Pago Compartido: 1/4 pagado)' : '';
+      
       await fetch(pushUrl, {
         method: 'POST',
         headers: {
@@ -108,8 +113,8 @@ serve(async (req) => {
           'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
         body: JSON.stringify({
-          title: '💳 Reserva pagada online',
-          body: `${userName} ha reservado ${courtName} · ${dateStr} · ${timeSlot}`,
+          title: '💳 Reserva pagada online' + (isSharedPayment ? ' 👯' : ''),
+          body: `${userName} ha reservado ${courtName} · ${dateStr} · ${timeSlot}${isSplitStr}`,
           url: '/',
         }),
       }).catch(console.warn);
