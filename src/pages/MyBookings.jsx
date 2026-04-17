@@ -23,7 +23,7 @@ const MyBookings = () => {
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
 
   useEffect(() => {
-    const isPayOk    = searchParams.get('pago') === 'ok';
+    const isPayOk      = searchParams.get('pago') === 'ok';
     const isCompartido = searchParams.get('compartido') === '1';
 
     if (isPayOk) {
@@ -35,16 +35,18 @@ const MyBookings = () => {
     }
 
     if (isPayOk && isCompartido) {
-      // Muestra banner de carga mientras esperamos la reserva + tokens
       setWaLoadingShared(true);
       (async () => {
-        let found = null;
-        // Hasta 6 intentos cada 3 s (18 s total) para dar tiempo a redsys-notify
+        // Primera carga normal (muestra la página)
+        let data = await loadBookings();
+        // Reintentos silenciosos (sin spinner de página) hasta encontrar la reserva
         for (let i = 0; i < 6; i++) {
-          const data = await loadBookings();
-          found = getRecentSplit(data);
+          const found = getRecentSplit(data);
           if (found) { await openWaModal(found.id, data); break; }
-          if (i < 5) await sleep(3000);
+          if (i < 5) {
+            await sleep(3000);
+            data = await fetchBookingsSilent();
+          }
         }
         setWaLoadingShared(false);
       })();
@@ -54,9 +56,16 @@ const MyBookings = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Returns fresh data so callers can act on it immediately
+  // Carga con spinner de página completa (primera carga)
   const loadBookings = async () => {
     setLoading(true);
+    const data = await fetchBookingsSilent();
+    setLoading(false);
+    return data;
+  };
+
+  // Fetch silencioso sin cambiar el estado loading (para reintentos en background)
+  const fetchBookingsSilent = async () => {
     const { data } = await supabase
       .from('bookings')
       .select('*, courts(name, sport, location, gradient, price)')
@@ -64,7 +73,6 @@ const MyBookings = () => {
       .eq('status', 'confirmed')
       .order('created_at', { ascending: false });
     if (data) setBookings(data);
-    setLoading(false);
     return data || [];
   };
 
