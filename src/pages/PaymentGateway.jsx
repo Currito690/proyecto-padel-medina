@@ -64,6 +64,28 @@ const PaymentGateway = () => {
 
       const finalAmount = isSharedPayment ? Number((item.price / 4).toFixed(2)) : item.price;
 
+      // ── Si el precio es 0€, confirmar gratis sin pasar por Redsys ──
+      if (finalAmount === 0) {
+        const { error: bookErr } = await supabase.from('bookings').insert({
+          court_id: item.courtId,
+          user_id: user.id,
+          date: item.date,
+          time_slot: item.timeSlot,
+          status: 'confirmed',
+          is_free: true,
+          payment_type: 'full',
+          split_phones: [],
+          split_paid: 4,
+        });
+        if (bookErr) throw bookErr;
+        supabase.functions.invoke('send-push', {
+          body: { title: '🎾 Reserva gratuita', body: `${user.name} — ${item.courtName} · ${item.timeSlot}`, url: '/' },
+        }).catch(() => {});
+        clearCart();
+        navigate('/mis-reservas?pago=ok');
+        return;
+      }
+
       const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
       const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok${isSharedPayment ? '&compartido=1' : ''}`)}`;
       const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
@@ -84,7 +106,6 @@ const PaymentGateway = () => {
           sharedPhones: isSharedPayment ? sharedPhones : [],
         },
       });
-
 
       if (res.error) {
         throw new Error(res.error?.message || 'No se pudo conectar con la pasarela de pago');
@@ -128,6 +149,7 @@ const PaymentGateway = () => {
     }
   };
 
+
   const handleClubPayment = async () => {
     if (items.length === 0) return;
     setProcessingClub(true);
@@ -168,6 +190,7 @@ const PaymentGateway = () => {
   if (items.length === 0) return null;
 
   const isMulti = items.length > 1;
+  const isFree = total === 0;
 
   return (
     <div style={{ backgroundColor: 'var(--color-bg-secondary)', minHeight: '100vh', padding: '1.5rem 1rem' }}>
@@ -192,28 +215,30 @@ const PaymentGateway = () => {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
           {/* ── Panel de pago ── */}
           <div>
-            {/* Selector método */}
-            <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
-              <button
-                onClick={() => !isMulti && setPaymentMethod('redsys')}
-                disabled={isMulti}
-                className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
-                title={isMulti ? 'Sólo disponible con una reserva' : ''}
-              >
-                💳 Tarjeta
-              </button>
-              <button
-                onClick={() => !isMulti && setPaymentMethod('bizum')}
-                disabled={isMulti}
-                className={`pay-tab ${paymentMethod === 'bizum' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
-                title={isMulti ? 'Sólo disponible con una reserva' : ''}
-              >
-                📱 Bizum
-              </button>
-              <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
-                🏪 Club
-              </button>
-            </div>
+            {/* Selector método — oculto si es gratis */}
+            {!isFree && (
+              <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
+                <button
+                  onClick={() => !isMulti && setPaymentMethod('redsys')}
+                  disabled={isMulti}
+                  className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
+                  title={isMulti ? 'Sólo disponible con una reserva' : ''}
+                >
+                  💳 Tarjeta
+                </button>
+                <button
+                  onClick={() => !isMulti && setPaymentMethod('bizum')}
+                  disabled={isMulti}
+                  className={`pay-tab ${paymentMethod === 'bizum' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
+                  title={isMulti ? 'Sólo disponible con una reserva' : ''}
+                >
+                  📱 Bizum
+                </button>
+                <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
+                  🏪 Club
+                </button>
+              </div>
+            )}
 
             {isMulti && (
               <div style={{ backgroundColor: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#9A3412' }}>
@@ -222,7 +247,29 @@ const PaymentGateway = () => {
             )}
 
             <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
-              {(paymentMethod === 'redsys' || paymentMethod === 'bizum') ? (
+              {isFree ? (
+                <div style={{ padding: '2rem 1.5rem', textAlign: 'center' }}>
+                  <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: '#F0FDF4', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem', fontSize: '1.75rem' }}>🎁</div>
+                  <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>Reserva Gratuita</h3>
+                  <p style={{ margin: '0 0 1.75rem', fontSize: '0.85rem', color: '#64748B', lineHeight: 1.6 }}>
+                    Esta pista no tiene coste. Pulsa el botón para confirmar la reserva directamente.
+                  </p>
+                  {error && (
+                    <div style={{ backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.875rem', borderRadius: '0.6rem', fontSize: '0.85rem', marginBottom: '1rem', border: '1px solid #FECACA', fontWeight: 500 }}>
+                      {error}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => handleRedsysPay('card')}
+                    disabled={loading}
+                    style={{ width: '100%', padding: '1rem', backgroundColor: loading ? '#94A3B8' : '#16A34A', color: 'white', border: 'none', borderRadius: '0.75rem', fontFamily: 'inherit', fontSize: '1rem', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'background-color 0.2s' }}
+                  >
+                    {loading ? (
+                      <><svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>Confirmando...</>
+                    ) : '✅ Confirmar Reserva Gratuita'}
+                  </button>
+                </div>
+              ) : (paymentMethod === 'redsys' || paymentMethod === 'bizum') ? (
                 <>
                   {/* Header */}
                   <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -94,9 +94,10 @@ const BookingDashboard = () => {
     if (settingsRes.data) {
       const s = settingsRes.data;
       const releaseTime = s.slots_release_time || '00:00';
+      const parsedPrice = parseFloat(s.court_price);
       setSiteSettings({
         booking_window_days: parseInt(s.booking_window_days, 10) || 7,
-        court_price: parseFloat(s.court_price) || 18.00,
+        court_price: isNaN(parsedPrice) ? 18.00 : parsedPrice,
         slots_release_time: releaseTime,
       });
       // Check if courts are still locked for today
