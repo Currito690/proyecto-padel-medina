@@ -28,14 +28,20 @@ const MyBookings = () => {
 
     loadBookings().then(data => {
       if (!isPayOk || !isCompartido || !data) return;
-      const split = data.find(b => b.payment_type === 'split' && (b.split_paid || 0) < 4);
+      const getRecentSplit = (bookings) => {
+        return bookings
+          .filter(b => b.payment_type === 'split' && (b.split_paid || 0) < 4)
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+      };
+
+      const split = getRecentSplit(data);
       if (split) {
         openWaModal(split.id, data);
       } else {
         // redsys-notify may not have fired yet — retry once after 4s
         setTimeout(async () => {
           const retryData = await loadBookings();
-          const split2 = retryData?.find(b => b.payment_type === 'split' && (b.split_paid || 0) < 4);
+          const split2 = getRecentSplit(retryData || []);
           if (split2) openWaModal(split2.id, retryData);
         }, 4000);
       }
