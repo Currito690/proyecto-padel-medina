@@ -59,19 +59,20 @@ serve(async (req) => {
   }
 
   try {
-    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones } = await req.json();
+    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones, splitToken } = await req.json();
 
     const orderId = customOrderId ?? generateOrderId();
     const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
 
-    const merchantDataObj = { 
-      courtId, 
-      userId, 
-      date, 
+    const merchantDataObj: Record<string, unknown> = {
+      courtId,
+      userId,
+      date,
       timeSlot,
       isSharedPayment: !!isSharedPayment,
       sharedPhones: isSharedPayment ? sharedPhones : []
     };
+    if (splitToken) merchantDataObj.splitToken = splitToken;
 
     const params: Record<string, string> = {
       DS_MERCHANT_MERCHANTCODE:       MERCHANT_CODE,

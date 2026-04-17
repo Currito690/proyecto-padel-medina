@@ -41,8 +41,13 @@ const SharedPayment = () => {
     const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${origin}/pago-compartido?token=${token}&pago=error`)}`;
     const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify-split`;
 
-    const res = await supabase.functions.invoke('redsys-create', {
-      body: {
+    const rawRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
         amount: tokenData.amount,
         courtId: booking.court_id,
         userId: booking.user_id,
@@ -55,16 +60,21 @@ const SharedPayment = () => {
         isSharedPayment: false,
         sharedPhones: [],
         splitToken: token,
-      },
+      }),
     });
 
-    if (res.error || !res.data?.Ds_MerchantParameters) {
+    if (!rawRes.ok) {
       alert('Error al conectar con la pasarela de pago. Inténtalo de nuevo.');
       setLoading(false);
       return;
     }
 
-    const data = res.data;
+    const data = await rawRes.json();
+    if (!data?.Ds_MerchantParameters) {
+      alert('Error al conectar con la pasarela de pago. Inténtalo de nuevo.');
+      setLoading(false);
+      return;
+    }
     const form = document.createElement('form');
     form.method = 'POST';
     form.action = data.redsysUrl;
