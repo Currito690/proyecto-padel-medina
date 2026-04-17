@@ -46,7 +46,7 @@ const MyBookings = () => {
 
     const { data: tokens } = await supabase
       .from('shared_payment_tokens')
-      .select('phone, token, paid')
+      .select('phone, token, paid, amount')
       .eq('booking_id', lastBooking.id);
 
     if (tokens && tokens.length > 0) {
@@ -209,9 +209,10 @@ const MyBookings = () => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 {shareLinks.map((sl, idx) => {
                   const waMsg = encodeURIComponent(
-                    `🎾 ¡Hola! Te he reservado una pista de pádel. Paga tu parte aquí: ${sl.link} · Solo ${Number(sl.amount || 0).toFixed(2)}€ · ¡Nos vemos en la pista!`
+                    `🎾 ¡Hola! Te he reservado una pista en Padel Medina.\n\nPaga tu parte (${Number(sl.amount || 0).toFixed(2).replace('.', ',')} €) aquí:\n${sl.link}\n\n⏰ El enlace expira en 48 h. ¡Nos vemos en la pista! 🏓`
                   );
-                  const phoneClean = sl.phone.replace(/\D/g, '');
+                  // Limpieza robusta: quitar +34 / 0034 / espacios y dejar solo los 9 dígitos
+                  const phoneClean = sl.phone.replace(/\D/g, '').replace(/^(0034|34)/, '');
                   const waUrl = `https://wa.me/34${phoneClean}?text=${waMsg}`;
                   const isSent = sentLinks.has(idx);
                   const isNext = !isSent && [...Array(idx)].every((_, i) => sentLinks.has(i));
