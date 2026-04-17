@@ -46,6 +46,8 @@ const PaymentGateway = () => {
     const item = items[0];
     setLoading(true);
     setError(null);
+
+    try {
       if (isSharedPayment) {
         const emptyPhones = sharedPhones.filter(p => !p.trim()).length;
         if (emptyPhones > 0) {
