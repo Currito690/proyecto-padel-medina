@@ -45,15 +45,60 @@ const MyBookings = () => {
       (async () => {
         let data = await loadBookings();
         console.log('[WA] Inicio búsqueda reserva compartida. Total reservas:', data.length);
+        let found = null;
         for (let i = 0; i < 8; i++) {
-          const found = getRecentSplit(data);
+          found = getRecentSplit(data);
           console.log(`[WA] Intento ${i + 1}: found=`, found?.id, 'payment_type=', found?.payment_type);
-          if (found) { await openWaModal(found.id, data); break; }
+          if (found) break;
           if (i < 7) {
             await sleep(3000);
             data = await fetchBookingsSilent();
           }
         }
+
+        // Fallback: redsys-notify no creó la reserva → crearla desde el frontend
+        if (!found) {
+          console.log('[WA] Fallback: creando reserva desde frontend');
+          try {
+            const rawBooking = sessionStorage.getItem('sharedBooking');
+            const rawPhones  = sessionStorage.getItem('sharedPhones');
+            if (rawBooking && rawPhones) {
+              const { courtId, date, timeSlot } = JSON.parse(rawBooking);
+              const phones = JSON.parse(rawPhones);
+              // Idempotencia: buscar si ya existe (con cualquier pago)
+              const { data: existing } = await supabase
+                .from('bookings')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('court_id', courtId)
+                .eq('date', date)
+                .eq('time_slot', timeSlot)
+                .eq('status', 'confirmed')
+                .maybeSingle();
+              if (existing) {
+                console.log('[WA] Reserva ya existe (idempotencia):', existing.id);
+                found = existing;
+                data = await fetchBookingsSilent();
+              } else {
+                const { data: newB, error: newErr } = await supabase.from('bookings').insert({
+                  court_id: courtId,
+                  user_id: user.id,
+                  date,
+                  time_slot: timeSlot,
+                  status: 'confirmed',
+                  is_free: false,
+                  payment_type: 'split',
+                  split_phones: phones,
+                  split_paid: 1,
+                }).select().single();
+                console.log('[WA] Reserva creada fallback:', newB?.id, newErr?.message);
+                if (newB) { found = newB; data = await fetchBookingsSilent(); }
+              }
+            }
+          } catch (e) { console.error('[WA] Fallback error:', e); }
+        }
+
+        if (found) await openWaModal(found.id, data);
         setWaLoadingShared(false);
       })();
     } else {
