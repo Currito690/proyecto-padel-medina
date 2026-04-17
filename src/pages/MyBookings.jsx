@@ -10,8 +10,10 @@ const MyBookings = () => {
   const [loading, setLoading] = useState(true);
   const [pagoOk, setPagoOk] = useState(false);
   const [compartido, setCompartido] = useState(false);
-  const [shareLinks, setShareLinks] = useState([]); // [{ phone, link }]
+  const [shareLinks, setShareLinks] = useState([]);
   const [copiedIdx, setCopiedIdx] = useState(null);
+  const [sentLinks, setSentLinks] = useState(new Set());
+  const [showWaModal, setShowWaModal] = useState(false);
 
   useEffect(() => {
     const isOk = searchParams.get('pago') === 'ok';
@@ -31,7 +33,6 @@ const MyBookings = () => {
   const dismissBanner = () => setPagoOk(false);
 
   const loadShareLinks = async () => {
-    // Buscar la última reserva de este usuario con pago compartido
     const { data: lastBooking } = await supabase
       .from('bookings')
       .select('id')
@@ -50,11 +51,13 @@ const MyBookings = () => {
 
     if (tokens && tokens.length > 0) {
       const appUrl = window.location.origin;
-      setShareLinks(tokens.map(t => ({
+      const links = tokens.map(t => ({
         phone: t.phone,
         link: `${appUrl}/pago-compartido?token=${t.token}`,
         paid: t.paid,
-      })));
+      }));
+      setShareLinks(links);
+      setShowWaModal(true); // ← Abre el modal automáticamente
     }
   };
 
@@ -156,52 +159,119 @@ const MyBookings = () => {
         </div>
       )}
 
-      {/* ── Panel de enlaces de WhatsApp para acompañantes ── */}
-      {compartido && (
-        <div style={{ background: 'white', borderRadius: '1.25rem', padding: '1.25rem 1.5rem', marginBottom: '1.5rem', border: '1px solid #BFDBFE', boxShadow: '0 4px 20px rgba(37,99,235,0.1)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '1rem' }}>
-            <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>👯</div>
-            <div>
-              <p style={{ margin: 0, fontWeight: 800, fontSize: '0.95rem', color: '#0F172A' }}>¡Envía el enlace de pago a tus amigos!</p>
-              <p style={{ margin: 0, fontSize: '0.78rem', color: '#64748B' }}>Cada amigo debe pagar su parte para confirmar la reserva completa.</p>
+      {/* ── MODAL WHATSAPP ── */}
+      {showWaModal && compartido && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: 'rgba(15,23,42,0.75)', backdropFilter: 'blur(6px)',
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+          padding: '1rem',
+        }}>
+          <style>{`
+            @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+            @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(37,211,102,0.5); } 50% { box-shadow: 0 0 0 8px rgba(37,211,102,0); } }
+            .wa-btn-active { animation: pulse 1.6s infinite; }
+          `}</style>
+          <div style={{
+            background: 'white', borderRadius: '1.5rem 1.5rem 1rem 1rem',
+            width: '100%', maxWidth: '440px',
+            padding: '1.75rem 1.5rem 2rem',
+            animation: 'slideUp 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+            boxShadow: '0 -8px 40px rgba(0,0,0,0.3)',
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+              <div>
+                <p style={{ margin: '0 0 0.25rem', fontSize: '1.1rem', fontWeight: 900, color: '#0F172A' }}>👯 Avisa a tus amigos</p>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748B', lineHeight: 1.5 }}>
+                  Envía el enlace de pago a cada amigo. Solo tienes que pulsar y confirmar en WhatsApp.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowWaModal(false)}
+                style={{ background: '#F1F5F9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748B', fontSize: '1rem', flexShrink: 0, marginLeft: '0.5rem' }}
+              >✕</button>
             </div>
-          </div>
 
-          {shareLinks.length === 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', background: '#F8FAFC', borderRadius: '0.75rem', fontSize: '0.82rem', color: '#64748B' }}>
-              <div style={{ width: '16px', height: '16px', border: '2px solid #CBD5E1', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
-              Preparando los enlaces... (puede tardar unos segundos)
+            {/* Progreso */}
+            <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1.25rem' }}>
+              {shareLinks.map((_, i) => (
+                <div key={i} style={{ flex: 1, height: '4px', borderRadius: '2px', background: sentLinks.has(i) ? '#25D366' : '#E2E8F0', transition: 'background 0.3s' }} />
+              ))}
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-              {shareLinks.map((sl, idx) => {
-                const waMsg = encodeURIComponent(`🎾 ¡Te reservé una pista de pádel! Paga tu parte (${sl.link}) y confirmamos la reserva.`);
-                const waUrl = `https://wa.me/34${sl.phone.replace(/\D/g,'')}?text=${waMsg}`;
-                return (
-                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', background: '#F8FAFC', borderRadius: '0.875rem', border: '1px solid #E2E8F0' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ margin: '0 0 0.1rem', fontSize: '0.8rem', fontWeight: 700, color: '#374151' }}>Amigo {idx + 1} · +34 {sl.phone}</p>
-                      <p style={{ margin: 0, fontSize: '0.7rem', color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sl.link}</p>
-                    </div>
+
+            {shareLinks.length === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', padding: '1.5rem 0', color: '#64748B', fontSize: '0.85rem' }}>
+                <div style={{ width: '18px', height: '18px', border: '2px solid #CBD5E1', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                Preparando los enlaces de pago...
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {shareLinks.map((sl, idx) => {
+                  const waMsg = encodeURIComponent(
+                    `🎾 ¡Hola! Te he reservado una pista de pádel. Paga tu parte aquí: ${sl.link} · Solo ${Number(sl.amount || 0).toFixed(2)}€ · ¡Nos vemos en la pista!`
+                  );
+                  const phoneClean = sl.phone.replace(/\D/g, '');
+                  const waUrl = `https://wa.me/34${phoneClean}?text=${waMsg}`;
+                  const isSent = sentLinks.has(idx);
+                  const isNext = !isSent && [...Array(idx)].every((_, i) => sentLinks.has(i));
+
+                  return (
                     <a
+                      key={idx}
                       href={waUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{ flexShrink: 0, padding: '0.5rem 0.75rem', background: '#25D366', color: 'white', borderRadius: '0.625rem', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.3rem', whiteSpace: 'nowrap' }}
+                      onClick={() => setSentLinks(prev => new Set([...prev, idx]))}
+                      className={isNext && !isSent ? 'wa-btn-active' : ''}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.875rem',
+                        padding: '1rem 1.125rem',
+                        borderRadius: '1rem',
+                        background: isSent ? '#F0FDF4' : isNext ? '#25D366' : '#F8FAFC',
+                        border: `2px solid ${isSent ? '#86EFAC' : isNext ? '#25D366' : '#E2E8F0'}`,
+                        textDecoration: 'none',
+                        transition: 'all 0.2s',
+                        opacity: !isSent && !isNext ? 0.5 : 1,
+                        pointerEvents: isSent ? 'none' : 'auto',
+                      }}
                     >
-                      <span>📲</span> WhatsApp
+                      <div style={{
+                        width: '40px', height: '40px', borderRadius: '50%',
+                        background: isSent ? '#DCFCE7' : isNext ? 'rgba(255,255,255,0.25)' : '#F1F5F9',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '1.2rem', flexShrink: 0,
+                      }}>
+                        {isSent ? '✅' : '📲'}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ margin: '0 0 0.1rem', fontWeight: 800, fontSize: '0.9rem', color: isSent ? '#15803D' : isNext ? 'white' : '#374151' }}>
+                          {isSent ? '¡Enviado!' : `Enviar a Amigo ${idx + 1}`}
+                        </p>
+                        <p style={{ margin: 0, fontSize: '0.75rem', color: isSent ? '#4ADE80' : isNext ? 'rgba(255,255,255,0.85)' : '#94A3B8', fontWeight: 500 }}>
+                          +34 {sl.phone}
+                        </p>
+                      </div>
+                      {isNext && !isSent && (
+                        <div style={{ color: 'white', fontSize: '1.1rem' }}>→</div>
+                      )}
                     </a>
-                    <button
-                      onClick={() => copyLink(sl.link, idx)}
-                      style={{ flexShrink: 0, padding: '0.5rem 0.75rem', background: copiedIdx === idx ? '#22C55E' : '#F1F5F9', color: copiedIdx === idx ? 'white' : '#374151', border: 'none', borderRadius: '0.625rem', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s' }}
-                    >
-                      {copiedIdx === idx ? '✓ Copiado' : 'Copiar'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+
+            {sentLinks.size === shareLinks.length && shareLinks.length > 0 && (
+              <button
+                onClick={() => setShowWaModal(false)}
+                style={{ width: '100%', marginTop: '1rem', padding: '0.875rem', background: '#16A34A', color: 'white', border: 'none', borderRadius: '0.875rem', fontFamily: 'inherit', fontWeight: 800, fontSize: '0.95rem', cursor: 'pointer' }}
+              >
+                🎾 ¡Listo! Todos avisados
+              </button>
+            )}
+          </div>
         </div>
       )}
 
