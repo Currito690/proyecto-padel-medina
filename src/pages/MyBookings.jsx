@@ -199,7 +199,7 @@ const MyBookings = () => {
                   '🎾 ¡Hola! He reservado una pista en Padel Medina.',
                   'Por favor, pagad vuestra parte para confirmar la reserva antes de 48h:',
                   '',
-                  ...pendingLinks.map((sl, idx) => `➡️ Jugador ${idx + 2} (+34 ${sl.phone}):\n${sl.link}`),
+                  ...pendingLinks.map((sl, idx) => `➡️ Jugador ${idx + 2}:\n${sl.link}`),
                   '',
                   '¡Nos vemos en la pista! 🏓'
                 ];

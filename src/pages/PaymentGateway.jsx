@@ -49,17 +49,7 @@ const PaymentGateway = () => {
 
     try {
       if (isSharedPayment) {
-        const emptyPhones = sharedPhones.filter(p => !p.trim()).length;
-        if (emptyPhones > 0) {
-          setError('Por favor, indica los 3 números de teléfono de los acompañantes.');
-          setLoading(false);
-          return;
-        }
-        if (sharedPhones.some(p => p.replace(/\s+/g, '').length < 9)) {
-          setError('Asegúrate de que los teléfonos introducidos son válidos (mínimo 9 dígitos).');
-          setLoading(false);
-          return;
-        }
+        // No checks needed. We use generic tokens now.
       }
 
       const finalAmount = isSharedPayment ? Number((item.price / 4).toFixed(2)) : item.price;
@@ -337,28 +327,9 @@ const PaymentGateway = () => {
 
                       {isSharedPayment && (
                         <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid #E2E8F0', animation: 'fadeIn 0.3s ease-out' }}>
-                          <p style={{ fontSize: '0.8rem', color: '#475569', marginBottom: '1rem', lineHeight: 1.5, fontWeight: 500 }}>
-                            Añade los números de móvil de tus 3 acompañantes. Tras confirmar, ellos podrán pagar el resto para completar la reserva.
+                          <p style={{ fontSize: '0.8rem', color: '#475569', margin: 0, lineHeight: 1.5, fontWeight: 500 }}>
+                            Al confirmar, te daremos un <strong>enlace mágico de WhatsApp</strong> para enviarlo a tu grupo y que los 3 acompañantes paguen su parte cómodamente.
                           </p>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                            {[0, 1, 2].map((idx) => (
-                              <div key={idx} style={{ position: 'relative' }}>
-                                <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', fontSize: '0.85rem', fontWeight: 600 }}>+34</span>
-                                <input
-                                  type="tel"
-                                  className="input-focus-ring"
-                                  placeholder={`Teléfono Amigo ${idx + 1}`}
-                                  value={sharedPhones[idx]}
-                                  onChange={(e) => {
-                                    const newPhones = [...sharedPhones];
-                                    newPhones[idx] = e.target.value.replace(/[^\d\s-]/g, '');
-                                    setSharedPhones(newPhones);
-                                  }}
-                                  style={{ width: '100%', padding: '0.85rem 1rem 0.85rem 3.2rem', borderRadius: '0.75rem', border: '1px solid #CBD5E1', color: '#0F172A', fontWeight: 600, fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
-                                />
-                              </div>
-                            ))}
-                          </div>
                         </div>
                       )}
                     </div>
