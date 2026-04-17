@@ -11,11 +11,19 @@ const MyBookings = () => {
   const [pagoOk, setPagoOk] = useState(false);
 
   // WhatsApp modal
-  const [waModal, setWaModal] = useState(null); // { links: [], sentIdxs: Set }
-  const [loadingTokens, setLoadingTokens] = useState(null); // bookingId
+  const [waModal, setWaModal] = useState(null);
+  const [loadingTokens, setLoadingTokens] = useState(null);
+  const [waLoadingShared, setWaLoadingShared] = useState(false); // banner mientras busca la reserva
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  const getRecentSplit = (list) =>
+    (list || [])
+      .filter(b => b.payment_type === 'split' && (b.split_paid || 0) < 4)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
 
   useEffect(() => {
-    const isPayOk = searchParams.get('pago') === 'ok';
+    const isPayOk    = searchParams.get('pago') === 'ok';
     const isCompartido = searchParams.get('compartido') === '1';
 
     if (isPayOk) {
@@ -26,29 +34,27 @@ const MyBookings = () => {
       setSearchParams(np, { replace: true });
     }
 
-    loadBookings().then(data => {
-      if (!isPayOk || !isCompartido || !data) return;
-      const getRecentSplit = (bookings) => {
-        return bookings
-          .filter(b => b.payment_type === 'split' && (b.split_paid || 0) < 4)
-          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-      };
-
-      const split = getRecentSplit(data);
-      if (split) {
-        openWaModal(split.id, data);
-      } else {
-        // redsys-notify may not have fired yet — retry once after 4s
-        setTimeout(async () => {
-          const retryData = await loadBookings();
-          const split2 = getRecentSplit(retryData || []);
-          if (split2) openWaModal(split2.id, retryData);
-        }, 4000);
-      }
-    });
+    if (isPayOk && isCompartido) {
+      // Muestra banner de carga mientras esperamos la reserva + tokens
+      setWaLoadingShared(true);
+      (async () => {
+        let found = null;
+        // Hasta 6 intentos cada 3 s (18 s total) para dar tiempo a redsys-notify
+        for (let i = 0; i < 6; i++) {
+          const data = await loadBookings();
+          found = getRecentSplit(data);
+          if (found) { await openWaModal(found.id, data); break; }
+          if (i < 5) await sleep(3000);
+        }
+        setWaLoadingShared(false);
+      })();
+    } else {
+      loadBookings();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Returns the loaded data so callers can act on it immediately
+  // Returns fresh data so callers can act on it immediately
   const loadBookings = async () => {
     setLoading(true);
     const { data } = await supabase
@@ -56,14 +62,13 @@ const MyBookings = () => {
       .select('*, courts(name, sport, location, gradient, price)')
       .eq('user_id', user.id)
       .eq('status', 'confirmed')
-      .order('date', { ascending: true })
-      .order('time_slot', { ascending: true });
+      .order('created_at', { ascending: false });
     if (data) setBookings(data);
     setLoading(false);
     return data || [];
   };
 
-  // allBookings: optional fresh data to avoid stale closure
+  // Carga tokens; si no existen, los crea desde booking.split_phones
   const openWaModal = async (bookingId, allBookings = null) => {
     setLoadingTokens(bookingId);
 
@@ -72,14 +77,25 @@ const MyBookings = () => {
       .select('phone, token, paid, amount')
       .eq('booking_id', bookingId);
 
-    // Fallback: tokens not in DB yet → create them from booking.split_phones
+    // Fallback: tokens aún no generados → crearlos desde booking.split_phones
     if (!tokens || tokens.length === 0) {
       const src = allBookings || bookings;
       const booking = src.find(b => b.id === bookingId);
-      const phones = booking?.split_phones || [];
+      const phones = (booking?.split_phones || []).filter(Boolean);
       if (phones.length > 0) {
-        const courtPrice = booking.courts?.price || 0;
-        const splitAmount = Number((courtPrice / 4).toFixed(2));
+        let splitAmount = 0;
+        if (booking.courts?.price != null) {
+          splitAmount = Number((booking.courts.price / 4).toFixed(2));
+        } else {
+          // Último recurso: leer de sessionStorage o site_settings
+          const stored = sessionStorage.getItem('sharedAmount');
+          if (stored) {
+            splitAmount = Number(stored);
+          } else {
+            const { data: ss } = await supabase.from('site_settings').select('court_price').single();
+            splitAmount = Number(((ss?.court_price || 0) / 4).toFixed(2));
+          }
+        }
         const { data: newTokens } = await supabase
           .from('shared_payment_tokens')
           .insert(phones.map(phone => ({
@@ -89,6 +105,8 @@ const MyBookings = () => {
           })))
           .select('phone, token, paid, amount');
         tokens = newTokens;
+        sessionStorage.removeItem('sharedPhones');
+        sessionStorage.removeItem('sharedAmount');
       }
     }
 
@@ -157,7 +175,7 @@ const MyBookings = () => {
 
       {/* ── Banner pago OK ── */}
       {pagoOk && (
-        <div style={{ background: 'linear-gradient(135deg,#16A34A,#059669)', borderRadius: '1.25rem', padding: '1.5rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', boxShadow: '0 8px 24px rgba(22,163,74,.35)' }}>
+        <div style={{ background: 'linear-gradient(135deg,#16A34A,#059669)', borderRadius: '1.25rem', padding: '1.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', boxShadow: '0 8px 24px rgba(22,163,74,.35)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '1.5rem' }}>🎾</div>
             <div>
@@ -166,6 +184,17 @@ const MyBookings = () => {
             </div>
           </div>
           <button onClick={() => setPagoOk(false)} style={{ background: 'rgba(255,255,255,.2)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', color: 'white', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+        </div>
+      )}
+
+      {/* ── Banner: preparando enlaces WhatsApp ── */}
+      {waLoadingShared && (
+        <div style={{ background: 'linear-gradient(135deg,#1D4ED8,#2563EB)', borderRadius: '1.25rem', padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', boxShadow: '0 6px 20px rgba(37,99,235,.35)' }}>
+          <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin .9s linear infinite', flexShrink: 0 }} />
+          <div>
+            <p style={{ margin: '0 0 .15rem', fontWeight: 800, color: 'white', fontSize: '.95rem' }}>Generando enlaces de pago compartido…</p>
+            <p style={{ margin: 0, fontSize: '.78rem', color: 'rgba(255,255,255,.8)' }}>En unos segundos aparecerán los 3 links de WhatsApp para tus amigos.</p>
+          </div>
         </div>
       )}
 

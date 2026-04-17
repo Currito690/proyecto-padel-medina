@@ -130,6 +130,12 @@ const PaymentGateway = () => {
         form.appendChild(input);
       });
 
+      // Guardar teléfonos antes del redirect para el fallback en MyBookings
+      if (isSharedPayment) {
+        sessionStorage.setItem('sharedPhones', JSON.stringify(sharedPhones.map(p => p.replace(/\s/g, ''))));
+        sessionStorage.setItem('sharedAmount', String(finalAmount));
+      }
+
       document.body.appendChild(form);
       form.submit();
     } catch (err) {
