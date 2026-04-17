@@ -4,8 +4,38 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import CryptoJS from 'https://esm.sh/crypto-js@4.2.0';
 
-// ── Clave SHA-256 de producción (configurar en Supabase Dashboard > Settings > Secrets) ──
+// ── Clave SHA-256 de producción ──
 const SECRET_KEY = Deno.env.get('REDSYS_SECRET_KEY');
+
+// ── Twilio SMS (Supabase Dashboard > Settings > Secrets) ──
+const TWILIO_SID   = Deno.env.get('TWILIO_ACCOUNT_SID');
+const TWILIO_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN');
+const TWILIO_FROM  = Deno.env.get('TWILIO_PHONE_NUMBER'); // ej: +34900XXXXXX
+
+async function sendSMS(to: string, body: string): Promise<void> {
+  if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
+    console.warn('Twilio no configurado — SMS omitido para', to);
+    return;
+  }
+  const phone = to.startsWith('+') ? to : `+34${to.replace(/\s|-/g, '')}`;
+  const res = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ From: TWILIO_FROM, To: phone, Body: body }).toString(),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    console.warn(`Twilio error (${phone}):`, err);
+  } else {
+    console.log(`SMS enviado a ${phone}`);
+  }
+}
 
 // ── Deriva la clave por pedido usando 3DES-CBC ──
 function deriveKey(secretBase64: string, orderId: string): CryptoJS.lib.WordArray {
@@ -90,12 +120,19 @@ serve(async (req) => {
         return new Response('KO', { status: 500 });
       }
 
+      // Obtener nombre de pista y usuario (necesario para SMS y push)
+      const [courtRes, userRes] = await Promise.all([
+        supabase.from('courts').select('name').eq('id', courtId).single(),
+        supabase.from('profiles').select('name').eq('id', userId).single(),
+      ]);
+      const courtName = courtRes.data?.name || 'Pista';
+      const userName  = userRes.data?.name  || 'Usuario';
+
       // ── Si es pago compartido, generar tokens para los acompañantes ──
       let shareLinks: { phone: string; link: string }[] = [];
       if (isSharedPayment && sharedPhones?.length && bookingRow?.id) {
-        // Calcular importe por persona (precio total / 4 personas)
-        const totalAmount = parseFloat(decoded.Ds_Amount ?? '0') / 100;
-        const splitAmount = Math.round((totalAmount / 0.25) / 4 * 100) / 100; // precio total / 4
+        // El primer jugador pagó 1/4 → splitAmount es esa misma cantidad
+        const splitAmount = parseFloat(decoded.Ds_Amount ?? '0') / 100;
 
         const tokenInserts = sharedPhones.map((phone: string) => ({
           booking_id: bookingRow.id,
@@ -115,19 +152,25 @@ serve(async (req) => {
             link: `${appUrl}/pago-compartido?token=${t.token}`,
           }));
           console.log(`Generados ${tokens.length} tokens de pago compartido para reserva ${bookingRow.id}`);
+
+          // ── Enviar SMS a cada acompañante con su enlace de pago ──
+          const [y2, m2, d2] = date.split('-');
+          const dateStr2 = `${d2}/${m2}/${y2}`;
+          const smsJobs = shareLinks.map(({ phone, link }) => {
+            const msg =
+              `🎾 Hola! ${userName} te ha reservado una pista en Padel Medina.\n\n` +
+              `📅 ${dateStr2} · ${timeSlot}\n` +
+              `🏟️ ${courtName}\n\n` +
+              `Paga tu parte (${splitAmount.toFixed(2).replace('.', ',')} €) aquí:\n` +
+              `${link}\n\n` +
+              `⏰ El enlace expira en 48 h.`;
+            return sendSMS(phone, msg);
+          });
+          await Promise.allSettled(smsJobs);
         } else if (tokenError) {
           console.error('Error generando tokens de pago compartido:', tokenError);
         }
       }
-
-      // Obtener nombre de pista y usuario para la notificación push
-      const [courtRes, userRes] = await Promise.all([
-        supabase.from('courts').select('name').eq('id', courtId).single(),
-        supabase.from('profiles').select('name').eq('id', userId).single(),
-      ]);
-
-      const courtName = courtRes.data?.name || 'Pista';
-      const userName = userRes.data?.name || 'Usuario';
 
       const [y, m, d] = date.split('-');
       const dateStr = `${d}/${m}/${y}`;
