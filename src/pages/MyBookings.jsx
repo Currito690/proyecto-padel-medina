@@ -58,27 +58,32 @@ const MyBookings = () => {
 
         // Fallback: redsys-notify no creó la reserva → crearla desde el frontend
         if (!found) {
-          console.log('[WA] Fallback: creando reserva desde frontend');
+          const rawBooking = sessionStorage.getItem('sharedBooking');
+          const rawPhones  = sessionStorage.getItem('sharedPhones');
+          console.log('[WA] Fallback – sharedBooking:', rawBooking, 'sharedPhones:', rawPhones);
           try {
-            const rawBooking = sessionStorage.getItem('sharedBooking');
-            const rawPhones  = sessionStorage.getItem('sharedPhones');
             if (rawBooking && rawPhones) {
-              const { courtId, date, timeSlot } = JSON.parse(rawBooking);
+              const bookingMeta = JSON.parse(rawBooking);
+              const { courtId, date, timeSlot } = bookingMeta;
               const phones = JSON.parse(rawPhones);
-              // Idempotencia: buscar si ya existe (con cualquier pago)
+              // Idempotencia: buscar si ya existe (puede que redsys-notify sí la creó pero con payment_type distinto)
               const { data: existing } = await supabase
                 .from('bookings')
-                .select('id')
+                .select('id, payment_type, split_phones, split_paid')
                 .eq('user_id', user.id)
                 .eq('court_id', courtId)
                 .eq('date', date)
                 .eq('time_slot', timeSlot)
                 .eq('status', 'confirmed')
                 .maybeSingle();
+              console.log('[WA] Idempotencia resultado:', existing);
               if (existing) {
-                console.log('[WA] Reserva ya existe (idempotencia):', existing.id);
                 found = existing;
                 data = await fetchBookingsSilent();
+                // Corregir payment_type si hace falta
+                if (existing.payment_type !== 'split') {
+                  await supabase.from('bookings').update({ payment_type: 'split', split_phones: phones, split_paid: 1 }).eq('id', existing.id);
+                }
               } else {
                 const { data: newB, error: newErr } = await supabase.from('bookings').insert({
                   court_id: courtId,
@@ -91,9 +96,12 @@ const MyBookings = () => {
                   split_phones: phones,
                   split_paid: 1,
                 }).select().single();
-                console.log('[WA] Reserva creada fallback:', newB?.id, newErr?.message);
+                console.log('[WA] Reserva creada fallback:', newB?.id, 'error:', newErr?.message);
                 if (newB) { found = newB; data = await fetchBookingsSilent(); }
               }
+              sessionStorage.removeItem('sharedBooking');
+            } else {
+              console.warn('[WA] sessionStorage vacío – no se puede crear reserva fallback');
             }
           } catch (e) { console.error('[WA] Fallback error:', e); }
         }
