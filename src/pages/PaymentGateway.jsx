@@ -13,16 +13,20 @@ const PaymentGateway = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
-  const [clubOpenTime, setClubOpenTime] = useState('00:00');
+  const [clubHours, setClubHours] = useState(null);
 
-  // Calcular si el club está abierto ahora mismo
-  const isClubOpen = (() => {
-    if (!clubOpenTime || clubOpenTime === '00:00') return true;
+  // Calcular si el pago en club está disponible ahora (por día y hora)
+  const { isClubOpen, clubOpenTime } = (() => {
+    if (!clubHours) return { isClubOpen: true, clubOpenTime: null };
     const now = new Date();
-    const [h, m] = clubOpenTime.split(':').map(Number);
-    const openMinutes = h * 60 + m;
-    const nowMinutes  = now.getHours() * 60 + now.getMinutes();
-    return nowMinutes >= openMinutes;
+    const dayKey = String(now.getDay()); // 0=dom, 1=lun ...
+    const val = clubHours[dayKey];
+    if (val === null || val === undefined) return { isClubOpen: false, clubOpenTime: null };
+    if (val === '00:00') return { isClubOpen: true, clubOpenTime: null };
+    const [h, m] = val.split(':').map(Number);
+    const openMin = h * 60 + m;
+    const nowMin  = now.getHours() * 60 + now.getMinutes();
+    return { isClubOpen: nowMin >= openMin, clubOpenTime: val };
   })();
 
   // Si el carrito está vacío, volver al inicio
@@ -32,10 +36,10 @@ const PaymentGateway = () => {
     }
   }, [items.length, navigate]);
 
-  // Cargar club_open_time de site_settings
+  // Cargar club_hours de site_settings
   useEffect(() => {
-    supabase.from('site_settings').select('club_open_time').single()
-      .then(({ data }) => { if (data?.club_open_time) setClubOpenTime(data.club_open_time); });
+    supabase.from('site_settings').select('club_hours').single()
+      .then(({ data }) => { if (data?.club_hours) setClubHours(data.club_hours); });
   }, []);
 
   // Si el club no está abierto y el método es 'club', cambiar a 'redsys'

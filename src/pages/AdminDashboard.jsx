@@ -178,7 +178,8 @@ const AdminDashboard = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('schedule');
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
-  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00' });
+  const DEFAULT_CLUB_HOURS = { 0:'00:00', 1:'00:00', 2:'00:00', 3:'00:00', 4:'00:00', 5:'00:00', 6:'00:00' };
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS });
   const [financialStats, setFinancialStats] = useState({ total: 0, month: 0, today: 0, totalBookings: 0 });
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
@@ -260,6 +261,7 @@ const AdminDashboard = () => {
             court_price: parseFloat(settingsData.court_price),
             slots_release_time: settingsData.slots_release_time || '00:00',
             club_open_time: settingsData.club_open_time || '00:00',
+            club_hours: settingsData.club_hours || DEFAULT_CLUB_HOURS,
           });
         }
 
@@ -463,6 +465,7 @@ const AdminDashboard = () => {
       court_price: parseFloat(siteSettings.court_price),
       slots_release_time: siteSettings.slots_release_time || '00:00',
       club_open_time: siteSettings.club_open_time || '00:00',
+      club_hours: siteSettings.club_hours,
     }).eq('id', 1);
     setSavingSettings(false);
     if (error) {
@@ -945,17 +948,51 @@ const AdminDashboard = () => {
 
                     <div>
                       <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
-                        🏪 Hora de apertura del club (Pago en Recepción)
+                        🏪 Horario de Pago en Recepción por día
                       </label>
-                      <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
-                        La opción "Pago en el Club" solo estará disponible a partir de esta hora. Antes de ella, los clientes solo podrán pagar con tarjeta o Bizum. Pon <strong>00:00</strong> para que siempre esté disponible.
+                      <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
+                        Configura para cada día si el "Pago en el Club" está disponible y a partir de qué hora. Si desactivas un día, los clientes solo podrán pagar con tarjeta o Bizum ese día.
                       </p>
-                      <input
-                        type="time"
-                        value={siteSettings.club_open_time || '00:00'}
-                        onChange={(e) => setSiteSettings({...siteSettings, club_open_time: e.target.value})}
-                        style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
-                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {[
+                          { key: 1, label: 'Lunes' },
+                          { key: 2, label: 'Martes' },
+                          { key: 3, label: 'Miércoles' },
+                          { key: 4, label: 'Jueves' },
+                          { key: 5, label: 'Viernes' },
+                          { key: 6, label: 'Sábado' },
+                          { key: 0, label: 'Domingo' },
+                        ].map(({ key, label }) => {
+                          const val = siteSettings.club_hours?.[key];
+                          const enabled = val !== null && val !== undefined;
+                          const updateHours = (newVal) => setSiteSettings(s => ({ ...s, club_hours: { ...s.club_hours, [key]: newVal } }));
+                          return (
+                            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.875rem', borderRadius: '0.75rem', border: '1.5px solid', borderColor: enabled ? '#BBF7D0' : '#E2E8F0', background: enabled ? '#F0FDF4' : '#F8FAFC' }}>
+                              <span style={{ width: '80px', fontWeight: 700, fontSize: '0.85rem', color: '#0F172A' }}>{label}</span>
+                              <button
+                                onClick={() => updateHours(enabled ? null : '07:00')}
+                                style={{ flexShrink: 0, width: '40px', height: '22px', borderRadius: '11px', border: 'none', background: enabled ? '#16A34A' : '#CBD5E1', position: 'relative', cursor: 'pointer', transition: 'background .2s' }}
+                              >
+                                <span style={{ position: 'absolute', width: '16px', height: '16px', borderRadius: '50%', background: 'white', top: '3px', left: enabled ? '21px' : '3px', transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
+                              </button>
+                              {enabled ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flex: 1 }}>
+                                  <span style={{ fontSize: '0.78rem', color: '#64748B', whiteSpace: 'nowrap' }}>A partir de</span>
+                                  <input
+                                    type="time"
+                                    value={val || '00:00'}
+                                    onChange={(e) => updateHours(e.target.value)}
+                                    style={{ flex: 1, padding: '0.3rem 0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.875rem', fontWeight: 600, color: '#0F172A' }}
+                                  />
+                                  {val === '00:00' && <span style={{ fontSize: '0.72rem', color: '#16A34A', fontWeight: 600, whiteSpace: 'nowrap' }}>siempre</span>}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 600 }}>No disponible</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
 
                     {settingsMsg && (
