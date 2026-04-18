@@ -178,11 +178,9 @@ const AdminDashboard = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('schedule');
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
-  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00 });
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00' });
   const [financialStats, setFinancialStats] = useState({ total: 0, month: 0, today: 0, totalBookings: 0 });
   const [savingSettings, setSavingSettings] = useState(false);
-  // slots_release_time default from DB, fallback 00:00
-  if (!siteSettings.slots_release_time) siteSettings.slots_release_time = '00:00';
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [courts, setCourts] = useState([]);
@@ -261,6 +259,7 @@ const AdminDashboard = () => {
             booking_window_days: settingsData.booking_window_days,
             court_price: parseFloat(settingsData.court_price),
             slots_release_time: settingsData.slots_release_time || '00:00',
+            club_open_time: settingsData.club_open_time || '00:00',
           });
         }
 
@@ -462,7 +461,8 @@ const AdminDashboard = () => {
     const { error } = await supabase.from('site_settings').update({
       booking_window_days: parseInt(siteSettings.booking_window_days, 10),
       court_price: parseFloat(siteSettings.court_price),
-      slots_release_time: siteSettings.slots_release_time || '00:00'
+      slots_release_time: siteSettings.slots_release_time || '00:00',
+      club_open_time: siteSettings.club_open_time || '00:00',
     }).eq('id', 1);
     setSavingSettings(false);
     if (error) {
@@ -939,6 +939,21 @@ const AdminDashboard = () => {
                         type="time"
                         value={siteSettings.slots_release_time || '00:00'}
                         onChange={(e) => setSiteSettings({...siteSettings, slots_release_time: e.target.value})}
+                        style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
+                        🏪 Hora de apertura del club (Pago en Recepción)
+                      </label>
+                      <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
+                        La opción "Pago en el Club" solo estará disponible a partir de esta hora. Antes de ella, los clientes solo podrán pagar con tarjeta o Bizum. Pon <strong>00:00</strong> para que siempre esté disponible.
+                      </p>
+                      <input
+                        type="time"
+                        value={siteSettings.club_open_time || '00:00'}
+                        onChange={(e) => setSiteSettings({...siteSettings, club_open_time: e.target.value})}
                         style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
                       />
                     </div>

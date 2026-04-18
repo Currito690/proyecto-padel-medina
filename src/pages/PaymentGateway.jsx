@@ -13,7 +13,17 @@ const PaymentGateway = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
+  const [clubOpenTime, setClubOpenTime] = useState('00:00');
 
+  // Calcular si el club está abierto ahora mismo
+  const isClubOpen = (() => {
+    if (!clubOpenTime || clubOpenTime === '00:00') return true;
+    const now = new Date();
+    const [h, m] = clubOpenTime.split(':').map(Number);
+    const openMinutes = h * 60 + m;
+    const nowMinutes  = now.getHours() * 60 + now.getMinutes();
+    return nowMinutes >= openMinutes;
+  })();
 
   // Si el carrito está vacío, volver al inicio
   useEffect(() => {
@@ -21,6 +31,17 @@ const PaymentGateway = () => {
       navigate('/', { replace: true });
     }
   }, [items.length, navigate]);
+
+  // Cargar club_open_time de site_settings
+  useEffect(() => {
+    supabase.from('site_settings').select('club_open_time').single()
+      .then(({ data }) => { if (data?.club_open_time) setClubOpenTime(data.club_open_time); });
+  }, []);
+
+  // Si el club no está abierto y el método es 'club', cambiar a 'redsys'
+  useEffect(() => {
+    if (!isClubOpen && paymentMethod === 'club') setPaymentMethod('redsys');
+  }, [isClubOpen, paymentMethod]);
 
   // Redsys sólo soporta pago de un item a la vez con la integración actual
   useEffect(() => {
@@ -223,9 +244,18 @@ const PaymentGateway = () => {
                 >
                   📱 Bizum
                 </button>
-                <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
-                  🏪 Club
-                </button>
+                {isClubOpen && (
+                  <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
+                    🏪 Club
+                  </button>
+                )}
+              </div>
+            )}
+
+            {!isClubOpen && clubOpenTime !== '00:00' && (
+              <div style={{ backgroundColor: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#9A3412', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>🕐</span>
+                <span>El pago en el club estará disponible a partir de las <strong>{clubOpenTime}</strong>. Hasta entonces puedes pagar con tarjeta o Bizum.</span>
               </div>
             )}
 
