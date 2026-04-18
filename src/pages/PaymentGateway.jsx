@@ -14,8 +14,6 @@ const PaymentGateway = () => {
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
 
-  const [isSharedPayment, setIsSharedPayment] = useState(false);
-  const [sharedPhones, setSharedPhones] = useState(['', '', '']);
 
   // Si el carrito está vacío, volver al inicio
   useEffect(() => {
@@ -48,11 +46,7 @@ const PaymentGateway = () => {
     setError(null);
 
     try {
-      if (isSharedPayment) {
-        // No checks needed. We use generic tokens now.
-      }
-
-      const finalAmount = isSharedPayment ? Number((item.price / 4).toFixed(2)) : item.price;
+      const finalAmount = item.price;
 
       // ── Si el precio es 0€, confirmar gratis sin pasar por Redsys ──
       if (finalAmount === 0) {
@@ -77,7 +71,7 @@ const PaymentGateway = () => {
       }
 
       const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
-      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok${isSharedPayment ? '&compartido=1' : ''}`)}`;
+      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok`)}`;
       const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
@@ -92,8 +86,6 @@ const PaymentGateway = () => {
           failUrl,
           notifyUrl,
           paymentMethod: method === 'bizum' ? 'bizum' : 'card',
-          isSharedPayment,
-          sharedPhones: isSharedPayment ? sharedPhones : [],
         },
       });
 
@@ -130,16 +122,12 @@ const PaymentGateway = () => {
         form.appendChild(input);
       });
 
-      // Guardar datos antes del redirect para fallback en MyBookings
-      if (isSharedPayment) {
-        sessionStorage.setItem('sharedPhones', JSON.stringify(sharedPhones.map(p => p.replace(/\s/g, ''))));
-        sessionStorage.setItem('sharedAmount', String(finalAmount));
-        sessionStorage.setItem('sharedBooking', JSON.stringify({
-          courtId: item.courtId,
-          date: item.date,
-          timeSlot: item.timeSlot,
-        }));
-      }
+      // Guardar datos antes del redirect para fallback si redsys-notify no crea la reserva
+      sessionStorage.setItem('pendingBooking', JSON.stringify({
+        courtId: item.courtId,
+        date: item.date,
+        timeSlot: item.timeSlot,
+      }));
 
       document.body.appendChild(form);
       form.submit();
@@ -314,37 +302,6 @@ const PaymentGateway = () => {
                       }
                     </p>
 
-                    <div style={{ backgroundColor: isSharedPayment ? '#F8FAFC' : '#FFFFFF', border: '1px solid', borderColor: isSharedPayment ? '#BFDBFE' : '#E2E8F0', borderRadius: '1rem', padding: '1.25rem', marginBottom: '1.5rem', textAlign: 'left', transition: 'all 0.3s' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', margin: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <div style={{ width: '36px', height: '36px', borderRadius: '0.5rem', backgroundColor: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                              <circle cx="9" cy="7" r="4" />
-                              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                            </svg>
-                          </div>
-                          <div>
-                            <span style={{ display: 'block', fontWeight: 800, fontSize: '0.9rem', color: '#0F172A', letterSpacing: '-0.01em' }}>Pago Compartido</span>
-                            <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748B', marginTop: '0.1rem', fontWeight: 500 }}>Paga solo {Number((total/4).toFixed(2)).toString().replace('.', ',')} € pulsando aquí</span>
-                          </div>
-                        </div>
-                        <div style={{ width: '44px', height: '24px', backgroundColor: isSharedPayment ? '#2563EB' : '#CBD5E1', borderRadius: '12px', position: 'relative', transition: 'background-color 0.2s', flexShrink: 0 }}>
-                          <div style={{ width: '20px', height: '20px', backgroundColor: 'white', borderRadius: '50%', position: 'absolute', top: '2px', left: isSharedPayment ? '22px' : '2px', transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
-                        </div>
-                        <input type="checkbox" checked={isSharedPayment} onChange={(e) => { setError(null); setIsSharedPayment(e.target.checked); }} style={{ display: 'none' }} />
-                      </label>
-
-                      {isSharedPayment && (
-                        <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid #E2E8F0', animation: 'fadeIn 0.3s ease-out' }}>
-                          <p style={{ fontSize: '0.8rem', color: '#475569', margin: 0, lineHeight: 1.5, fontWeight: 500 }}>
-                            Al confirmar, te daremos un <strong>enlace mágico de WhatsApp</strong> para enviarlo a tu grupo y que los 3 acompañantes paguen su parte cómodamente.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
                     {error && (
                       <div style={{ backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.875rem', borderRadius: '0.6rem', fontSize: '0.85rem', marginBottom: '1rem', border: '1px solid #FECACA', fontWeight: 500 }}>
                         {error}
@@ -362,7 +319,7 @@ const PaymentGateway = () => {
                           Conectando...
                         </>
                       ) : (
-                        `${paymentMethod === 'bizum' ? 'Pagar con Bizum' : 'Pagar con Tarjeta'} · ${(isSharedPayment ? total / 4 : total).toFixed(2).replace('.', ',')} €`
+                        `${paymentMethod === 'bizum' ? 'Pagar con Bizum' : 'Pagar con Tarjeta'} · ${total.toFixed(2).replace('.', ',')} €`
                       )}
                     </button>
 
