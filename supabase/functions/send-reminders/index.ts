@@ -39,16 +39,15 @@ Deno.serve(async (req: Request) => {
         const toNotify = [];
         const bookingIdsToUpdate = [];
 
-        // 2. Filter bookings within the next 12.5 hours
+        // 2. Filter bookings starting within the next 10.5 hours
         for (const b of bookings) {
             const [hour, min] = b.time_slot.split(' - ')[0].split(':');
             const [year, month, day] = b.date.split('-');
             const bookingDate = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(min), 0);
-            
+
             const diffHours = (bookingDate.getTime() - calcNow.getTime()) / (1000 * 60 * 60);
 
-            // If it's starting between exactly now and 12.5 hours
-            if (diffHours > 0 && diffHours <= 12.5) {
+            if (diffHours > 0 && diffHours <= 10.5) {
                 toNotify.push(b);
                 bookingIdsToUpdate.push(b.id);
             }
@@ -58,33 +57,38 @@ Deno.serve(async (req: Request) => {
             return new Response(JSON.stringify({ message: 'No bookings match time window' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
 
-        // 3. Get push subscriptions for these users
+        // 3. Get push subscriptions and user profiles
         const userIds = [...new Set(toNotify.map(b => b.user_id))];
-        const { data: subs, error: subsError } = await supabase
-            .from('push_subscriptions')
-            .select('*')
-            .in('user_id', userIds);
+        const [{ data: subs, error: subsError }, { data: profiles }] = await Promise.all([
+            supabase.from('push_subscriptions').select('*').in('user_id', userIds),
+            supabase.from('profiles').select('id, name, email').in('id', userIds),
+        ]);
 
         if (subsError) throw subsError;
+
+        const profilesByUser: Record<string, { name: string; email: string }> =
+            (profiles || []).reduce((acc: Record<string, { name: string; email: string }>, p: { id: string; name: string; email: string }) => {
+                acc[p.id] = p;
+                return acc;
+            }, {});
 
         let sentCount = 0;
         const failedPushes = [];
 
+        // 4. Send push notifications
         if (subs && subs.length > 0) {
-            // Group subscriptions by user for quick lookup
             const subsByUser = subs.reduce((acc, sub) => {
                 if (!acc[sub.user_id]) acc[sub.user_id] = [];
                 acc[sub.user_id].push(sub);
                 return acc;
             }, {});
 
-            // 4. Send pushes
             for (const b of toNotify) {
                 const userSubs = subsByUser[b.user_id] || [];
                 const courtName = Array.isArray(b.courts) ? b.courts[0]?.name : b.courts?.name;
                 const payload = JSON.stringify({
-                    title: `Padel Medina: ¡Juegas en 12h!`,
-                    body: `Tu partido en ${courtName || 'tu pista'} empieza hoy a las ${b.time_slot.split(' - ')[0]}. ¡Prepárate!`,
+                    title: `Padel Medina: ¡Juegas en 10h!`,
+                    body: `Tu partido en ${courtName || 'tu pista'} empieza hoy a las ${b.time_slot.split(' - ')[0]}. ¡Sé puntual!`,
                     url: '/mis-reservas'
                 });
 
@@ -102,7 +106,31 @@ Deno.serve(async (req: Request) => {
             }
         }
 
-        // 5. Mark as reminder_sent = true
+        // 5. Send reminder emails via send-booking-email function
+        const emailFnUrl = `${supabaseUrl}/functions/v1/send-booking-email`;
+        for (const b of toNotify) {
+            const profile = profilesByUser[b.user_id];
+            if (!profile?.email) continue;
+            const courtName = Array.isArray(b.courts) ? b.courts[0]?.name : b.courts?.name;
+
+            fetch(emailFnUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${supabaseKey}`,
+                },
+                body: JSON.stringify({
+                    type: 'reminder',
+                    email: profile.email,
+                    userName: profile.name || 'jugador/a',
+                    courtName: courtName || 'tu pista',
+                    date: b.date,
+                    timeSlot: b.time_slot,
+                }),
+            }).catch((e) => console.warn('Reminder email error:', e));
+        }
+
+        // 6. Mark as reminder_sent = true
         await supabase
             .from('bookings')
             .update({ reminder_sent: true })

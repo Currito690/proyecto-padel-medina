@@ -90,6 +90,16 @@ const PaymentGateway = () => {
         supabase.functions.invoke('send-push', {
           body: { title: '🎾 Reserva gratuita', body: `${user.name} — ${item.courtName} · ${item.timeSlot}`, url: '/' },
         }).catch(() => {});
+        supabase.functions.invoke('send-booking-email', {
+          body: {
+            type: 'confirmation',
+            email: user.email,
+            userName: user.name,
+            courtName: item.courtName,
+            date: item.date,
+            timeSlot: item.timeSlot,
+          },
+        }).catch(() => {});
         clearCart();
         navigate('/mis-reservas?pago=ok');
         return;
@@ -185,12 +195,22 @@ const PaymentGateway = () => {
         ? `${user.name} — ${items[0].courtName} · ${items[0].timeSlot}`
         : `${user.name} — ${items.length} reservas`;
       supabase.functions.invoke('send-push', {
-        body: {
-          title: 'Nueva reserva',
-          body: summary,
-          url: '/',
-        },
+        body: { title: 'Nueva reserva', body: summary, url: '/' },
       }).catch(() => {});
+
+      // Email de confirmación al usuario por cada reserva
+      items.forEach((item) => {
+        supabase.functions.invoke('send-booking-email', {
+          body: {
+            type: 'confirmation',
+            email: user.email,
+            userName: user.name,
+            courtName: item.courtName,
+            date: item.date,
+            timeSlot: item.timeSlot,
+          },
+        }).catch(() => {});
+      });
 
       clearCart();
       navigate('/mis-reservas?pago=ok');

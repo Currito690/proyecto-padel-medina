@@ -54,7 +54,8 @@ serve(async (req) => {
     const dsSignature = params.get('Ds_Signature') ?? '';
 
     // Decodificar parámetros para obtener orderId
-    const decoded = JSON.parse(atob(dsParams));
+    const base64 = dsParams.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = JSON.parse(atob(base64));
     const orderId = decoded.Ds_Order ?? '';
 
     // Verificar firma con clave derivada por 3DES del orderId
@@ -94,10 +95,11 @@ serve(async (req) => {
       // Obtener nombre de pista y usuario (necesario para SMS y push)
       const [courtRes, userRes] = await Promise.all([
         supabase.from('courts').select('name').eq('id', courtId).single(),
-        supabase.from('profiles').select('name').eq('id', userId).single(),
+        supabase.from('profiles').select('name, email').eq('id', userId).single(),
       ]);
-      const courtName = courtRes.data?.name || 'Pista';
-      const userName  = userRes.data?.name  || 'Usuario';
+      const courtName = courtRes.data?.name  || 'Pista';
+      const userName  = userRes.data?.name   || 'Usuario';
+      const userEmail = userRes.data?.email  || '';
 
       // ── Si es pago compartido, generar tokens para los acompañantes ──
       let shareLinks: { phone: string; link: string }[] = [];
@@ -158,6 +160,25 @@ serve(async (req) => {
           .update({ share_links: shareLinks })
           .eq('id', bookingRow.id)
           .catch(console.warn);
+      }
+
+      // Enviar email de confirmación al usuario
+      if (userEmail) {
+        fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-booking-email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          },
+          body: JSON.stringify({
+            type: 'confirmation',
+            email: userEmail,
+            userName,
+            courtName,
+            date,
+            timeSlot,
+          }),
+        }).catch((e) => console.warn('Email confirmation error:', e));
       }
 
       console.log(`Redsys OK: reserva creada para ${userName} - ${courtName} ${date} ${timeSlot}`);
