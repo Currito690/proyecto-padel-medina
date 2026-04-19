@@ -113,7 +113,7 @@ Deno.serve(async (req: Request) => {
             if (!profile?.email) continue;
             const courtName = Array.isArray(b.courts) ? b.courts[0]?.name : b.courts?.name;
 
-            fetch(emailFnUrl, {
+            await fetch(emailFnUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

@@ -164,7 +164,7 @@ serve(async (req) => {
 
       // Enviar email de confirmación al usuario
       if (userEmail) {
-        fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-booking-email`, {
+        await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-booking-email`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
