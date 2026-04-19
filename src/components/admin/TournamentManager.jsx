@@ -770,6 +770,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setEditingParticipant(participant);
   };
 
+  const hoursToRanges = (hours) => {
+    const ranges = [];
+    let i = 0;
+    while (i < hours.length) {
+      let j = i;
+      while (j + 1 < hours.length && HOURS.indexOf(hours[j + 1]) === HOURS.indexOf(hours[j]) + 1) j++;
+      const endIdx = HOURS.indexOf(hours[j]);
+      const endH = endIdx < HOURS.length - 1 ? HOURS[endIdx + 1] : hours[j];
+      ranges.push(`${hours[i]}-${endH}`);
+      i = j + 1;
+    }
+    return ranges;
+  };
+
   const saveEditGrid = () => {
     const byDay = {};
     activeDays.forEach(day => {
@@ -777,12 +791,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (blocked.length > 0) byDay[day] = blocked;
     });
     const prefRules = Object.entries(byDay).map(([day, hours]) => {
-      const lastIdx = HOURS.indexOf(hours[hours.length - 1]);
-      const endH = lastIdx < HOURS.length - 1 ? HOURS[lastIdx + 1] : hours[hours.length - 1];
+      const ranges = hoursToRanges(hours);
       return {
         id: `${day}-${Date.now()}`,
         day,
-        label: `${day} de ${hours[0]} a ${endH}`,
+        label: `${day}: ${ranges.join(', ')}`,
         slots: hours.map(h => `${day} ${h}`),
       };
     });
@@ -1166,10 +1179,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       <span style={{ display: 'inline-block', backgroundColor: '#E2E8F0', padding: '0.1rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, color: '#475569', marginTop: '0.2rem', marginBottom: '0.1rem' }}>
                          {p.category}
                       </span>
-                      {p.prefNames?.length > 0 && (
-                        <span style={{ fontSize: '0.7rem', color: '#DC2626', display: 'block', marginTop: '0.2rem' }}>
-                          No puede: {p.prefNames.join(', ')}
-                        </span>
+                      {p.prefRules?.length > 0 && (
+                        <div style={{ marginTop: '0.3rem', display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                          {p.prefRules.map(r => (
+                            <span key={r.id} style={{ fontSize: '0.68rem', color: '#DC2626', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                              <span style={{ color: '#F97316', fontSize: '0.6rem' }}>●</span>
+                              {r.label}
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
