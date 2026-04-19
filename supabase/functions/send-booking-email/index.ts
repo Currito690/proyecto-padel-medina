@@ -3,7 +3,8 @@
 // Secret needed: RESEND_API_KEY (la misma API key que tienes en Supabase Auth SMTP)
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const FROM_EMAIL = 'Padel Medina <noreply@padelmedina.com>';
+const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
+const REPLY_TO = 'info@padelmedina.com';
 const APP_URL = Deno.env.get('APP_URL') || 'https://padelmedina.com';
 
 const corsHeaders = {
@@ -193,8 +194,8 @@ Deno.serve(async (req: Request) => {
     const dateShort = d && m && y ? `${d}/${m}/${y}` : '';
 
     const subject = isConfirmation
-      ? `✅ Reserva confirmada – ${courtName}${dateShort ? ` · ${dateShort}` : ''}`
-      : `⏰ Recordatorio – Tienes partido hoy a las ${startTime}`;
+      ? `Reserva confirmada – ${courtName}${dateShort ? ` · ${dateShort}` : ''}`
+      : `Recordatorio: tienes partido hoy a las ${startTime}`;
 
     const html = isConfirmation
       ? confirmationHtml(safeName, courtName, date, timeSlot)
@@ -206,7 +207,7 @@ Deno.serve(async (req: Request) => {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ from: FROM_EMAIL, to: [email], subject, html }),
+      body: JSON.stringify({ from: FROM_EMAIL, reply_to: REPLY_TO, to: [email], subject, html }),
     });
 
     const result = await res.json();
