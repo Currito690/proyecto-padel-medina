@@ -41,6 +41,7 @@ const BookingDashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [pagoCancelado, setPagoCancelado] = useState(false);
   const [courts, setCourts] = useState([]);
+  const [events, setEvents] = useState([]);
 
   // Leer el param, mostrarlo en estado y limpiar la URL de inmediato
   useEffect(() => {
@@ -73,6 +74,7 @@ const BookingDashboard = () => {
 
   useEffect(() => {
     loadCourts();
+    supabase.from('events').select('*').eq('published', true).order('event_date', { ascending: true }).then(({ data }) => setEvents(data || []));
   }, []);
 
   const loadCourts = async () => {
@@ -273,6 +275,38 @@ const BookingDashboard = () => {
             </span>
           </div>
         </header>
+
+        {/* ── Próximos eventos ── */}
+        {events.length > 0 && (
+          <div style={{ marginBottom: '1.75rem' }}>
+            <p style={{ margin: '0 0 0.75rem', fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Próximos eventos</p>
+            <div style={{ display: 'flex', gap: '0.875rem', overflowX: 'auto', paddingBottom: '0.5rem', scrollbarWidth: 'none' }}>
+              {events.map(ev => {
+                const dateStr = ev.event_date
+                  ? new Date(ev.event_date + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).toUpperCase()
+                  : null;
+                return (
+                  <div
+                    key={ev.id}
+                    onClick={() => ev.registration_url && window.open(ev.registration_url, '_blank')}
+                    style={{ flexShrink: 0, width: '220px', borderRadius: '1.1rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.10)', cursor: ev.registration_url ? 'pointer' : 'default', border: '1px solid #E2E8F0' }}
+                  >
+                    {ev.poster_url ? (
+                      <img src={ev.poster_url} alt={ev.title} style={{ width: '100%', height: '130px', objectFit: 'cover', display: 'block' }} />
+                    ) : (
+                      <div style={{ height: '130px', background: 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem' }}>🎾</div>
+                    )}
+                    <div style={{ padding: '0.7rem 0.875rem', backgroundColor: 'white' }}>
+                      {dateStr && <p style={{ margin: '0 0 0.2rem', fontSize: '0.65rem', fontWeight: 800, color: '#16A34A', letterSpacing: '0.05em' }}>{dateStr}</p>}
+                      <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 800, color: '#0F172A', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{ev.title}</p>
+                      {ev.registration_url && <p style={{ margin: '0.35rem 0 0', fontSize: '0.7rem', fontWeight: 700, color: '#2563EB' }}>Inscribirse →</p>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {slotsLocked && (
           <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: '1rem', padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>

@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../services/supabase';
 
 const ChevronRight = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -10,6 +12,23 @@ const Profile = () => {
   const { user, logout } = useAuth();
   const initial = user?.name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || 'U';
   const isAdmin = user?.role === 'admin';
+
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
+  const openNotifications = async () => {
+    setNotifOpen(true);
+    if (events.length > 0) return;
+    setEventsLoading(true);
+    const { data } = await supabase
+      .from('events')
+      .select('*')
+      .eq('published', true)
+      .order('event_date', { ascending: true });
+    setEvents(data || []);
+    setEventsLoading(false);
+  };
 
   const menuItems = [
     {
@@ -80,11 +99,52 @@ const Profile = () => {
         </span>
       </div>
 
+      {/* Notifications panel */}
+      {notifOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.55)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => setNotifOpen(false)}>
+          <div style={{ backgroundColor: 'white', borderRadius: '1.5rem 1.5rem 0 0', width: '100%', maxWidth: '520px', maxHeight: '80vh', overflowY: 'auto', padding: '1.5rem' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Notificaciones</h3>
+              <button onClick={() => setNotifOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.3rem', lineHeight: 1 }}>✕</button>
+            </div>
+            {eventsLoading ? (
+              <p style={{ color: '#94A3B8', textAlign: 'center', padding: '2rem 0' }}>Cargando…</p>
+            ) : events.length === 0 ? (
+              <p style={{ color: '#94A3B8', textAlign: 'center', padding: '2rem 0', fontSize: '0.9rem' }}>No hay eventos publicados por el momento.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {events.map(ev => {
+                  const dateStr = ev.event_date
+                    ? new Date(ev.event_date + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })
+                    : null;
+                  return (
+                    <div key={ev.id} style={{ borderRadius: '1rem', overflow: 'hidden', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+                      {ev.poster_url && <img src={ev.poster_url} alt={ev.title} style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', display: 'block' }} />}
+                      <div style={{ padding: '0.875rem 1rem', backgroundColor: 'white' }}>
+                        {dateStr && <p style={{ margin: '0 0 0.2rem', fontSize: '0.72rem', fontWeight: 700, color: '#16A34A', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{dateStr}</p>}
+                        <p style={{ margin: '0 0 0.35rem', fontSize: '0.95rem', fontWeight: 800, color: '#0F172A' }}>{ev.title}</p>
+                        {ev.description && <p style={{ margin: '0 0 0.5rem', fontSize: '0.82rem', color: '#64748B', lineHeight: 1.5 }}>{ev.description}</p>}
+                        {ev.registration_url && (
+                          <a href={ev.registration_url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: '0.25rem', padding: '0.5rem 1rem', backgroundColor: '#16A34A', color: 'white', borderRadius: '0.625rem', fontWeight: 700, fontSize: '0.82rem', textDecoration: 'none' }}>
+                            Inscribirse →
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Settings List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
         {menuItems.map(({ label, icon }) => (
           <button
             key={label}
+            onClick={label === 'Notificaciones' ? openNotifications : undefined}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '1rem 1.25rem',
