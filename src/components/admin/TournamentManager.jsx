@@ -60,8 +60,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [newCouple, setNewCouple] = useState('');
   // Default to first category so dropdown is never empty
   const [newCoupleCategory, setNewCoupleCategory] = useState(catListDefault[0] || '');
-  const [newPreferences, setNewPreferences] = useState([]); 
-  
   const [rounds, setRounds] = useState(() => {
      if (savedData?.rounds && Array.isArray(savedData.rounds)) {
         return { 'General': savedData.rounds };
@@ -76,9 +74,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
      return savedData?.consRounds || {};
   });
 
-  const [selectedDay, setSelectedDay] = useState(DAYS[0]);
-  const [selectedHourStart, setSelectedHourStart] = useState(HOURS[0]);
-  const [selectedHourEnd, setSelectedHourEnd] = useState(HOURS[1]);
+  const [editingParticipant, setEditingParticipant] = useState(null);
+  const [gridBlockedSlots, setGridBlockedSlots] = useState(new Set());
+  const [gridDragging, setGridDragging] = useState(false);
+  const [gridDragAction, setGridDragAction] = useState(null);
 
   useEffect(() => {
     localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
@@ -156,27 +155,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setSyncing(false);
   };
 
-  const addPreference = () => {
-    const startIndex = HOURS.indexOf(selectedHourStart);
-    const endIndex = HOURS.indexOf(selectedHourEnd);
-    
-    if (startIndex >= endIndex) {
-      alert("La hora de fin debe ser posterior a la de inicio.");
-      return;
-    }
-
-    const rangeSlots = HOURS.slice(startIndex, endIndex).map(h => `${selectedDay} ${h}`);
-    
-    setNewPreferences([
-      ...newPreferences, 
-      { id: Date.now().toString(), day: selectedDay, label: `${selectedDay} de ${selectedHourStart} a ${selectedHourEnd}`, slots: rangeSlots }
-    ]);
-  };
-
-  const removePreference = (id) => {
-    setNewPreferences(prev => prev.filter(p => p.id !== id));
-  };
-
   const addParticipant = (e) => {
     e.preventDefault();
     if (!newCouple.trim()) return;
@@ -184,16 +162,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const catList = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
     const assignedCat = newCoupleCategory || catList[0] || 'General';
 
-    setParticipants([...participants, { 
-      id: Date.now().toString(), 
+    setParticipants([...participants, {
+      id: Date.now().toString(),
       name: newCouple.trim(),
       category: assignedCat,
-      prefRules: [...newPreferences],
-      prefNames: newPreferences.map(p => p.label)
+      prefRules: [],
+      prefNames: []
     }]);
     setNewCouple('');
-    // Mantener la categoría seleccionada para poder seguir añadiendo en la misma
-    setNewPreferences([]);
   };
 
   const removeParticipant = (id) => {
@@ -765,14 +741,80 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return [...DAYS.slice(sIdx), ...DAYS.slice(0, eIdx + 1)];
   })();
 
-  const activeHours = (() => {
-    const isFirstDay = selectedDay === tConfig.startDay;
-    const startHourStr = isFirstDay && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : tConfig.startHour;
-    const sIdx = HOURS.indexOf(startHourStr);
+  const getHoursForDay = (day) => {
+    const isFirst = day === activeDays[0];
+    const startH = isFirst && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : tConfig.startHour;
+    const sIdx = HOURS.indexOf(startH);
     const eIdx = HOURS.indexOf(tConfig.endHour);
-    if (sIdx <= eIdx) return HOURS.slice(sIdx, eIdx + 1);
-    return HOURS;
+    if (sIdx < 0 || eIdx < 0) return HOURS;
+    return HOURS.slice(sIdx, eIdx + 1);
+  };
+
+  const allGridHours = (() => {
+    let minIdx = HOURS.length;
+    let maxIdx = 0;
+    activeDays.forEach(day => {
+      const hrs = getHoursForDay(day);
+      if (hrs.length > 0) {
+        minIdx = Math.min(minIdx, HOURS.indexOf(hrs[0]));
+        maxIdx = Math.max(maxIdx, HOURS.indexOf(hrs[hrs.length - 1]));
+      }
+    });
+    return minIdx >= HOURS.length ? HOURS : HOURS.slice(minIdx, maxIdx + 1);
   })();
+
+  const openEditGrid = (participant) => {
+    const blocked = new Set();
+    (participant.prefRules || []).forEach(rule => rule.slots.forEach(slot => blocked.add(slot)));
+    setGridBlockedSlots(blocked);
+    setEditingParticipant(participant);
+  };
+
+  const saveEditGrid = () => {
+    const byDay = {};
+    activeDays.forEach(day => {
+      const blocked = getHoursForDay(day).filter(h => gridBlockedSlots.has(`${day} ${h}`));
+      if (blocked.length > 0) byDay[day] = blocked;
+    });
+    const prefRules = Object.entries(byDay).map(([day, hours]) => {
+      const lastIdx = HOURS.indexOf(hours[hours.length - 1]);
+      const endH = lastIdx < HOURS.length - 1 ? HOURS[lastIdx + 1] : hours[hours.length - 1];
+      return {
+        id: `${day}-${Date.now()}`,
+        day,
+        label: `${day} de ${hours[0]} a ${endH}`,
+        slots: hours.map(h => `${day} ${h}`),
+      };
+    });
+    setParticipants(prev => prev.map(p =>
+      p.id === editingParticipant.id ? { ...p, prefRules, prefNames: prefRules.map(r => r.label) } : p
+    ));
+    setEditingParticipant(null);
+    setGridBlockedSlots(new Set());
+  };
+
+  const handleCellMouseDown = (day, hour) => {
+    const key = `${day} ${hour}`;
+    const action = gridBlockedSlots.has(key) ? 'unblock' : 'block';
+    setGridDragAction(action);
+    setGridDragging(true);
+    setGridBlockedSlots(prev => {
+      const next = new Set(prev);
+      if (action === 'block') next.add(key); else next.delete(key);
+      return next;
+    });
+  };
+
+  const handleCellMouseEnter = (day, hour) => {
+    if (!gridDragging) return;
+    const key = `${day} ${hour}`;
+    setGridBlockedSlots(prev => {
+      const next = new Set(prev);
+      if (gridDragAction === 'block') next.add(key); else next.delete(key);
+      return next;
+    });
+  };
+
 
   if (phase === 'config') {
     return (
@@ -906,7 +948,130 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   if (phase === 'setup') {
     return (
-      <div>
+      <div onMouseUp={() => setGridDragging(false)}>
+
+      {/* ── Editar pareja modal ── */}
+      {editingParticipant && (() => {
+        const nameParts = editingParticipant.name.split(' y ');
+        const p1 = nameParts[0]?.trim() || 'Jugador 1';
+        const p2 = nameParts.slice(1).join(' y ').trim() || 'Jugador 2';
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+            onMouseUp={() => setGridDragging(false)}
+          >
+            <div style={{ backgroundColor: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '680px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', marginTop: '1rem', marginBottom: '1rem' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>Editar pareja</h3>
+                <button onClick={() => { setEditingParticipant(null); setGridBlockedSlots(new Set()); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.25rem', lineHeight: 1, padding: '0.25rem' }}>✕</button>
+              </div>
+
+              <div style={{ padding: '1.25rem 1.5rem' }}>
+                {/* Players */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                  {[{ label: 'Jugador 1', name: p1 }, { label: 'Jugador 2', name: p2 }].map(({ label, name }) => (
+                    <div key={label} style={{ border: '1.5px solid #E2E8F0', borderRadius: '0.875rem', padding: '1rem' }}>
+                      <p style={{ margin: '0 0 0.35rem', fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                        <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 800, fontSize: '1rem', flexShrink: 0 }}>
+                          {name.charAt(0).toUpperCase()}
+                        </div>
+                        <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.9rem' }}>{name}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Warning */}
+                <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1.25rem' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#92400E', lineHeight: 1.5 }}>
+                    A continuación se muestran los horarios disponibles del torneo. Selecciona las celdas en las que la pareja <strong>NO PUEDE JUGAR</strong>. Puedes arrastrar para seleccionar múltiples horas.
+                  </p>
+                </div>
+
+                {/* Legend */}
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748B' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <div style={{ width: '16px', height: '16px', borderRadius: '3px', backgroundColor: '#FED7AA', border: '1px solid #F97316' }} />
+                    No puede jugar
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <div style={{ width: '16px', height: '16px', borderRadius: '3px', backgroundColor: '#DCFCE7', border: '1px solid #86EFAC' }} />
+                    Disponible
+                  </div>
+                </div>
+
+                {/* Calendar grid */}
+                <div style={{ overflowX: 'auto', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
+                  <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F8FAFC' }}>
+                        <th style={{ padding: '0.5rem 0.75rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '52px' }}>Hora</th>
+                        {activeDays.map(day => (
+                          <th key={day} style={{ padding: '0.5rem 0.5rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '80px' }}>
+                            {day}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allGridHours.map((hour, hIdx) => (
+                        <tr key={hour} style={{ backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFA' }}>
+                          <td style={{ padding: '0.2rem 0.75rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
+                          {activeDays.map(day => {
+                            const isValid = getHoursForDay(day).includes(hour);
+                            const isBlocked = gridBlockedSlots.has(`${day} ${hour}`);
+                            return (
+                              <td key={day} style={{ padding: '0.2rem 0.35rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
+                                <div
+                                  onMouseDown={isValid ? () => handleCellMouseDown(day, hour) : undefined}
+                                  onMouseEnter={isValid ? () => handleCellMouseEnter(day, hour) : undefined}
+                                  style={{
+                                    height: '26px',
+                                    borderRadius: '4px',
+                                    cursor: isValid ? 'pointer' : 'default',
+                                    backgroundColor: !isValid ? '#F1F5F9' : isBlocked ? '#FED7AA' : '#DCFCE7',
+                                    border: `1px solid ${!isValid ? '#E2E8F0' : isBlocked ? '#F97316' : '#86EFAC'}`,
+                                    transition: 'background-color 0.08s',
+                                  }}
+                                />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Blocked summary */}
+                {gridBlockedSlots.size > 0 && (
+                  <p style={{ margin: '0.75rem 0 0', fontSize: '0.78rem', color: '#DC2626', fontWeight: 600 }}>
+                    {gridBlockedSlots.size} hora{gridBlockedSlots.size !== 1 ? 's' : ''} bloqueada{gridBlockedSlots.size !== 1 ? 's' : ''}
+                  </p>
+                )}
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => { setEditingParticipant(null); setGridBlockedSlots(new Set()); }}
+                    style={{ padding: '0.7rem 1.25rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer' }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={saveEditGrid}
+                    style={{ padding: '0.7rem 1.5rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', boxShadow: '0 4px 12px rgba(22,163,74,0.3)' }}
+                  >
+                    Guardar cambios
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
         <div style={{ marginBottom: '1.5rem', maxWidth: '600px', margin: '0 auto 1.5rem' }}>
            <button onClick={() => onBack(tConfig.name)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', padding: 0 }}>
               ← Volver al panel de Todos los Torneos
@@ -977,55 +1142,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </button>
             </div>
             
-            <div>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>No disponible (horas en las que <strong>no</strong> puede jugar):</p>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-                <select 
-                  value={selectedDay} 
-                  onChange={e => setSelectedDay(e.target.value)}
-                  style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  {activeDays.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748B' }}>de</span>
-                <select 
-                  value={selectedHourStart} 
-                  onChange={e => setSelectedHourStart(e.target.value)}
-                  style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  {activeHours.slice(0, activeHours.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
-                </select>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748B' }}>a</span>
-                <select 
-                  value={selectedHourEnd} 
-                  onChange={e => setSelectedHourEnd(e.target.value)}
-                  style={{ padding: '0.5rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  {activeHours.slice(activeHours.indexOf(selectedHourStart) + 1).map(h => <option key={h} value={h}>{h}</option>)}
-                </select>
-                <button 
-                  type="button" 
-                  onClick={addPreference}
-                  style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', opacity: 0.9 }}
-                >
-                  + Añadir
-                </button>
-              </div>
-
-              {newPreferences.length > 0 && (
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                  {newPreferences.map(pref => (
-                    <div key={pref.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: '#FEF2F2', border: '1.5px solid #DC2626', color: '#DC2626', padding: '0.3rem 0.75rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700 }}>
-                      {pref.label}
-                      <button type="button" onClick={() => removePreference(pref.id)} style={{ background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.7, marginLeft: '0.2rem' }}>
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </form>
+          <p style={{ margin: '-0.5rem 0 1rem', fontSize: '0.78rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Tras añadir una pareja, usa el botón <strong style={{ color: '#0F172A' }}>✎ Editar</strong> para configurar sus horas bloqueadas.
+          </p>
 
           <div style={{ marginBottom: '1.5rem', maxHeight: '300px', overflowY: 'auto' }}>
             <h4 style={{ margin: '0 0 0.5rem', color: '#64748B', fontSize: '0.85rem' }}>
@@ -1051,9 +1172,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         </span>
                       )}
                     </div>
-                    <button onClick={() => removeParticipant(p.id)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '0.2rem' }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                      <button onClick={() => openEditGrid(p)} title="Editar horarios" style={{ background: 'none', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', color: '#475569', cursor: 'pointer', padding: '0.25rem 0.5rem', display: 'flex', alignItems: 'center' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
+                      <button onClick={() => removeParticipant(p.id)} title="Eliminar pareja" style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '0.2rem' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
