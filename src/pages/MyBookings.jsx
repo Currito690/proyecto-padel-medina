@@ -10,6 +10,20 @@ const MyBookings = () => {
   const [loading, setLoading] = useState(true);
   const [pagoOk, setPagoOk] = useState(false);
 
+  const sendConfirmationEmail = (booking) => {
+    if (!user?.email) return;
+    supabase.functions.invoke('send-booking-email', {
+      body: {
+        type: 'confirmation',
+        email: user.email,
+        userName: user.name,
+        courtName: booking.courts?.name || 'Pista',
+        date: booking.date,
+        timeSlot: booking.time_slot,
+      },
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     const isPayOk = searchParams.get('pago') === 'ok';
     if (isPayOk) {
@@ -21,13 +35,23 @@ const MyBookings = () => {
       (async () => {
         let data = await loadBookings();
         const raw = sessionStorage.getItem('pendingBooking');
-        if (!raw) return;
-        const { courtId, date, timeSlot } = JSON.parse(raw);
 
-        // Esperar hasta 10 s a que redsys-notify cree la reserva
+        if (!raw) {
+          // Pago en club o reserva gratuita: enviar email para reservas creadas en los últimos 5 min
+          const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+          data.filter(b => b.created_at >= cutoff).forEach(sendConfirmationEmail);
+          return;
+        }
+
+        // Redsys/Bizum: esperar hasta 10 s a que redsys-notify cree la reserva
+        const { courtId, date, timeSlot } = JSON.parse(raw);
         for (let i = 0; i < 4; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
-          if (found) { sessionStorage.removeItem('pendingBooking'); return; }
+          if (found) {
+            sessionStorage.removeItem('pendingBooking');
+            sendConfirmationEmail(found);
+            return;
+          }
           if (i < 3) {
             await new Promise(r => setTimeout(r, 2500));
             data = await fetchBookingsSilent();
@@ -35,15 +59,18 @@ const MyBookings = () => {
         }
 
         // Fallback: redsys-notify no creó la reserva → crearla desde el frontend
-        const { error } = await supabase.from('bookings').insert({
+        const { data: newBooking, error } = await supabase.from('bookings').insert({
           court_id: courtId,
           user_id: user.id,
           date,
           time_slot: timeSlot,
           status: 'confirmed',
           is_free: false,
-        });
-        if (!error) await fetchBookingsSilent();
+        }).select('*, courts(name, sport, location, gradient)').single();
+        if (!error) {
+          await fetchBookingsSilent();
+          if (newBooking) sendConfirmationEmail(newBooking);
+        }
         sessionStorage.removeItem('pendingBooking');
       })();
     } else {
