@@ -157,9 +157,10 @@ const PaymentGateway = () => {
         form.appendChild(input);
       });
 
-      // Guardar datos antes del redirect para fallback si redsys-notify no crea la reserva
+      // Guardar datos antes del redirect para fallback y email de confirmación
       sessionStorage.setItem('pendingBooking', JSON.stringify({
         courtId: item.courtId,
+        courtName: item.courtName,
         date: item.date,
         timeSlot: item.timeSlot,
       }));
