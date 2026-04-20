@@ -60,6 +60,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
   text-size-adjust: 100%;
+  overflow-x: hidden;
 }
 
 a, button, input, [role="button"] {
@@ -118,10 +119,11 @@ input:focus, select:focus, textarea:focus {
 
 /* Dashboard Layout */
 .dashboard-container {
-  padding: 1.25rem 1rem 6rem;
+  padding: 1.25rem 1rem 5.5rem;
   max-width: 900px;
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .dashboard-layout {
@@ -130,22 +132,28 @@ input:focus, select:focus, textarea:focus {
   gap: 1.5rem;
 }
 
+@media (max-width: 380px) {
+  .dashboard-container {
+    padding: 1rem 0.75rem 5.5rem;
+  }
+}
+
 @media (min-width: 640px) {
   .dashboard-container {
-    padding: 1.75rem 1.5rem 6rem;
+    padding: 1.75rem 1.5rem 5.5rem;
   }
 }
 
 @media (min-width: 768px) {
   .dashboard-container {
-    padding: 2rem 2rem 6rem;
+    padding: 2rem 2rem 5.5rem;
   }
 }
 
 @media (min-width: 1024px) {
   .dashboard-container {
     max-width: 1100px;
-    padding: 2.5rem 3rem 6rem;
+    padding: 2.5rem 3rem 5.5rem;
   }
   .dashboard-layout {
     flex-direction: row;
@@ -159,6 +167,26 @@ input:focus, select:focus, textarea:focus {
   }
   .dashboard-main {
     flex: 1;
+  }
+}
+
+/* Responsive images & iframes */
+img, iframe {
+  max-width: 100%;
+}
+
+/* Prevent table overflow */
+table {
+  width: 100%;
+}
+
+/* Admin body padding on small screens */
+@media (max-width: 480px) {
+  .admin-body {
+    padding: 1rem 0.875rem !important;
+  }
+  .admin-header {
+    padding: 0.75rem 1rem !important;
   }
 }
 

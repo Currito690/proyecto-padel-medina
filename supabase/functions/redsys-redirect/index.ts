@@ -5,11 +5,11 @@ serve(async (req) => {
   // Vercel u otros hostings estáticos devuelven 404/405 a peticiones POST en rutas del frontend.
   // Esta función intercepta el POST y devuelve una redirección GET (303) al frontend.
 
-  const url = new URL(req.url);
-  let target = url.searchParams.get('to');
+  const urlParts = req.url.split('?to=');
+  let target = urlParts.length > 1 ? decodeURIComponent(urlParts[1]) : null;
 
   if (!target) {
-    target = 'https://padelmedina.vercel.app'; // fallback seguro
+    target = 'https://padelmedina.com/mis-reservas'; // fallback seguro
   }
 
   return new Response(null, {

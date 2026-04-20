@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { sanitizeInput } from '../utils/sanitize';
 
@@ -446,6 +447,9 @@ const Login = () => {
 
           </div>
         </div>
+        <p style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.75rem', color: '#94A3B8' }}>
+          <Link to="/privacidad" style={{ color: '#94A3B8', textDecoration: 'underline' }}>Política de Privacidad</Link>
+        </p>
       </div>
     </>
   );

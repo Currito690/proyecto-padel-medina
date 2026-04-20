@@ -3,11 +3,29 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
 
-const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
   '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'
 ];
+
+const fmtDateLabel = (d) =>
+  `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+
+const getActiveDates = (startDate, endDate) => {
+  if (!startDate || !endDate) return [];
+  const result = [];
+  const start = new Date(startDate + 'T12:00:00');
+  const end = new Date(endDate + 'T12:00:00');
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1))
+    result.push(fmtDateLabel(d));
+  return result;
+};
+
+const fmtDateDisplay = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+};
 
 const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [isExporting, setIsExporting] = useState(false);
@@ -35,7 +53,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const fallback = {
       name: '',
       categories: 'Masculino, Femenino',
-      startDay: 'Viernes', endDay: 'Domingo',
+      startDate: '', endDate: '',
+      registrationDeadline: '',
       startHour: '09:00', endHour: '22:00',
       firstDayStartHour: '16:00',
       courtsCount: 2,
@@ -89,7 +108,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
       localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
       setPhase('config');
-      setTConfig({ name: '', categories: 'Masculino, Femenino', startDay: 'Viernes', endDay: 'Domingo', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 } });
+      setTConfig({ name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 } });
       setParticipants([]);
       setRounds({});
       setConsRounds({});
@@ -154,6 +173,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       alert('Error al sincronizar las inscripciones online.');
     }
     setSyncing(false);
+  };
+
+  const handleUpdateDeadline = async () => {
+    if (!publishedId) return;
+    try {
+      const { error } = await supabase.from('tournaments')
+        .update({ config: tConfig })
+        .eq('id', publishedId);
+      if (error) throw error;
+      alert('Plazo de inscripción actualizado.');
+    } catch (e) {
+      console.error(e);
+      alert('Error al actualizar el plazo.');
+    }
   };
 
   const addParticipant = (e) => {
@@ -226,21 +259,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Rellenar huecos vacíos tampoco
     
     // 1) Generar los slots globales del torneo en base a la configuración
-    const sDayIdx = DAYS.indexOf(tConfig.startDay);
-    const eDayIdx = DAYS.indexOf(tConfig.endDay);
     const sHourIdx = HOURS.indexOf(tConfig.startHour);
     const eHourIdx = HOURS.indexOf(tConfig.endHour);
     const firstDayHourIdx = tConfig.firstDayStartHour ? HOURS.indexOf(tConfig.firstDayStartHour) : sHourIdx;
-    
+    const activeDateList = getActiveDates(tConfig.startDate, tConfig.endDate);
+
     let globalSlots = [];
-    for(let d = sDayIdx; d <= eDayIdx; d++) {
-        if(d >= 0 && d < DAYS.length) {
-            const actualStartHourIdx = (d === sDayIdx) ? firstDayHourIdx : sHourIdx;
-            for(let h = actualStartHourIdx; h < eHourIdx; h++) {
-               if(h >= 0 && h < HOURS.length) { globalSlots.push(`${DAYS[d]} ${HOURS[h]}`); }
-            }
-        }
-    }
+    activeDateList.forEach((dateLabel, idx) => {
+      const actualStartHourIdx = idx === 0 ? firstDayHourIdx : sHourIdx;
+      for (let h = actualStartHourIdx; h < eHourIdx; h++) {
+        if (h >= 0 && h < HOURS.length) globalSlots.push(`${dateLabel} ${HOURS[h]}`);
+      }
+    });
     
     // Diccionario para registrar cuántos partidos hay en cada hora
     let slotUsage = {};
@@ -263,16 +293,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (globalFree) return globalFree;
       // Extend beyond tournament end hour/day
       const lastSlot = globalSlots[globalSlots.length - 1];
-      const [lastDay, lastHour] = lastSlot.split(' ');
+      const [lastDateLabel, lastHour] = lastSlot.split(' ');
       const lastHourIdx = HOURS.indexOf(lastHour);
       for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
-        const s = `${lastDay} ${HOURS[h]}`;
+        const s = `${lastDateLabel} ${HOURS[h]}`;
         if ((usage[s] ?? 0) < courts) return s;
       }
-      const lastDayIdx = DAYS.indexOf(lastDay);
-      for (let d = lastDayIdx + 1; d < DAYS.length; d++) {
+      const [ld, lm] = lastDateLabel.split('/').map(Number);
+      const lastDateObj = new Date(new Date().getFullYear(), lm - 1, ld);
+      for (let extra = 1; extra <= 30; extra++) {
+        const next = new Date(lastDateObj);
+        next.setDate(lastDateObj.getDate() + extra);
+        const nextLabel = fmtDateLabel(next);
         for (let h = 0; h < HOURS.length; h++) {
-          const s = `${DAYS[d]} ${HOURS[h]}`;
+          const s = `${nextLabel} ${HOURS[h]}`;
           if ((usage[s] ?? 0) < courts) return s;
         }
       }
@@ -563,20 +597,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   // Helper: compute globalSlots from tConfig
   const buildGlobalSlots = () => {
-    const sDayIdx = DAYS.indexOf(tConfig.startDay);
-    const eDayIdx = DAYS.indexOf(tConfig.endDay);
     const sHourIdx = HOURS.indexOf(tConfig.startHour);
     const eHourIdx = HOURS.indexOf(tConfig.endHour);
     const firstDayHourIdx = tConfig.firstDayStartHour ? HOURS.indexOf(tConfig.firstDayStartHour) : sHourIdx;
     const slots = [];
-    for (let d = sDayIdx; d <= eDayIdx; d++) {
-      if (d >= 0 && d < DAYS.length) {
-        const actualStart = (d === sDayIdx) ? firstDayHourIdx : sHourIdx;
-        for (let h = actualStart; h < eHourIdx; h++) {
-          if (h >= 0 && h < HOURS.length) slots.push(`${DAYS[d]} ${HOURS[h]}`);
-        }
+    getActiveDates(tConfig.startDate, tConfig.endDate).forEach((dateLabel, idx) => {
+      const actualStart = idx === 0 ? firstDayHourIdx : sHourIdx;
+      for (let h = actualStart; h < eHourIdx; h++) {
+        if (h >= 0 && h < HOURS.length) slots.push(`${dateLabel} ${HOURS[h]}`);
       }
-    }
+    });
     return slots;
   };
 
@@ -811,12 +841,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return `Ronda ${roundIndex + 1}`;
   };
 
-  const activeDays = (() => {
-    const sIdx = DAYS.indexOf(tConfig.startDay);
-    const eIdx = DAYS.indexOf(tConfig.endDay);
-    if (sIdx <= eIdx) return DAYS.slice(sIdx, eIdx + 1);
-    return [...DAYS.slice(sIdx), ...DAYS.slice(0, eIdx + 1)];
-  })();
+  const activeDays = getActiveDates(tConfig.startDate, tConfig.endDate);
 
   const getHoursForDay = (day) => {
     const isFirst = day === activeDays[0];
@@ -935,17 +960,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
             <div style={{ display: 'flex', gap: '1rem' }}>
               <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Día Inicio</label>
-                <select value={tConfig.startDay} onChange={e => setTConfig({...tConfig, startDay: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}>
-                  {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
+                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Fecha de Inicio</label>
+                <input type="date" value={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, startDate: e.target.value, endDate: tConfig.endDate && tConfig.endDate < e.target.value ? e.target.value : tConfig.endDate})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }} />
               </div>
               <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Día Fin</label>
-                <select value={tConfig.endDay} onChange={e => setTConfig({...tConfig, endDay: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}>
-                  {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
+                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Fecha de Fin</label>
+                <input type="date" value={tConfig.endDate || ''} min={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, endDate: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }} />
               </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Plazo de Inscripción</label>
+              <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }} />
+              <p style={{ margin: '0.3rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>Fecha límite para inscripciones online. Los jugadores no podrán inscribirse después de este día.</p>
             </div>
 
             <div style={{ display: 'flex', gap: '1rem' }}>
@@ -965,7 +992,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
             <div style={{ padding: '1rem', backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
               <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: '#334155' }}>
-                Hora de Inicio el 1º Día ({tConfig.startDay})
+                Hora de Inicio el 1º Día {tConfig.startDate ? `(${fmtDateDisplay(tConfig.startDate)})` : ''}
               </label>
               <select value={tConfig.firstDayStartHour || tConfig.startHour} onChange={e => setTConfig({...tConfig, firstDayStartHour: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}>
                 {HOURS.slice(0, HOURS.indexOf(tConfig.endHour)).map(h => <option key={h} value={h}>{h}</option>)}
@@ -1240,6 +1267,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </div>
         )}
 
+        <div style={{ backgroundColor: '#FFFBEB', padding: '1rem', borderRadius: '1rem', border: '1px solid #FDE68A', marginBottom: '1.5rem' }}>
+          <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Plazo de Inscripción Online</p>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ flex: 1, padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'white' }} />
+            {publishedId ? (
+              <button onClick={handleUpdateDeadline} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                Guardar plazo
+              </button>
+            ) : (
+              <span style={{ fontSize: '0.75rem', color: '#92400E', fontWeight: 600 }}>Se guardará al publicar</span>
+            )}
+          </div>
+        </div>
+
         <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <form onSubmit={addParticipant} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -1359,7 +1400,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Torneo: {tConfig.name}</h2>
-          <p style={{ margin: '0.2rem 0', fontSize: '0.85rem', color: '#64748B', fontWeight: 600 }}>{tConfig.startDay} a {tConfig.endDay} ({tConfig.startHour} - {tConfig.endHour})</p>
+          <p style={{ margin: '0.2rem 0', fontSize: '0.85rem', color: '#64748B', fontWeight: 600 }}>{fmtDateDisplay(tConfig.startDate)} — {fmtDateDisplay(tConfig.endDate)} · {tConfig.startHour} a {tConfig.endHour}</p>
           <p style={{ margin: '0.1rem 0', fontSize: '0.8rem', color: '#64748B', fontWeight: 600 }}>
             ⏱{' '}
             {tConfig.matchDurationByCategory
@@ -1368,6 +1409,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             }
           </p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Haz clic en el ganador de cada partido para avanzar ronda.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#92400E' }}>Plazo inscripción:</span>
+            <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #FDE68A', fontSize: '0.8rem', cursor: 'pointer', backgroundColor: '#FFFBEB' }} />
+            {publishedId && (
+              <button onClick={handleUpdateDeadline} style={{ padding: '0.3rem 0.75rem', borderRadius: '0.4rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>
+                Guardar
+              </button>
+            )}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {!isExporting && (
@@ -1761,6 +1811,18 @@ const TournamentManager = () => {
                 <div key={t.id} style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                    <div>
                       <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1E293B' }}>{t.name}</h3>
+                      {(() => {
+                        try {
+                          const d = JSON.parse(localStorage.getItem(`padel_medina_tournament_${t.id}`) || '{}');
+                          const { startDate, endDate } = d.tConfig || {};
+                          if (startDate && endDate) return (
+                            <p style={{ margin: '0.2rem 0 0', fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>
+                              {fmtDateDisplay(startDate)} — {fmtDateDisplay(endDate)}
+                            </p>
+                          );
+                        } catch {}
+                        return null;
+                      })()}
                       <span style={{ fontSize: '0.75rem', color: '#94A3B8' }}>Creado: {new Date(t.date).toLocaleDateString()}</span>
                    </div>
                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>

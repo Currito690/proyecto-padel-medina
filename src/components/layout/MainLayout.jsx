@@ -59,7 +59,6 @@ const MainLayout = () => {
     <>
       <style>{`
         .main-layout {
-          min-height: 100vh;
           display: flex;
           flex-direction: column;
           background: var(--color-bg-secondary);
@@ -89,9 +88,8 @@ const MainLayout = () => {
         }
 
         .main-content {
-          flex: 1;
-          padding-top: 56px;   /* top header height */
-          padding-bottom: 72px; /* bottom nav height */
+          padding-top: 56px;
+          padding-bottom: 0;
         }
 
         /* ── Bottom nav ── */
@@ -163,7 +161,6 @@ const MainLayout = () => {
 
         @media (min-width: 640px) {
           .bottom-nav { height: 68px; }
-          .main-content { padding-bottom: 76px; }
           .nav-label { font-size: 0.7rem; }
         }
 

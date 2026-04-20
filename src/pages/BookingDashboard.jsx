@@ -208,6 +208,11 @@ const BookingDashboard = () => {
         gap: 1.25rem;
       }
     }
+    @media (max-width: 380px) {
+      .booking-title { font-size: 1.5rem !important; }
+      .booking-map iframe { height: 170px !important; }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   `;
 
   const formatDate = (dateStr) => {
@@ -261,7 +266,7 @@ const BookingDashboard = () => {
             Hola, {firstName}
           </p>
           <h1 className="sr-only">Padel Medina - Club de Pádel</h1>
-          <h2 style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
+          <h2 className="booking-title" style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
             ¿Dónde juegas hoy?
           </h2>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginTop: '0.75rem', color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
@@ -274,6 +279,7 @@ const BookingDashboard = () => {
               Medina Sidonia, Cádiz
             </span>
           </div>
+
         </header>
 
         {/* ── Próximos eventos ── */}
@@ -385,6 +391,35 @@ const BookingDashboard = () => {
           <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--color-accent-hover)', fontWeight: 500 }}>
             Sesiones de 90 min · Abierto de 09:00 a 22:00
           </p>
+        </div>
+
+        {/* ── Mapa ── */}
+        <div className="booking-map" style={{ marginTop: '2rem' }}>
+          <p style={{ margin: '0 0 0.75rem', fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Cómo llegar</p>
+          <div style={{ borderRadius: '1rem', overflow: 'hidden', border: '1px solid #E2E8F0', position: 'relative', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+            <iframe
+              title="Ubicación Padel Medina"
+              src="https://maps.google.com/maps?q=Calle+Alemania+4,+Medina+Sidonia,+Cadiz,+España&output=embed&z=16"
+              width="100%"
+              height="220"
+              style={{ display: 'block', border: 'none' }}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+            <a
+              href="https://www.google.com/maps/dir/?api=1&destination=Calle+Alemania+4-20,+11170+Medina+Sidonia,+Cádiz"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ position: 'absolute', bottom: '0.75rem', left: '50%', transform: 'translateX(-50%)', textDecoration: 'none', display: 'flex' }}
+            >
+              <span style={{ backgroundColor: '#0F172A', color: 'white', padding: '0.5rem 1.1rem', borderRadius: '2rem', fontSize: '0.8rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem', boxShadow: '0 4px 16px rgba(0,0,0,0.35)', whiteSpace: 'nowrap' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+                </svg>
+                Abrir en Google Maps
+              </span>
+            </a>
+          </div>
         </div>
       </div>
     );

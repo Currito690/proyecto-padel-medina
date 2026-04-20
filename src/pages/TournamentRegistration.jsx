@@ -1,12 +1,37 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 
-const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const HOURS = [
   '00:00','01:00','02:00','03:00','04:00','05:00','06:00','07:00','08:00','09:00','10:00','11:00',
   '12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00','20:00','21:00','22:00','23:00'
 ];
+
+const fmtDateLabel = (d) =>
+  `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+
+const getActiveDates = (startDate, endDate) => {
+  if (!startDate || !endDate) return [];
+  const result = [];
+  const start = new Date(startDate + 'T12:00:00');
+  const end = new Date(endDate + 'T12:00:00');
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1))
+    result.push(fmtDateLabel(d));
+  return result;
+};
+
+const fmtDateDisplay = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+};
+
+const fmtDayHeader = (label, startDate) => {
+  const [dd, mm] = label.split('/').map(Number);
+  const year = startDate ? new Date(startDate + 'T12:00:00').getFullYear() : new Date().getFullYear();
+  const d = new Date(year, mm - 1, dd);
+  return `${d.toLocaleDateString('es-ES', { weekday: 'short' })} ${label}`;
+};
 
 export default function TournamentRegistration() {
   const { id } = useParams();
@@ -54,13 +79,13 @@ export default function TournamentRegistration() {
     fetchTournament();
   }, [id]);
 
-  const activeDays = (() => {
-    if (!tournament) return [];
-    const cfg = tournament.config;
-    const sIdx = DAYS.indexOf(cfg.startDay);
-    const eIdx = DAYS.indexOf(cfg.endDay);
-    if (sIdx <= eIdx) return DAYS.slice(sIdx, eIdx + 1);
-    return [...DAYS.slice(sIdx), ...DAYS.slice(0, eIdx + 1)];
+  const activeDays = tournament
+    ? getActiveDates(tournament.config.startDate, tournament.config.endDate)
+    : [];
+
+  const deadlinePassed = (() => {
+    if (!tournament?.config?.registrationDeadline) return false;
+    return new Date() > new Date(tournament.config.registrationDeadline + 'T23:59:59');
   })();
 
   const getHoursForDay = (day) => {
@@ -217,22 +242,42 @@ export default function TournamentRegistration() {
   const categories = tournament.config.categories.split(',').map(c => c.trim()).filter(Boolean);
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8FAFC', padding: '2rem 1rem' }} onMouseUp={() => setGridDragging(false)}>
-      <main style={{ maxWidth: '640px', margin: '0 auto', backgroundColor: 'white', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8FAFC', padding: 'clamp(1rem, 4vw, 2rem) 1rem' }} onMouseUp={() => setGridDragging(false)}>
+      <style>{`@media (max-width: 480px) { .treg-main { padding: 1.25rem !important; border-radius: 1rem !important; } .treg-title { font-size: 1.5rem !important; } }`}</style>
+      <main className="treg-main" style={{ maxWidth: '640px', margin: '0 auto', backgroundColor: 'white', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
 
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-          <div style={{ display: 'inline-block', padding: '0.5rem 1rem', backgroundColor: '#EFF6FF', color: '#2563EB', fontWeight: 800, borderRadius: '2rem', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
-            Inscripción Abierta
+          <div style={{ display: 'inline-block', padding: '0.5rem 1rem', backgroundColor: deadlinePassed ? '#FEE2E2' : '#EFF6FF', color: deadlinePassed ? '#DC2626' : '#2563EB', fontWeight: 800, borderRadius: '2rem', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
+            {deadlinePassed ? 'Inscripción Cerrada' : 'Inscripción Abierta'}
           </div>
-          <h1 style={{ margin: '0 0 0.5rem', fontSize: '2rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.03em' }}>
+          <h1 className="treg-title" style={{ margin: '0 0 0.5rem', fontSize: '2rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.03em' }}>
             {tournament.name}
           </h1>
-          <p style={{ margin: 0, color: '#64748B', fontWeight: 500 }}>
-            Rellena los datos de tu pareja para apuntaros al torneo.
-          </p>
+          {tournament.config.startDate && tournament.config.endDate && (
+            <p style={{ margin: '0.25rem 0 0', color: '#475569', fontWeight: 700, fontSize: '0.95rem' }}>
+              {fmtDateDisplay(tournament.config.startDate)} — {fmtDateDisplay(tournament.config.endDate)}
+            </p>
+          )}
+          {tournament.config.registrationDeadline && (
+            <p style={{ margin: '0.5rem 0 0', color: deadlinePassed ? '#DC2626' : '#92400E', fontWeight: 600, fontSize: '0.82rem', backgroundColor: deadlinePassed ? '#FEE2E2' : '#FFFBEB', display: 'inline-block', padding: '0.3rem 0.75rem', borderRadius: '2rem' }}>
+              Plazo: {fmtDateDisplay(tournament.config.registrationDeadline)}{deadlinePassed ? ' · CERRADO' : ''}
+            </p>
+          )}
+          {!deadlinePassed && (
+            <p style={{ margin: '0.75rem 0 0', color: '#64748B', fontWeight: 500 }}>
+              Rellena los datos de tu pareja para apuntaros al torneo.
+            </p>
+          )}
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+        {deadlinePassed && (
+          <div style={{ textAlign: 'center', padding: '2rem', backgroundColor: '#FEF2F2', borderRadius: '1rem', border: '1px solid #FECACA', marginBottom: '1rem' }}>
+            <span style={{ fontSize: '2rem', display: 'block', marginBottom: '0.75rem' }}>🔒</span>
+            <p style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#DC2626' }}>El plazo de inscripción ha finalizado.</p>
+            <p style={{ margin: '0.5rem 0 0', color: '#7F1D1D', fontSize: '0.9rem' }}>Contacta con el club en padelmedina@hotmail.com para más información.</p>
+          </div>
+        )}
+        <form onSubmit={handleSubmit} style={{ display: deadlinePassed ? 'none' : 'flex', flexDirection: 'column', gap: '2rem' }}>
 
           {/* 1 — Categoría */}
           <section>
@@ -315,7 +360,7 @@ export default function TournamentRegistration() {
                     <th style={{ padding: '0.5rem 0.6rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '48px' }}>Hora</th>
                     {activeDays.map(day => (
                       <th key={day} style={{ padding: '0.5rem 0.4rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '72px' }}>
-                        {day}
+                        {fmtDayHeader(day, tournament.config.startDate)}
                       </th>
                     ))}
                   </tr>
@@ -364,6 +409,10 @@ export default function TournamentRegistration() {
           >
             {loading ? 'Procesando...' : 'Inscribirse al Torneo'}
           </button>
+          <p style={{ textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8', margin: '0.5rem 0 0' }}>
+            Al inscribirte aceptas nuestra{' '}
+            <Link to="/privacidad" style={{ color: '#64748B', textDecoration: 'underline' }}>Política de Privacidad</Link>
+          </p>
         </form>
       </main>
     </div>

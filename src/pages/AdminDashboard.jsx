@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
 import TournamentManager from '../components/admin/TournamentManager';
 import EventsManager from '../components/admin/EventsManager';
+import FinanceManager from '../components/admin/FinanceManager';
 import DateSelector from '../components/booking/DateSelector';
 
 const TIMES = ['09:00 - 10:30', '10:30 - 12:00', '12:00 - 13:30', '16:00 - 17:30', '17:30 - 19:00', '19:00 - 20:30', '20:30 - 22:00'];
@@ -29,11 +30,15 @@ const UserRow = ({ u, togglingId, toggleBan, onDeleted, supabase }) => {
       const { data, error } = await supabase.functions.invoke('delete-user', {
         body: { userId: u.id },
       });
-      if (error) throw error;
+      if (error) {
+        let msg = error.message || 'Error desconocido';
+        try { const body = await error.context?.json?.(); if (body?.error) msg = body.error; } catch {}
+        throw new Error(msg);
+      }
       if (data?.error) throw new Error(data.error);
       onDeleted(u.id);
     } catch (err) {
-      alert('Error al eliminar el usuario: ' + (err.message || 'Error desconocido'));
+      alert('Error al eliminar: ' + (err.message || JSON.stringify(err)));
     } finally {
       setDeleting(false);
       setShowConfirmDelete(false);
@@ -181,7 +186,6 @@ const AdminDashboard = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const DEFAULT_CLUB_HOURS = { 0:'00:00', 1:'00:00', 2:'00:00', 3:'00:00', 4:'00:00', 5:'00:00', 6:'00:00' };
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS });
-  const [financialStats, setFinancialStats] = useState({ total: 0, month: 0, today: 0, totalBookings: 0 });
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -263,30 +267,6 @@ const AdminDashboard = () => {
             slots_release_time: settingsData.slots_release_time || '00:00',
             club_open_time: settingsData.club_open_time || '00:00',
             club_hours: settingsData.club_hours || DEFAULT_CLUB_HOURS,
-          });
-        }
-
-        const currentPrice = settingsData ? parseFloat(settingsData.court_price) : 18;
-
-        // Cargar datos financieros (todas las reservas de pago)
-        const now = new Date();
-        const yyyyMm = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-        const todayStr = yyyyMm + '-' + String(now.getDate()).padStart(2, '0');
-        
-        const { data: allConfirmed } = await supabase.from('bookings').select('date, is_free').eq('status', 'confirmed');
-        if (allConfirmed) {
-          const paidBookings = allConfirmed.filter(b => !b.is_free);
-          let monthCount = 0;
-          let todayCount = 0;
-          paidBookings.forEach(b => {
-            if (b.date === todayStr) todayCount++;
-            if (b.date.startsWith(yyyyMm)) monthCount++;
-          });
-          setFinancialStats({
-            total: paidBookings.length * currentPrice,
-            month: monthCount * currentPrice,
-            today: todayCount * currentPrice,
-            totalBookings: paidBookings.length
           });
         }
 
@@ -522,10 +502,11 @@ const AdminDashboard = () => {
         .admin-header { background: white; border-bottom: 1px solid var(--color-border); padding: 0.875rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm); }
         .admin-body { flex: 1; padding: 1.5rem 1.25rem; max-width: 100%; width: 100%; }
 
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
-        .slots-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
+        .slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }
         .courts-list { display: flex; flex-direction: column; gap: 1.25rem; }
 
+        @media (min-width: 400px) { .slots-grid { grid-template-columns: repeat(4, 1fr); } }
         @media (min-width: 480px) { .slots-grid { grid-template-columns: repeat(7, 1fr); } }
         @media (min-width: 1024px) {
           .admin-sidebar { transform: translateX(0) !important; position: sticky; height: 100vh; top: 0; }
@@ -876,26 +857,7 @@ const AdminDashboard = () => {
               })()}
 
               {/* ── TAB: FINANZAS ── */}
-              {activeTab === 'finance' && (
-                <div>
-                  <p className="section-label" style={{ marginBottom: '1.5rem' }}>Resumen Financiero</p>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
-                    <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                      <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ingresos Hoy</p>
-                      <p style={{ margin: 0, fontSize: '2.5rem', fontWeight: 900, color: '#16A34A', letterSpacing: '-0.03em' }}>{financialStats.today.toFixed(2)} €</p>
-                    </div>
-                    <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                      <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ingresos Este Mes</p>
-                      <p style={{ margin: 0, fontSize: '2.5rem', fontWeight: 900, color: '#0EA5E9', letterSpacing: '-0.03em' }}>{financialStats.month.toFixed(2)} €</p>
-                    </div>
-                    <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                      <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ingresos Totales (Histórico)</p>
-                      <p style={{ margin: 0, fontSize: '2.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.03em' }}>{financialStats.total.toFixed(2)} €</p>
-                      <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: '#94A3B8' }}>En {financialStats.totalBookings} reservas de pago</p>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {activeTab === 'finance' && <FinanceManager />}
 
               {/* ── TAB: CONFIGURACIÓN ── */}
               {activeTab === 'settings' && (
