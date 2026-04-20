@@ -18,6 +18,7 @@ export default function EventsManager() {
   const [editingEvent, setEditingEvent] = useState(null);
   const [saving, setSaving] = useState(false);
   const [notifying, setNotifying] = useState(null);
+  const [publishedTournaments, setPublishedTournaments] = useState([]);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -25,10 +26,15 @@ export default function EventsManager() {
   const [eventDate, setEventDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [registrationUrl, setRegistrationUrl] = useState('');
+  const [linkedTournamentId, setLinkedTournamentId] = useState('');
   const [posterFile, setPosterFile] = useState(null);
   const [posterPreview, setPosterPreview] = useState(null);
 
-  useEffect(() => { loadEvents(); }, []);
+  useEffect(() => {
+    loadEvents();
+    supabase.from('tournaments').select('id, name').eq('status', 'open').order('created_at', { ascending: false })
+      .then(({ data }) => setPublishedTournaments(data || []));
+  }, []);
 
   const loadEvents = async () => {
     const { data } = await supabase
@@ -41,8 +47,8 @@ export default function EventsManager() {
 
   const resetForm = () => {
     setTitle(''); setDescription(''); setEventDate(''); setEndDate('');
-    setRegistrationUrl(''); setPosterFile(null); setPosterPreview(null);
-    setEditingEvent(null);
+    setRegistrationUrl(''); setLinkedTournamentId('');
+    setPosterFile(null); setPosterPreview(null); setEditingEvent(null);
   };
 
   const openCreate = () => { resetForm(); setShowForm(true); };
@@ -51,8 +57,15 @@ export default function EventsManager() {
     setTitle(ev.title); setDescription(ev.description || '');
     setEventDate(ev.event_date || ''); setEndDate(ev.end_date || '');
     setRegistrationUrl(ev.registration_url || '');
+    const match = ev.registration_url?.match(/\/torneos\/([^/?]+)/);
+    setLinkedTournamentId(match ? match[1] : '');
     setPosterPreview(ev.poster_url || null); setPosterFile(null);
     setEditingEvent(ev); setShowForm(true);
+  };
+
+  const handleTournamentSelect = (tid) => {
+    setLinkedTournamentId(tid);
+    setRegistrationUrl(tid ? `/torneos/${tid}` : '');
   };
 
   const handlePosterChange = (e) => {
@@ -251,15 +264,28 @@ export default function EventsManager() {
               </div>
 
               <div>
-                <label style={labelStyle}>Link de inscripción</label>
-                <input
-                  type="url" value={registrationUrl} onChange={e => setRegistrationUrl(e.target.value)}
-                  placeholder="https://padelmedina.com/torneos/…"
-                  style={inputStyle}
-                />
-                <p style={{ margin: '0.35rem 0 0', fontSize: '0.72rem', color: '#94A3B8' }}>
-                  Si el torneo está publicado desde la pestaña Torneos, pega aquí el enlace generado.
-                </p>
+                <label style={labelStyle}>Inscripción — torneo vinculado</label>
+                {publishedTournaments.length > 0 ? (
+                  <select
+                    value={linkedTournamentId}
+                    onChange={e => handleTournamentSelect(e.target.value)}
+                    style={{ ...inputStyle, cursor: 'pointer', backgroundColor: '#F8FAFC' }}
+                  >
+                    <option value="">— Sin inscripción (solo informativo) —</option>
+                    {publishedTournaments.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#94A3B8', padding: '0.75rem', border: '1.5px dashed #E2E8F0', borderRadius: '0.625rem' }}>
+                    No hay torneos publicados. Publícalos primero desde la pestaña <strong>Torneos</strong>.
+                  </p>
+                )}
+                {registrationUrl && (
+                  <p style={{ margin: '0.35rem 0 0', fontSize: '0.72rem', color: '#16A34A', fontWeight: 600 }}>
+                    ✓ Link: {window.location.origin}{registrationUrl}
+                  </p>
+                )}
               </div>
 
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>

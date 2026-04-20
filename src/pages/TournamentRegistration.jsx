@@ -25,6 +25,10 @@ export default function TournamentRegistration() {
   const [p2Email, setP2Email] = useState('');
   const [p2Phone, setP2Phone] = useState('');
 
+  // Dual category
+  const [cat2, setCat2] = useState('');
+  const [dualCategory, setDualCategory] = useState(false);
+
   // Grid unavailability state
   const [gridBlockedSlots, setGridBlockedSlots] = useState(new Set());
   const [gridDragging, setGridDragging] = useState(false);
@@ -126,6 +130,10 @@ export default function TournamentRegistration() {
       alert('Introduce el nombre de ambos jugadores y la categoría.');
       return;
     }
+    if (!p1Phone || !p2Phone) {
+      alert('El teléfono de ambos jugadores es obligatorio.');
+      return;
+    }
     setLoading(true);
 
     // Convert grid to unavailable_times array
@@ -145,7 +153,7 @@ export default function TournamentRegistration() {
       .from('tournament_registrations')
       .insert({
         tournament_id: id,
-        category: cat,
+        category: dualCategory && cat2 && cat2 !== cat ? `${cat} + ${cat2}` : cat,
         player1_name: p1Name,
         player1_email: p1Email,
         player1_phone: p1Phone,
@@ -231,9 +239,24 @@ export default function TournamentRegistration() {
             <h2 style={stepStyle}>
               <Num>1</Num> Categoría
             </h2>
-            <select value={cat} onChange={e => setCat(e.target.value)} style={selectStyle} required>
+            <select value={cat} onChange={e => { setCat(e.target.value); setCat2(''); }} style={selectStyle} required>
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            {categories.length > 1 && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.75rem', cursor: 'pointer', fontSize: '0.9rem', color: '#475569', fontWeight: 600 }}>
+                <input type="checkbox" checked={dualCategory} onChange={e => { setDualCategory(e.target.checked); if (!e.target.checked) setCat2(''); }} style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#F97316' }} />
+                ¿Participáis también en otra categoría?
+              </label>
+            )}
+            {dualCategory && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <p style={{ margin: '0 0 0.4rem', fontSize: '0.78rem', color: '#92400E', fontWeight: 600 }}>Segunda categoría:</p>
+                <select value={cat2} onChange={e => setCat2(e.target.value)} style={selectStyle} required={dualCategory}>
+                  <option value="">-- Selecciona --</option>
+                  {categories.filter(c => c !== cat).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
           </section>
 
           {/* 2 — Jugadores */}
@@ -247,14 +270,14 @@ export default function TournamentRegistration() {
                 <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Jugador 1</p>
                 <input type="text" required placeholder="Nombre completo" value={p1Name} onChange={e => setP1Name(e.target.value)} style={inputStyle} />
                 <input type="email" placeholder="Correo (opcional)" value={p1Email} onChange={e => setP1Email(e.target.value)} style={inputStyle} />
-                <input type="tel" placeholder="Teléfono" value={p1Phone} onChange={e => setP1Phone(e.target.value)} style={inputStyle} />
+                <input type="tel" required placeholder="Teléfono *" value={p1Phone} onChange={e => setP1Phone(e.target.value)} style={inputStyle} />
               </div>
               {/* Jugador 2 */}
               <div style={{ border: '1.5px solid #E2E8F0', borderRadius: '1rem', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                 <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Jugador 2</p>
                 <input type="text" required placeholder="Nombre completo" value={p2Name} onChange={e => setP2Name(e.target.value)} style={inputStyle} />
                 <input type="email" placeholder="Correo (opcional)" value={p2Email} onChange={e => setP2Email(e.target.value)} style={inputStyle} />
-                <input type="tel" placeholder="Teléfono" value={p2Phone} onChange={e => setP2Phone(e.target.value)} style={inputStyle} />
+                <input type="tel" required placeholder="Teléfono *" value={p2Phone} onChange={e => setP2Phone(e.target.value)} style={inputStyle} />
               </div>
             </div>
           </section>

@@ -40,6 +40,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       firstDayStartHour: '16:00',
       courtsCount: 2,
       matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 },
+      formatByCategory: {},
+      dualCategoryMaxMatches: 1,
     };
     if (savedData?.tConfig) {
       return { ...fallback, ...savedData.tConfig, categories: savedData.tConfig.categories || 'Masculino, Femenino' };
@@ -93,7 +95,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       setConsRounds({});
       setNewCouple('');
       setNewCoupleCategory('');
-      setNewPreferences([]);
       setPublishedId(null);
     }
   };
@@ -267,9 +268,44 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     catList.forEach(cat => {
        let catParts = normalizedParticipants.filter(exp => exp.category === cat);
-       if (catParts.length < 2) return; // Skip empty categories
+       if (catParts.length < 2) return;
 
-       // Calcular potencia de 2 más cercana
+       const format = tConfig.formatByCategory?.[cat] || 'eliminatoria';
+
+       if (format === 'liguilla') {
+         // Round-robin: circle method
+         let pool = [...catParts];
+         if (pool.length % 2 !== 0) pool.push({ id: `bye-rr-${cat}`, name: '---', isBye: true });
+         const n = pool.length;
+         const rrCatRounds = [];
+         for (let r = 0; r < n - 1; r++) {
+           const roundMatches = [];
+           for (let i = 0; i < n / 2; i++) {
+             const t1 = pool[i];
+             const t2 = pool[n - 1 - i];
+             if (t1.isBye || t2.isBye) continue;
+             const p1Slots = t1.finalSlots?.length ? t1.finalSlots : globalSlots;
+             const p2Slots = t2.finalSlots?.length ? t2.finalSlots : globalSlots;
+             let common = p1Slots.filter(s => p2Slots.includes(s));
+             if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
+             const assigned = common.find(s => slotUsage[s] < tConfig.courtsCount);
+             if (assigned) slotUsage[assigned]++;
+             roundMatches.push({
+               id: `rr-${cat}-r${r}-m${roundMatches.length}`,
+               round: r, matchIndex: roundMatches.length,
+               p1: t1, p2: t2, winner: null, score: null, isRR: true,
+               time: assigned ? `${assigned} - Pista ${slotUsage[assigned]}` : 'A convenir',
+             });
+           }
+           if (roundMatches.length > 0) rrCatRounds.push(roundMatches);
+           const last = pool.pop();
+           pool.splice(1, 0, last);
+         }
+         newAllRounds[cat] = rrCatRounds;
+         return;
+       }
+
+       // Calcular potencia de 2 más cercana (eliminatoria)
        let pow = 2;
        while (pow < catParts.length) pow *= 2;
 
@@ -442,6 +478,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     nextRounds[match.round][match.matchIndex].score = trimmed;
     const winner = determineWinnerFromScore(trimmed, match.p1, match.p2);
     if (winner) {
+      if (match.isRR) {
+        nextRounds[match.round][match.matchIndex].winner = winner;
+        if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
+        else setRounds({ ...rounds, [cat]: nextRounds });
+        return;
+      }
       advanceWinnerMut(nextRounds, match.round, match.matchIndex, winner);
       // Auto-schedule next match
       const nextRoundIdx = match.round + 1;
@@ -511,6 +553,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const targetRoundsGlob = isCons ? consRounds : rounds;
     const targetRounds = targetRoundsGlob[cat];
     const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+    if (match.isRR) {
+      nextRounds[match.round][match.matchIndex].winner = participant;
+      if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
+      else setRounds({ ...rounds, [cat]: nextRounds });
+      return;
+    }
     advanceWinnerMut(nextRounds, match.round, match.matchIndex, participant);
 
     // Auto-schedule the next round match if both players are now known
@@ -942,15 +990,48 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 Tiempo estimado por partido incluyendo calentamiento, por cada categoría.
               </p>
             </div>
+
+            <div style={{ padding: '1rem', backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
+              <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.85rem', fontWeight: 800, color: '#334155' }}>
+                Formato por categoría
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(cat => (
+                  <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <span style={{ minWidth: '100px', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>{cat}</span>
+                    <select
+                      value={tConfig.formatByCategory?.[cat] || 'eliminatoria'}
+                      onChange={e => setTConfig({ ...tConfig, formatByCategory: { ...tConfig.formatByCategory, [cat]: e.target.value } })}
+                      style={{ flex: 1, padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', fontSize: '0.875rem', cursor: 'pointer', backgroundColor: 'white' }}
+                    >
+                      <option value="eliminatoria">Eliminatoria (cuadro)</option>
+                      <option value="liguilla">Liguilla (todos contra todos)</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ padding: '1rem', backgroundColor: '#FFF7ED', borderRadius: '0.75rem', border: '1px solid #FED7AA' }}>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: '#9A3412' }}>
+                Jugadores en dos categorías
+              </label>
+              <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#C2410C', lineHeight: 1.5 }}>
+                Nº máximo de partidos simultáneos para un jugador inscrito en dos categorías.
+              </p>
+              <select
+                value={tConfig.dualCategoryMaxMatches ?? 1}
+                onChange={e => setTConfig({ ...tConfig, dualCategoryMaxMatches: parseInt(e.target.value) })}
+                style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #FED7AA', fontSize: '0.875rem', cursor: 'pointer', backgroundColor: 'white' }}
+              >
+                <option value={1}>1 — No puede coincidir con otro partido suyo</option>
+                <option value={2}>2 — Puede jugar en ambas categorías a la vez</option>
+              </select>
+            </div>
+
           </div>
 
-          <button onClick={() => { 
-              const initialStart = tConfig.firstDayStartHour || tConfig.startHour;
-              setSelectedDay(tConfig.startDay); 
-              setSelectedHourStart(initialStart);
-              setSelectedHourEnd(HOURS[HOURS.indexOf(initialStart) + 1] || tConfig.endHour);
-              setPhase('setup'); 
-            }} 
+          <button onClick={() => setPhase('setup')}
             disabled={!tConfig.name.trim()} style={{ width: '100%', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: tConfig.name.trim() ? '#0F172A' : '#94A3B8', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: tConfig.name.trim() ? 'pointer' : 'not-allowed', transition: 'background-color 0.2s' }}>
             Guardar Configuración y Continuar
           </button>
@@ -1314,6 +1395,96 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          const catRounds = rounds[cat] || [];
          const catCons = consRounds[cat] || [];
          if (catRounds.length === 0) return null;
+         const isLiguilla = tConfig.formatByCategory?.[cat] === 'liguilla' || catRounds[0]?.[0]?.isRR;
+
+         if (isLiguilla) {
+           // Compute standings
+           const standingsMap = {};
+           catRounds.forEach(round => round.forEach(m => {
+             [m.p1, m.p2].forEach(p => { if (p && !standingsMap[p.id]) standingsMap[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0 }; });
+             if (m.winner) {
+               standingsMap[m.p1.id].pj++; standingsMap[m.p2.id].pj++;
+               if (m.winner.id === m.p1.id) { standingsMap[m.p1.id].pg++; standingsMap[m.p1.id].pts += 2; standingsMap[m.p2.id].pp++; }
+               else { standingsMap[m.p2.id].pg++; standingsMap[m.p2.id].pts += 2; standingsMap[m.p1.id].pp++; }
+             }
+           }));
+           const standings = Object.values(standingsMap).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
+           return (
+             <div key={cat} style={{ marginBottom: '4rem' }}>
+               <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', color: 'white', borderRadius: '1rem', marginBottom: '2rem' }}>
+                 <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>Categoría: {cat} — Liguilla</h2>
+               </div>
+               {/* Standings */}
+               <div style={{ backgroundColor: 'white', borderRadius: '1rem', border: '1px solid #E2E8F0', overflow: 'hidden', marginBottom: '2rem' }}>
+                 <div style={{ padding: '0.75rem 1.25rem', backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                   <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 800, color: '#0F172A' }}>Clasificación</h3>
+                 </div>
+                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                   <thead><tr style={{ backgroundColor: '#F8FAFC' }}>
+                     {['#', 'Pareja', 'PJ', 'PG', 'PP', 'Pts'].map(h => (
+                       <th key={h} style={{ padding: '0.6rem 0.75rem', textAlign: h === 'Pareja' ? 'left' : 'center', color: '#64748B', fontWeight: 700, fontSize: '0.75rem', borderBottom: '1px solid #E2E8F0' }}>{h}</th>
+                     ))}
+                   </tr></thead>
+                   <tbody>
+                     {standings.map((s, i) => (
+                       <tr key={s.pair.id} style={{ borderBottom: '1px solid #F1F5F9', backgroundColor: i === 0 ? '#F0FDF4' : 'white' }}>
+                         <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontWeight: 800, color: i === 0 ? '#16A34A' : '#94A3B8' }}>{i + 1}</td>
+                         <td style={{ padding: '0.6rem 0.75rem', fontWeight: 700, color: '#0F172A' }}>{s.pair.name}</td>
+                         <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', color: '#475569' }}>{s.pj}</td>
+                         <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', color: '#16A34A', fontWeight: 700 }}>{s.pg}</td>
+                         <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', color: '#DC2626', fontWeight: 700 }}>{s.pp}</td>
+                         <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontWeight: 900, color: i === 0 ? '#16A34A' : '#0F172A' }}>{s.pts}</td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
+               {/* Rounds */}
+               {catRounds.map((roundMatches, rIdx) => (
+                 <div key={rIdx} style={{ marginBottom: '1.5rem' }}>
+                   <h4 style={{ margin: '0 0 0.75rem', fontSize: '0.78rem', fontWeight: 800, color: '#16A34A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Jornada {rIdx + 1}</h4>
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                     {roundMatches.map(match => (
+                       <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden' }}>
+                         <div style={{ backgroundColor: '#F8FAFC', padding: '0.35rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                           <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B' }}>{match.time || 'Horario por definir'}</span>
+                           {!isExporting && <button onClick={() => handleEditTime(match, false, cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.1rem' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>}
+                         </div>
+                         <div style={{ display: 'flex', alignItems: 'center' }}>
+                           {[{ player: match.p1, side: 'p1' }, { player: match.p2, side: 'p2' }].map(({ player, side }, sIdx) => {
+                             const isWinner = match.winner?.id === player?.id;
+                             return (
+                               <div key={side} onClick={() => handleSetWinner(match, player, false, cat)} style={{ flex: 1, padding: '0.6rem 0.75rem', backgroundColor: isWinner ? '#DCFCE7' : 'transparent', cursor: 'pointer', borderRight: sIdx === 0 ? '1px solid #E2E8F0' : 'none', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                 <span style={{ fontSize: '0.85rem', fontWeight: isWinner ? 800 : 600, color: isWinner ? '#16A34A' : '#334155', flex: 1 }}>{player?.name}</span>
+                                 {match.score && <div style={{ display: 'flex', gap: '0.15rem' }}>{parseScore(match.score, sIdx).map((s, i) => <span key={i} style={{ fontSize: '0.72rem', fontWeight: 800, background: isWinner ? '#16A34A' : '#E2E8F0', color: isWinner ? 'white' : '#475569', borderRadius: '3px', padding: '0.05rem 0.25rem' }}>{s}</span>)}</div>}
+                                 {isWinner && <span style={{ fontSize: '0.85rem' }}>🏆</span>}
+                               </div>
+                             );
+                           })}
+                         </div>
+                         {!isExporting && (
+                           <div style={{ padding: '0.35rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
+                             {editingScoreId === match.id ? (
+                               <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                 <input autoFocus type="text" placeholder="Ej: 6-4 3-6 7-5" value={scoreInput} onChange={e => setScoreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, false, cat); if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); } }} style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem' }} />
+                                 <button onClick={() => handleScoreSubmit(match, scoreInput, false, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✓</button>
+                                 <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✕</button>
+                               </div>
+                             ) : (
+                               <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#64748B' : '#2563EB', fontSize: '0.7rem', fontWeight: 700, textAlign: 'center', padding: 0 }}>
+                                 {match.score ? '✎ Editar resultado' : '+ Añadir resultado'}
+                               </button>
+                             )}
+                           </div>
+                         )}
+                       </div>
+                     ))}
+                   </div>
+                 </div>
+               ))}
+             </div>
+           );
+         }
 
          return (
             <div key={cat} style={{ marginBottom: '4rem' }}>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
 
@@ -10,6 +11,7 @@ const ChevronRight = () => (
 
 const Profile = () => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const initial = user?.name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || 'U';
   const isAdmin = user?.role === 'admin';
 
@@ -125,9 +127,9 @@ const Profile = () => {
                         <p style={{ margin: '0 0 0.35rem', fontSize: '0.95rem', fontWeight: 800, color: '#0F172A' }}>{ev.title}</p>
                         {ev.description && <p style={{ margin: '0 0 0.5rem', fontSize: '0.82rem', color: '#64748B', lineHeight: 1.5 }}>{ev.description}</p>}
                         {ev.registration_url && (
-                          <a href={ev.registration_url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: '0.25rem', padding: '0.5rem 1rem', backgroundColor: '#16A34A', color: 'white', borderRadius: '0.625rem', fontWeight: 700, fontSize: '0.82rem', textDecoration: 'none' }}>
+                          <button onClick={() => { setNotifOpen(false); try { navigate(new URL(ev.registration_url).pathname); } catch { navigate(ev.registration_url); } }} style={{ marginTop: '0.25rem', padding: '0.5rem 1rem', backgroundColor: '#16A34A', color: 'white', borderRadius: '0.625rem', fontWeight: 700, fontSize: '0.82rem', border: 'none', cursor: 'pointer' }}>
                             Inscribirse →
-                          </a>
+                          </button>
                         )}
                       </div>
                     </div>

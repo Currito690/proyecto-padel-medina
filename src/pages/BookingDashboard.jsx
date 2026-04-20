@@ -288,7 +288,15 @@ const BookingDashboard = () => {
                 return (
                   <div
                     key={ev.id}
-                    onClick={() => ev.registration_url && window.open(ev.registration_url, '_blank')}
+                    onClick={() => {
+                      if (!ev.registration_url) return;
+                      try {
+                        const path = new URL(ev.registration_url).pathname;
+                        navigate(path);
+                      } catch {
+                        navigate(ev.registration_url);
+                      }
+                    }}
                     style={{ flexShrink: 0, width: '220px', borderRadius: '1.1rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.10)', cursor: ev.registration_url ? 'pointer' : 'default', border: '1px solid #E2E8F0' }}
                   >
                     {ev.poster_url ? (
