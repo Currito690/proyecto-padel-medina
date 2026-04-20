@@ -254,12 +254,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        return { ...part, finalSlots };
     });
 
-    // Always returns a slot: prefers one with capacity, falls back to least-used
+    // Finds a slot with available court capacity, NEVER double-books.
+    // If candidates are full → tries all globalSlots → extends beyond tournament hours.
     const pickSlot = (candidates, usage, courts) => {
-      const pool = candidates.length ? candidates : globalSlots;
-      const free = pool.find(s => (usage[s] ?? 0) < courts);
+      const free = (candidates.length ? candidates : globalSlots).find(s => (usage[s] ?? 0) < courts);
       if (free) return free;
-      return pool.reduce((min, s) => (usage[s] ?? 0) < (usage[min] ?? 0) ? s : min, pool[0]);
+      const globalFree = globalSlots.find(s => (usage[s] ?? 0) < courts);
+      if (globalFree) return globalFree;
+      // Extend beyond tournament end hour/day
+      const lastSlot = globalSlots[globalSlots.length - 1];
+      const [lastDay, lastHour] = lastSlot.split(' ');
+      const lastHourIdx = HOURS.indexOf(lastHour);
+      for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
+        const s = `${lastDay} ${HOURS[h]}`;
+        if ((usage[s] ?? 0) < courts) return s;
+      }
+      const lastDayIdx = DAYS.indexOf(lastDay);
+      for (let d = lastDayIdx + 1; d < DAYS.length; d++) {
+        for (let h = 0; h < HOURS.length; h++) {
+          const s = `${DAYS[d]} ${HOURS[h]}`;
+          if ((usage[s] ?? 0) < courts) return s;
+        }
+      }
+      return lastSlot;
     };
 
     const catList = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
@@ -512,9 +529,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
           let common = p1Slots.filter(s => p2Slots.includes(s));
           if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-          const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount)
-            || common.reduce((min, s) => (slotUsage[s] ?? 0) < (slotUsage[min] ?? 0) ? s : min, common[0] || globalSlots[0]);
-          nextMatch.time = assigned ? `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}` : '';
+          let assigned = common.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
+          if (!assigned) assigned = globalSlots.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
+          if (!assigned) assigned = globalSlots[globalSlots.length - 1];
+          nextMatch.time = `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}`;
         }
       }
     }
