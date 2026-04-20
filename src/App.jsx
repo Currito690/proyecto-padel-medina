@@ -12,6 +12,7 @@ const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const Login = lazy(() => import('./pages/Login'));
 const PaymentGateway = lazy(() => import('./pages/PaymentGateway'));
 const TournamentRegistration = lazy(() => import('./pages/TournamentRegistration'));
+const TournamentBracket = lazy(() => import('./pages/TournamentBracket'));
 const Cart = lazy(() => import('./pages/Cart'));
 const SharedPayment = lazy(() => import('./pages/SharedPayment'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -235,6 +236,7 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={!user ? <Login /> : <Navigate to="/" replace />} />
           <Route path="/torneos/:id" element={<TournamentRegistration />} />
+          <Route path="/torneos/:id/cuadro" element={<TournamentBracket />} />
           <Route path="/pago-compartido" element={<SharedPayment />} />
           <Route path="/privacidad" element={<PrivacyPolicy />} />
 

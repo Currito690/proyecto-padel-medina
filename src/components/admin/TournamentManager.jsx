@@ -179,13 +179,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (!publishedId) return;
     try {
       const { error } = await supabase.from('tournaments')
-        .update({ config: tConfig })
+        .update({ config: { ...tConfig, rounds, consRounds } })
         .eq('id', publishedId);
       if (error) throw error;
       alert('Plazo de inscripción actualizado.');
     } catch (e) {
       console.error(e);
       alert('Error al actualizar el plazo.');
+    }
+  };
+
+  const handlePublishBracket = async () => {
+    if (!publishedId) {
+      alert('Primero debes publicar el torneo (Fase 2).');
+      return;
+    }
+    try {
+      const { error } = await supabase.from('tournaments')
+        .update({ config: { ...tConfig, rounds, consRounds } })
+        .eq('id', publishedId);
+      if (error) throw error;
+      alert('¡Cuadro publicado! Los jugadores pueden verlo en:\n/torneos/' + publishedId + '/cuadro');
+    } catch (e) {
+      console.error(e);
+      alert('Error al publicar el cuadro.');
     }
   };
 
@@ -1464,6 +1481,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', backgroundColor: 'white', color: '#B45309', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
               >
                 🎲 Re-sortear Cuadro
+              </button>
+              <button
+                onClick={handlePublishBracket}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #DCFCE7', backgroundColor: '#F0FDF4', color: '#16A34A', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}
+              >
+                📢 Publicar Cuadro
               </button>
             </>
           )}

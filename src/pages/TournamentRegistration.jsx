@@ -268,6 +268,14 @@ export default function TournamentRegistration() {
               Rellena los datos de tu pareja para apuntaros al torneo.
             </p>
           )}
+          {tournament.config?.rounds && Object.keys(tournament.config.rounds).length > 0 && (
+            <Link
+              to={`/torneos/${id}/cuadro`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', marginTop: '1rem', padding: '0.5rem 1.25rem', backgroundColor: '#EBF0FA', color: '#1B3A6E', borderRadius: '2rem', textDecoration: 'none', fontWeight: 700, fontSize: '0.85rem', border: '1.5px solid #C3D4F5' }}
+            >
+              🏆 Ver Cuadro del Torneo →
+            </Link>
+          )}
         </div>
 
         {deadlinePassed && (
