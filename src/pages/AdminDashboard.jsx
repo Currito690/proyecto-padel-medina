@@ -177,7 +177,7 @@ const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
 const AdminDashboard = () => {
 
   const { user, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState('schedule');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('adminActiveTab') || 'schedule');
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const DEFAULT_CLUB_HOURS = { 0:'00:00', 1:'00:00', 2:'00:00', 3:'00:00', 4:'00:00', 5:'00:00', 6:'00:00' };
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS });
@@ -573,7 +573,7 @@ const AdminDashboard = () => {
               return (
                 <button
                   key={item.key}
-                  onClick={() => { setActiveTab(item.key); setIsSidebarOpen(false); }}
+                  onClick={() => { setActiveTab(item.key); localStorage.setItem('adminActiveTab', item.key); setIsSidebarOpen(false); }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%',
                     padding: '0.875rem 1rem', borderRadius: '0.75rem', border: 'none',

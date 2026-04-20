@@ -1689,14 +1689,30 @@ const TournamentManager = () => {
     return [];
   });
 
-  const [activeId, setActiveId] = useState(null);
+  const [activeId, setActiveId] = useState(() => {
+    const saved = localStorage.getItem('adminActiveTournamentId');
+    // Only restore if the tournament still exists
+    if (saved) {
+      try {
+        const list = JSON.parse(localStorage.getItem('padel_medina_tournaments_list') || '[]');
+        if (list.some(t => t.id === saved)) return saved;
+      } catch {}
+    }
+    return null;
+  });
+
+  const setActiveIdPersist = (id) => {
+    setActiveId(id);
+    if (id) localStorage.setItem('adminActiveTournamentId', id);
+    else localStorage.removeItem('adminActiveTournamentId');
+  };
 
   const createNewTournament = () => {
      const newId = Date.now().toString();
      const newList = [...tournaments, { id: newId, name: 'Nuevo Torneo', date: new Date().toISOString() }];
      setTournaments(newList);
      localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
-     setActiveId(newId);
+     setActiveIdPersist(newId);
   };
 
   const deleteTournament = (id) => {
@@ -1718,7 +1734,7 @@ const TournamentManager = () => {
   if (activeId) {
      return <TournamentEditor tournamentKey={activeId} onBack={(newName) => {
          if (newName) updateTournamentName(activeId, newName);
-         setActiveId(null);
+         setActiveIdPersist(null);
      }} />;
   }
 
@@ -1748,7 +1764,7 @@ const TournamentManager = () => {
                       <span style={{ fontSize: '0.75rem', color: '#94A3B8' }}>Creado: {new Date(t.date).toLocaleDateString()}</span>
                    </div>
                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
-                      <button onClick={() => setActiveId(t.id)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, border: 'none', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <button onClick={() => setActiveIdPersist(t.id)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, border: 'none', cursor: 'pointer', fontSize: '0.85rem' }}>
                          Abrir / Editar
                       </button>
                       <button onClick={() => deleteTournament(t.id)} style={{ padding: '0.6rem', borderRadius: '0.5rem', backgroundColor: '#FEE2E2', color: '#EF4444', fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
