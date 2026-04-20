@@ -362,6 +362,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          });
        }
 
+       // Pre-assign slots for rounds 1+ so the full schedule is visible upfront
+       for (let r = 1; r < catRounds.length; r++) {
+         catRounds[r].forEach(match => {
+           const slot = globalSlots.find(s => slotUsage[s] < tConfig.courtsCount);
+           if (slot) {
+             slotUsage[slot]++;
+             match.time = `${slot} - Pista ${slotUsage[slot]}`;
+           } else {
+             match.time = 'A convenir';
+           }
+         });
+       }
+
        if (catRounds[0]) {
           catRounds[0].forEach(match => {
              if (match.p1?.isBye && match.p2 && !match.p2.isBye) {
