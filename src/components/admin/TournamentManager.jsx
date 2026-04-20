@@ -264,7 +264,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       alert("Añade al menos 2 parejas para crear un torneo.");
       return;
     }
-    
+    if (!tConfig.startDate || !tConfig.endDate) {
+      alert("Configura las fechas de inicio y fin del torneo antes de generar el cuadro.\n\nVuelve a Configuración y rellena los campos 'Fecha de Inicio' y 'Fecha de Fin'.");
+      return;
+    }
+    try {
     let p = [...participants];
     // Barajar aleatoriamente
     for (let i = p.length - 1; i > 0; i--) {
@@ -304,6 +308,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Finds a slot with available court capacity, NEVER double-books.
     // If candidates are full → tries all globalSlots → extends beyond tournament hours.
     const pickSlot = (candidates, usage, courts) => {
+      if (!globalSlots.length) return 'Sin horario';
       const free = (candidates.length ? candidates : globalSlots).find(s => (usage[s] ?? 0) < courts);
       if (free) return free;
       const globalFree = globalSlots.find(s => (usage[s] ?? 0) < courts);
@@ -464,6 +469,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setRounds(newAllRounds);
     setConsRounds({});
     setPhase('bracket');
+    } catch (err) {
+      console.error('generateBracket error:', err);
+      alert('Error al generar el cuadro: ' + (err?.message || String(err)));
+    }
   };
 
   const handleSwapPlayers = (cat, isCons, matchIdx, side) => {
