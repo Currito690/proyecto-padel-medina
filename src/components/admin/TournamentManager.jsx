@@ -594,8 +594,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         let common = p1Slots.filter(s => p2Slots.includes(s));
         if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
 
-        const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount);
-        nextMatch.time = assigned ? `${assigned} - Pista ${slotUsage[assigned] + 1}` : 'A convenir';
+        const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount)
+          || common.reduce((min, s) => (slotUsage[s] ?? 0) < (slotUsage[min] ?? 0) ? s : min, common[0] || globalSlots[0]);
+        nextMatch.time = assigned ? `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}` : '';
       }
     }
 
