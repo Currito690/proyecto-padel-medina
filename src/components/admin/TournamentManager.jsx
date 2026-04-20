@@ -254,6 +254,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        return { ...part, finalSlots };
     });
 
+    // Always returns a slot: prefers one with capacity, falls back to least-used
+    const pickSlot = (candidates, usage, courts) => {
+      const pool = candidates.length ? candidates : globalSlots;
+      const free = pool.find(s => (usage[s] ?? 0) < courts);
+      if (free) return free;
+      return pool.reduce((min, s) => (usage[s] ?? 0) < (usage[min] ?? 0) ? s : min, pool[0]);
+    };
+
     const catList = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
     const newAllRounds = {};
 
@@ -288,13 +296,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              const p2Slots = t2.finalSlots?.length ? t2.finalSlots : globalSlots;
              let common = p1Slots.filter(s => p2Slots.includes(s));
              if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-             const assigned = common.find(s => slotUsage[s] < tConfig.courtsCount);
-             if (assigned) slotUsage[assigned]++;
+             const assigned = pickSlot(common, slotUsage, tConfig.courtsCount);
+             slotUsage[assigned] = (slotUsage[assigned] ?? 0) + 1;
              roundMatches.push({
                id: `rr-${cat}-r${r}-m${roundMatches.length}`,
                round: r, matchIndex: roundMatches.length,
                p1: t1, p2: t2, winner: null, score: null, isRR: true,
-               time: assigned ? `${assigned} - Pista ${slotUsage[assigned]}` : 'A convenir',
+               time: `${assigned} - Pista ${Math.min(slotUsage[assigned], tConfig.courtsCount)}`,
              });
            }
            if (roundMatches.length > 0) rrCatRounds.push(roundMatches);
@@ -351,13 +359,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               const p2Final = match.p2.finalSlots || [];
               let common = p1Final.filter(s => p2Final.includes(s));
               if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
-              const assignedTime = common.find(s => slotUsage[s] < tConfig.courtsCount);
-              if (assignedTime) {
-                  slotUsage[assignedTime]++;
-                  match.time = `${assignedTime} - Pista ${slotUsage[assignedTime]}`;
-              } else {
-                  match.time = "A convenir";
-              }
+              const assignedTime = pickSlot(common, slotUsage, tConfig.courtsCount);
+              slotUsage[assignedTime] = (slotUsage[assignedTime] ?? 0) + 1;
+              match.time = `${assignedTime} - Pista ${Math.min(slotUsage[assignedTime], tConfig.courtsCount)}`;
            }
          });
        }
@@ -365,13 +369,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // Pre-assign slots for rounds 1+ so the full schedule is visible upfront
        for (let r = 1; r < catRounds.length; r++) {
          catRounds[r].forEach(match => {
-           const slot = globalSlots.find(s => slotUsage[s] < tConfig.courtsCount);
-           if (slot) {
-             slotUsage[slot]++;
-             match.time = `${slot} - Pista ${slotUsage[slot]}`;
-           } else {
-             match.time = 'A convenir';
-           }
+           const slot = pickSlot(globalSlots, slotUsage, tConfig.courtsCount);
+           slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
+           match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
          });
        }
 
@@ -512,8 +512,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
           let common = p1Slots.filter(s => p2Slots.includes(s));
           if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-          const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount);
-          nextMatch.time = assigned ? `${assigned} - Pista ${slotUsage[assigned] + 1}` : 'A convenir';
+          const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount)
+            || common.reduce((min, s) => (slotUsage[s] ?? 0) < (slotUsage[min] ?? 0) ? s : min, common[0] || globalSlots[0]);
+          nextMatch.time = assigned ? `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}` : '';
         }
       }
     }
@@ -705,13 +706,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const p2Final = match.p2.finalSlots || [];
            let common = p1Final.filter(s => p2Final.includes(s));
            if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
-           const assignedTime = common.find(s => slotUsage[s] < tConfig.courtsCount);
-           if (assignedTime) {
-               slotUsage[assignedTime]++;
-               match.time = `${assignedTime} - Pista ${slotUsage[assignedTime]}`;
-           } else {
-               match.time = "A convenir";
-           }
+           const assignedTime = pickSlot(common, slotUsage, tConfig.courtsCount);
+           slotUsage[assignedTime] = (slotUsage[assignedTime] ?? 0) + 1;
+           match.time = `${assignedTime} - Pista ${Math.min(slotUsage[assignedTime], tConfig.courtsCount)}`;
         }
       });
     }
