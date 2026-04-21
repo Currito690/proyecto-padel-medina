@@ -16,6 +16,7 @@ const TournamentBracket = lazy(() => import('./pages/TournamentBracket'));
 const Cart = lazy(() => import('./pages/Cart'));
 const SharedPayment = lazy(() => import('./pages/SharedPayment'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const Tournaments = lazy(() => import('./pages/Tournaments'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -254,6 +255,7 @@ function App() {
           {user?.role === 'client' && (
             <Route element={<MainLayout />}>
               <Route path="/" element={<BookingDashboard />} />
+              <Route path="/torneos" element={<Tournaments />} />
               <Route path="/carrito" element={<Cart />} />
               <Route path="/mis-reservas" element={<MyBookings />} />
               <Route path="/perfil" element={<Profile />} />

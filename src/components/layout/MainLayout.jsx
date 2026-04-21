@@ -11,11 +11,25 @@ const MainLayout = () => {
       path: '/',
       label: 'Reservas',
       icon: (active) => (
-        <svg width="22" height="22" viewBox="0 0 24 24" fill={active ? 'none' : 'none'} stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="4" width="18" height="18" rx="2" />
           <line x1="16" y1="2" x2="16" y2="6" />
           <line x1="8" y1="2" x2="8" y2="6" />
           <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      ),
+    },
+    {
+      path: '/torneos',
+      label: 'Torneos',
+      icon: (active) => (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+          <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+          <path d="M4 22h16" />
+          <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+          <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+          <path d="M18 2H6v7a6 6 0 0 0 12 0V2z" />
         </svg>
       ),
     },
@@ -128,13 +142,13 @@ const MainLayout = () => {
           top: 8px;
           left: 50%;
           transform: translateX(-50%);
-          width: 48px;
-          height: 32px;
+          width: 40px;
+          height: 30px;
           background: var(--color-accent-light);
-          border-radius: 10px;
+          border-radius: 9px;
         }
         .nav-label {
-          font-size: 0.62rem;
+          font-size: 0.58rem;
           font-weight: 700;
           letter-spacing: 0.01em;
           white-space: nowrap;
@@ -168,9 +182,9 @@ const MainLayout = () => {
 
         @media (min-width: 640px) {
           .bottom-nav { height: 76px; }
-          .nav-label { font-size: 0.68rem; }
-          .nav-link { padding: 12px 8px 8px; gap: 6px; }
-          .nav-active-pill { width: 52px; height: 34px; }
+          .nav-label { font-size: 0.62rem; }
+          .nav-link { padding: 12px 4px 8px; gap: 5px; }
+          .nav-active-pill { width: 44px; height: 32px; }
         }
 
         @media (min-width: 1024px) {
