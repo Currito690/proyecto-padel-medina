@@ -191,14 +191,13 @@ const BookingDashboard = () => {
 
   const responsiveStyles = `
     .courts-grid {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
       gap: 0.875rem;
     }
-    @media (min-width: 640px) {
+    @media (min-width: 768px) {
       .courts-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         gap: 1rem;
       }
     }
@@ -266,30 +265,31 @@ const BookingDashboard = () => {
         )}
 
         <header style={{ marginBottom: '2rem' }}>
-          <p style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-accent)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Hola, {firstName}
-          </p>
           <h1 className="sr-only">Padel Medina - Club de Pádel</h1>
-          <h2 className="booking-title" style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
-            ¿Dónde juegas hoy?
-          </h2>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginTop: '0.75rem', color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '0.15rem', color: 'var(--color-accent)' }}>
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-              <circle cx="12" cy="10" r="3" />
-            </svg>
-            <span style={{ lineHeight: 1.4, fontWeight: 500 }}>
-              Calle Alemania, 4-20, 11170<br />
-              Medina Sidonia, Cádiz
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.1em', background: 'var(--color-accent-light)', padding: '0.3rem 0.75rem', borderRadius: '2rem' }}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--color-accent)" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
+              Hola, {firstName}
             </span>
           </div>
-
+          <h2 className="booking-title" style={{ fontSize: '2rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.04em', margin: '0 0 0.875rem', lineHeight: 1.1 }}>
+            ¿Dónde juegas<br />hoy?
+          </h2>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: 'white', border: '1px solid var(--color-border)', borderRadius: '2rem', padding: '0.35rem 0.875rem' }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+            </svg>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Medina Sidonia, Cádiz</span>
+          </div>
         </header>
 
         {/* ── Próximos eventos ── */}
         {events.length > 0 && (
           <div style={{ marginBottom: '1.75rem' }}>
-            <p style={{ margin: '0 0 0.75rem', fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Próximos eventos</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.875rem' }}>
+            <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 800, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Próximos eventos</p>
+            <div style={{ height: '1px', flex: 1, background: 'var(--color-border)', margin: '0 0.875rem' }} />
+          </div>
             <div style={{ display: 'flex', gap: '0.875rem', overflowX: 'auto', paddingBottom: '0.5rem', scrollbarWidth: 'none' }}>
               {events.map(ev => {
                 const dateStr = ev.event_date
@@ -348,6 +348,11 @@ const BookingDashboard = () => {
           </div>
         )}
 
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem', gap: '0.875rem' }}>
+          <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 800, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>Pistas disponibles</p>
+          <div style={{ height: '1px', flex: 1, background: 'var(--color-border)' }} />
+        </div>
+
         {loadingCourts ? (
 
           <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
@@ -364,54 +369,78 @@ const BookingDashboard = () => {
               <button
                 key={court.id}
                 onClick={() => handleCourtChange(court.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '1.25rem',
-                  padding: '1.25rem', borderRadius: '1.25rem',
-                  background: court.gradient, border: 'none', cursor: 'pointer',
-                  textAlign: 'left', position: 'relative', overflow: 'hidden',
-                  boxShadow: court.sport === 'Pádel' ? '0 8px 24px rgba(22,163,74,0.3)' : '0 8px 24px rgba(14,165,233,0.3)',
-                  transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s',
-                }}
                 onMouseOver={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-3px)';
-                  e.currentTarget.style.boxShadow = court.sport === 'Pádel' ? '0 16px 32px rgba(22,163,74,0.4)' : '0 16px 32px rgba(14,165,233,0.4)';
+                  e.currentTarget.style.transform = 'translateY(-4px)';
+                  e.currentTarget.style.boxShadow = '0 20px 40px rgba(0,0,0,0.14)';
                 }}
                 onMouseOut={(e) => {
                   e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = court.sport === 'Pádel' ? '0 8px 24px rgba(22,163,74,0.3)' : '0 8px 24px rgba(14,165,233,0.3)';
+                  e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)';
+                }}
+                style={{
+                  display: 'flex', flexDirection: 'column',
+                  padding: 0, borderRadius: '1.25rem',
+                  background: 'white', border: '1px solid #E2E8F0',
+                  cursor: 'pointer', textAlign: 'left', overflow: 'hidden',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+                  transition: 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.22s',
                 }}
               >
-                <div style={{ position: 'absolute', right: '-20px', top: '-20px', width: '100px', height: '100px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.08)' }} />
-                <div style={{ width: '60px', height: '60px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  {court.sport === 'Pádel' ? <PadelIcon /> : <PickleballIcon />}
+                {/* Gradient top */}
+                <div style={{
+                  background: court.gradient,
+                  padding: '1.75rem 1rem 1.5rem',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  position: 'relative', overflow: 'hidden',
+                }}>
+                  <div style={{ position: 'absolute', right: '-28px', bottom: '-28px', width: '110px', height: '110px', borderRadius: '50%', background: 'rgba(255,255,255,0.09)' }} />
+                  <div style={{ position: 'absolute', left: '-18px', top: '-18px', width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(255,255,255,0.06)' }} />
+                  <span style={{ fontSize: '0.6rem', fontWeight: 800, color: 'rgba(255,255,255,0.65)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '0.875rem' }}>
+                    {court.sport}
+                  </span>
+                  <div style={{ width: '68px', height: '68px', borderRadius: '50%', background: 'rgba(255,255,255,0.18)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {court.sport === 'Pádel' ? <PadelIcon /> : <PickleballIcon />}
+                  </div>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <span style={{ display: 'block', fontWeight: 900, fontSize: '1.2rem', color: 'white', letterSpacing: '-0.02em' }}>{court.name}</span>
-                  <span style={{ display: 'block', fontSize: '0.85rem', fontWeight: 500, color: 'rgba(255,255,255,0.8)', marginTop: '0.1rem' }}>{court.sport} · {court.location}</span>
+                {/* Info bottom */}
+                <div style={{ padding: '0.875rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontWeight: 900, fontSize: '1rem', color: '#0F172A', letterSpacing: '-0.02em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {court.name}
+                    </span>
+                    <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748B', marginTop: '0.1rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {court.location}
+                    </span>
+                  </div>
+                  <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#F1F5F9', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                  </div>
                 </div>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                  <polyline points="12 5 19 12 12 19" />
-                </svg>
               </button>
             ))}
           </div>
         )}
 
-        <div style={{ marginTop: '2rem', padding: '1.25rem', borderRadius: '1rem', backgroundColor: 'var(--color-accent-light)', border: '1px solid var(--color-border-accent)', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '0.1rem' }}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--color-accent-hover)', fontWeight: 500 }}>
-            Sesiones de 90 min · Abierto de 09:00 a 22:00
-          </p>
+        <div style={{ marginTop: '1.75rem', padding: '1rem 1.25rem', borderRadius: '1rem', backgroundColor: 'white', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ width: '40px', height: '40px', borderRadius: '0.75rem', background: 'var(--color-accent-light)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <div>
+            <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>Sesiones de 90 minutos</p>
+            <p style={{ margin: '0.1rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Abierto de 09:00 a 22:00 todos los días</p>
+          </div>
         </div>
 
         {/* ── Mapa ── */}
         <div className="booking-map" style={{ marginTop: '2rem' }}>
-          <p style={{ margin: '0 0 0.75rem', fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Cómo llegar</p>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.875rem', gap: '0.875rem' }}>
+            <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 800, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>Cómo llegar</p>
+            <div style={{ height: '1px', flex: 1, background: 'var(--color-border)' }} />
+          </div>
           <div style={{ borderRadius: '1rem', overflow: 'hidden', border: '1px solid #E2E8F0', position: 'relative', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
             <iframe
               title="Ubicación Padel Medina"
