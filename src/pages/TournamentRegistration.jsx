@@ -255,8 +255,14 @@ export default function TournamentRegistration() {
     <div style={{ minHeight: '100vh', backgroundColor: '#F8FAFC', padding: 'clamp(1rem, 4vw, 2rem) 1rem' }} onMouseUp={() => setGridDragging(false)}>
       <style>{`@media (max-width: 480px) { .treg-main { padding: 1.25rem !important; border-radius: 1rem !important; } .treg-title { font-size: 1.5rem !important; } }`}</style>
       <div style={{ maxWidth: '640px', margin: '0 auto 0.75rem' }}>
-        <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.9rem', padding: 0 }}>
-          ← Volver
+        <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', color: '#1B3A6E', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', padding: 0, transition: 'opacity 0.15s' }}
+          onMouseOver={e => e.currentTarget.style.opacity = '0.7'}
+          onMouseOut={e => e.currentTarget.style.opacity = '1'}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+          </svg>
+          Volver
         </button>
       </div>
       <main className="treg-main" style={{ maxWidth: '640px', margin: '0 auto', backgroundColor: 'white', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
@@ -287,7 +293,11 @@ export default function TournamentRegistration() {
 
         {deadlinePassed && (
           <div style={{ textAlign: 'center', padding: '2rem', backgroundColor: '#FEF2F2', borderRadius: '1rem', border: '1px solid #FECACA', marginBottom: '1rem' }}>
-            <span style={{ fontSize: '2rem', display: 'block', marginBottom: '0.75rem' }}>🔒</span>
+            <div style={{ width: '52px', height: '52px', borderRadius: '50%', backgroundColor: '#FECACA', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
             <p style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#DC2626' }}>El plazo de inscripción ha finalizado.</p>
             <p style={{ margin: '0.5rem 0 0', color: '#7F1D1D', fontSize: '0.9rem' }}>Contacta con el club en padelmedina@hotmail.com para más información.</p>
           </div>

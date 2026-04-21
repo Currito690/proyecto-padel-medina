@@ -251,7 +251,11 @@ const BookingDashboard = () => {
         {pagoCancelado && (
           <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: '1rem', padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span style={{ fontSize: '1.25rem' }}>↩️</span>
+              <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#FED7AA', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9A3412" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+                </svg>
+              </div>
               <div>
                 <p style={{ margin: 0, fontWeight: 800, color: '#9A3412', fontSize: '0.9rem' }}>Pago cancelado</p>
                 <p style={{ margin: '0.1rem 0 0', fontSize: '0.8rem', color: '#C2410C' }}>No se ha realizado ningún cargo. Puedes volver a reservar cuando quieras.</p>
@@ -303,12 +307,20 @@ const BookingDashboard = () => {
                         navigate(ev.registration_url);
                       }
                     }}
-                    style={{ flexShrink: 0, width: '220px', borderRadius: '1.1rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.10)', cursor: ev.registration_url ? 'pointer' : 'default', border: '1px solid #E2E8F0' }}
+                    onMouseOver={e => { if (ev.registration_url) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.16)'; } }}
+                    onMouseOut={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.10)'; }}
+                    style={{ flexShrink: 0, width: '220px', borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.10)', cursor: ev.registration_url ? 'pointer' : 'default', border: '1px solid #E2E8F0', transition: 'transform 0.2s, box-shadow 0.2s' }}
                   >
                     {ev.poster_url ? (
                       <img src={ev.poster_url} alt={ev.title} style={{ width: '100%', height: '130px', objectFit: 'cover', display: 'block' }} />
                     ) : (
-                      <div style={{ height: '130px', background: 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem' }}>🎾</div>
+                      <div style={{ height: '130px', background: 'linear-gradient(135deg, #1B3A6E, #0F2550)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10"/>
+                          <path d="M12 2 Q16 6 16 12 Q16 18 12 22"/><path d="M12 2 Q8 6 8 12 Q8 18 12 22"/>
+                          <line x1="2" y1="12" x2="22" y2="12"/>
+                        </svg>
+                      </div>
                     )}
                     <div style={{ padding: '0.7rem 0.875rem', backgroundColor: 'white' }}>
                       {dateStr && <p style={{ margin: '0 0 0.2rem', fontSize: '0.65rem', fontWeight: 800, color: '#16A34A', letterSpacing: '0.05em' }}>{dateStr}</p>}
@@ -324,7 +336,11 @@ const BookingDashboard = () => {
 
         {slotsLocked && (
           <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: '1rem', padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontSize: '1.5rem' }}>🔒</span>
+            <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#FED7AA', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9A3412" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
             <div>
               <p style={{ margin: 0, fontWeight: 800, color: '#9A3412', fontSize: '0.9rem' }}>Reservas cerradas hasta las {siteSettings.slots_release_time}</p>
               <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: '#C2410C' }}>Las pistas se desbloquean automáticamente a esa hora. Vuelve entonces para reservar.</p>

@@ -85,7 +85,14 @@ function MatchCard({ match, isCons, compact = false }) {
                 ))}
               </div>
             )}
-            {isWinner && <span style={{ fontSize: compact ? '0.78rem' : '0.9rem', flexShrink: 0 }}>🏆</span>}
+            {isWinner && (
+              <svg width={compact ? 12 : 14} height={compact ? 12 : 14} viewBox="0 0 24 24" fill={winnerColor} stroke={winnerColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>
+                <path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>
+                <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>
+                <path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>
+              </svg>
+            )}
           </div>
         );
       })}
@@ -134,7 +141,11 @@ export default function TournamentBracket() {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC' }}>
         <div style={{ backgroundColor: 'white', padding: '3rem', borderRadius: '1.5rem', textAlign: 'center', maxWidth: '400px', boxShadow: '0 4px 6px rgba(0,0,0,0.06)' }}>
-          <span style={{ fontSize: '3rem', display: 'block', marginBottom: '1rem' }}>🎾</span>
+          <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#EBF0FA', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#1B3A6E" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
           <h2 style={{ margin: '0 0 0.5rem', color: '#0F172A' }}>Torneo no encontrado</h2>
           <p style={{ color: '#64748B' }}>{error || 'Este torneo no existe.'}</p>
         </div>
@@ -157,9 +168,14 @@ export default function TournamentBracket() {
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           <button
             onClick={() => navigate(-1)}
-            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.75)', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '1rem', padding: 0 }}
+            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.75)', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', marginBottom: '1rem', padding: 0, transition: 'color 0.15s' }}
+            onMouseOver={e => e.currentTarget.style.color = 'white'}
+            onMouseOut={e => e.currentTarget.style.color = 'rgba(255,255,255,0.75)'}
           >
-            ← Volver
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Volver
           </button>
           <h1 style={{ margin: '0 0 0.35rem', fontSize: 'clamp(1.5rem, 4vw, 2.25rem)', fontWeight: 900, letterSpacing: '-0.03em', color: 'white' }}>
             {tournament.name}
@@ -183,7 +199,11 @@ export default function TournamentBracket() {
 
         {!hasBracket ? (
           <div style={{ textAlign: 'center', padding: '4rem 2rem', backgroundColor: 'white', borderRadius: '1.5rem', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-            <span style={{ fontSize: '3.5rem', display: 'block', marginBottom: '1rem' }}>⏳</span>
+            <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#EBF0FA', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#1B3A6E" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+            </div>
             <h2 style={{ margin: '0 0 0.5rem', color: '#0F172A', fontSize: '1.5rem' }}>El cuadro aún no está disponible</h2>
             <p style={{ color: '#64748B', margin: 0, maxWidth: '360px', marginLeft: 'auto', marginRight: 'auto' }}>
               El organizador publicará el cuadro cuando el torneo comience. ¡Vuelve pronto!
@@ -306,7 +326,14 @@ export default function TournamentBracket() {
                       <div key={bracket.title} style={{ marginBottom: '3rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
                           <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: bracket.isCons ? '#D97706' : '#0F172A' }}>
-                            {bracket.isCons ? '🥈' : '🥇'} {bracket.title}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span style={{ display: 'inline-flex', width: '18px', height: '18px', borderRadius: '50%', backgroundColor: bracket.isCons ? '#D97706' : '#1B3A6E', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="white" stroke="none">
+                                  <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M18 2H6v7a6 6 0 0 0 12 0V2z"/>
+                                </svg>
+                              </span>
+                              {bracket.title}
+                            </span>
                           </h3>
                           <div style={{ flex: 1, height: '2px', backgroundColor: bracket.isCons ? '#FDE68A' : '#E2E8F0', borderRadius: '1px' }} />
                         </div>
