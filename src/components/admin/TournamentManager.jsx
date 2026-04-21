@@ -960,6 +960,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   if (phase === 'config') {
     return (
       <div>
+      <style>{`
+        .tm-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .tm-header-info { flex: 1; min-width: 0; }
+        .tm-btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; flex-shrink: 0; }
+        .tm-section-header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+        .tm-date-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .tm-date-row > div { flex: 1; min-width: 140px; }
+        .tm-time-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .tm-time-row > div { flex: 1; min-width: 120px; }
+        .tm-add-form { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+        .tm-add-form input { flex: 2; min-width: 160px; }
+        .tm-add-form select { flex: 1; min-width: 110px; }
+        .tm-deadline-row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+        .tm-deadline-row input { flex: 1; min-width: 130px; }
+        @media (max-width: 480px) {
+          .tm-btn-group button { font-size: 0.75rem !important; padding: 0.5rem 0.65rem !important; }
+          .tm-header-info h2 { font-size: 1.15rem !important; }
+        }
+      `}</style>
         <div style={{ marginBottom: '1.5rem', maxWidth: '600px', margin: '0 auto 1.5rem' }}>
            <button onClick={() => onBack(tConfig.name)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', padding: 0 }}>
               ← Volver al panel de Todos los Torneos
@@ -984,14 +1003,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <input type="text" placeholder="Ej: Masculino, Femenino, Mixto" value={tConfig.categories} onChange={e => setTConfig({...tConfig, categories: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem' }} />
             </div>
 
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <div style={{ flex: 1 }}>
+            <div className="tm-date-row">
+              <div>
                 <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Fecha de Inicio</label>
-                <input type="date" value={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, startDate: e.target.value, endDate: tConfig.endDate && tConfig.endDate < e.target.value ? e.target.value : tConfig.endDate})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }} />
+                <input type="date" value={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, startDate: e.target.value, endDate: tConfig.endDate && tConfig.endDate < e.target.value ? e.target.value : tConfig.endDate})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer', boxSizing: 'border-box' }} />
               </div>
-              <div style={{ flex: 1 }}>
+              <div>
                 <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Fecha de Fin</label>
-                <input type="date" value={tConfig.endDate || ''} min={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, endDate: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }} />
+                <input type="date" value={tConfig.endDate || ''} min={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, endDate: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer', boxSizing: 'border-box' }} />
               </div>
             </div>
 
@@ -1001,14 +1020,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <p style={{ margin: '0.3rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>Fecha límite para inscripciones online. Los jugadores no podrán inscribirse después de este día.</p>
             </div>
 
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <div style={{ flex: 1 }}>
+            <div className="tm-time-row">
+              <div>
                 <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Horario Inicial (Diario)</label>
                 <select value={tConfig.startHour} onChange={e => setTConfig({...tConfig, startHour: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}>
                   {HOURS.slice(0, HOURS.length - 1).map(h => <option key={h} value={h}>{h}</option>)}
                 </select>
               </div>
-              <div style={{ flex: 1 }}>
+              <div>
                 <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Horario Final (Diario)</label>
                 <select value={tConfig.endHour} onChange={e => setTConfig({...tConfig, endHour: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', cursor: 'pointer' }}>
                   {HOURS.slice(HOURS.indexOf(tConfig.startHour) + 1).map(h => <option key={h} value={h}>{h}</option>)}
@@ -1125,6 +1144,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   if (phase === 'setup') {
     return (
       <div onMouseUp={() => setGridDragging(false)}>
+      <style>{`
+        .tm-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .tm-header-info { flex: 1; min-width: 0; }
+        .tm-btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; flex-shrink: 0; }
+        .tm-section-header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+        .tm-add-form { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+        .tm-add-form input { flex: 2; min-width: 160px; }
+        .tm-add-form select { flex: 1; min-width: 110px; }
+        .tm-deadline-row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+        .tm-deadline-row input { flex: 1; min-width: 130px; }
+        @media (max-width: 480px) {
+          .tm-btn-group button { font-size: 0.75rem !important; padding: 0.5rem 0.65rem !important; }
+        }
+      `}</style>
 
       {/* ── Editar pareja modal ── */}
       {editingParticipant && (() => {
@@ -1254,10 +1287,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            </button>
         </div>
         <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div className="tm-section-header">
           <p className="section-label" style={{ margin: 0 }}>{tConfig.name ? `Fase 2: Inscripción - ${tConfig.name}` : 'Inscripción de Torneo'}</p>
-          
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+
+          <div className="tm-btn-group">
             {!publishedId ? (
               <button onClick={handlePublish} style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
@@ -1295,8 +1328,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
         <div style={{ backgroundColor: '#FFFBEB', padding: '1rem', borderRadius: '1rem', border: '1px solid #FDE68A', marginBottom: '1.5rem' }}>
           <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Plazo de Inscripción Online</p>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ flex: 1, padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'white' }} />
+          <div className="tm-deadline-row">
+            <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'white', boxSizing: 'border-box' }} />
             {publishedId ? (
               <button onClick={handleUpdateDeadline} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Guardar plazo
@@ -1308,30 +1341,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         </div>
 
         <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-          <form onSubmit={addParticipant} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <input 
-                type="text" 
-                placeholder="Nombre de la pareja (Ej: Juan y Alberto)" 
+          <form onSubmit={addParticipant} style={{ marginBottom: '1.5rem' }}>
+            <div className="tm-add-form">
+              <input
+                type="text"
+                placeholder="Nombre de la pareja (Ej: Juan y Alberto)"
                 value={newCouple}
                 onChange={(e) => setNewCouple(e.target.value)}
-                style={{ flex: 2, minWidth: '200px', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem' }}
+                style={{ padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', boxSizing: 'border-box' }}
               />
-              <select 
-                value={newCoupleCategory} 
-                onChange={(e) => setNewCoupleCategory(e.target.value)} 
-                style={{ flex: 1, minWidth: '120px', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem' }}
+              <select
+                value={newCoupleCategory}
+                onChange={(e) => setNewCoupleCategory(e.target.value)}
+                style={{ padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', boxSizing: 'border-box' }}
               >
                 <option value="">-- Elige Categoría --</option>
                 {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
-              <button type="submit" style={{ padding: '0.75rem 1.25rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, cursor: 'pointer' }}>
+              <button type="submit" style={{ padding: '0.75rem 1.25rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Añadir
               </button>
             </div>
-            
           </form>
           <p style={{ margin: '-0.5rem 0 1rem', fontSize: '0.78rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -1418,39 +1450,48 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   return (
     <div>
-      <div style={{ marginBottom: '1.5rem' }}>
+      <style>{`
+        .tm-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .tm-header-info { flex: 1; min-width: 220px; }
+        .tm-btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; }
+        .tm-deadline-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }
+        .tm-deadline-row input { min-width: 130px; }
+        @media (max-width: 480px) {
+          .tm-btn-group button { font-size: 0.72rem !important; padding: 0.45rem 0.6rem !important; }
+          .tm-header-info h2 { font-size: 1.15rem !important; }
+        }
+      `}</style>
+      <div style={{ marginBottom: '1rem' }}>
          <button onClick={() => onBack(tConfig.name)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', padding: 0 }}>
             ← Volver al panel de Todos los Torneos
          </button>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <div>
+      <div className="tm-header-row">
+        <div className="tm-header-info">
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Torneo: {tConfig.name}</h2>
           <p style={{ margin: '0.2rem 0', fontSize: '0.85rem', color: '#64748B', fontWeight: 600 }}>{fmtDateDisplay(tConfig.startDate)} — {fmtDateDisplay(tConfig.endDate)} · {tConfig.startHour} a {tConfig.endHour}</p>
           <p style={{ margin: '0.1rem 0', fontSize: '0.8rem', color: '#64748B', fontWeight: 600 }}>
-            ⏱{' '}
             {tConfig.matchDurationByCategory
               ? Object.entries(tConfig.matchDurationByCategory).map(([cat, dur]) => `${cat}: ${dur} min`).join(' · ')
-              : `${tConfig.matchDuration ?? 90} min`
-            }
+              : `${tConfig.matchDuration ?? 90} min`}
           </p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Haz clic en el ganador de cada partido para avanzar ronda.</p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#92400E' }}>Plazo inscripción:</span>
-            <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #FDE68A', fontSize: '0.8rem', cursor: 'pointer', backgroundColor: '#FFFBEB' }} />
+          <div className="tm-deadline-row">
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#92400E', whiteSpace: 'nowrap' }}>Plazo inscripción:</span>
+            <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #FDE68A', fontSize: '0.8rem', cursor: 'pointer', backgroundColor: '#FFFBEB', boxSizing: 'border-box' }} />
             {publishedId && (
-              <button onClick={handleUpdateDeadline} style={{ padding: '0.3rem 0.75rem', borderRadius: '0.4rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>
+              <button onClick={handleUpdateDeadline} style={{ padding: '0.3rem 0.75rem', borderRadius: '0.4rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Guardar
               </button>
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="tm-btn-group">
           {!isExporting && (
             <>
               <button
                 onClick={() => setPhase('setup')}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
                 Atrás a Inscripción
               </button>
@@ -1477,9 +1518,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     setConsRounds(prev => resetRounds(prev));
                   }
                 }}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: 'white', color: '#DC2626', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: 'white', color: '#DC2626', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
-                🔄 Reiniciar Torneo
+                Reiniciar Torneo
               </button>
               <button
                 onClick={() => {
@@ -1487,15 +1528,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     generateBracket();
                   }
                 }}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', backgroundColor: 'white', color: '#B45309', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', backgroundColor: 'white', color: '#B45309', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
-                🎲 Re-sortear Cuadro
+                Re-sortear Cuadro
               </button>
               <button
                 onClick={handlePublishBracket}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #DCFCE7', backgroundColor: '#F0FDF4', color: '#16A34A', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #DCFCE7', backgroundColor: '#F0FDF4', color: '#16A34A', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
-                📢 Publicar Cuadro
+                Publicar Cuadro
               </button>
             </>
           )}
