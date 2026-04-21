@@ -65,11 +65,21 @@ export default function TournamentRegistration() {
         .from('tournaments')
         .select('*')
         .eq('id', id)
-        .eq('status', 'open')
         .single();
       if (error || !data) {
         setError('Este torneo no existe o ya ha cerrado inscripciones.');
       } else {
+        // If bracket is published, redirect to bracket view
+        if (data.config?.rounds && Object.keys(data.config.rounds).length > 0) {
+          navigate(`/torneos/${id}/cuadro`, { replace: true });
+          return;
+        }
+        // If tournament is not open for registration
+        if (data.status !== 'open') {
+          setError('Este torneo no existe o ya ha cerrado inscripciones.');
+          setLoading(false);
+          return;
+        }
         setTournament(data);
         const categories = data.config?.categories?.split(',').map(c => c.trim()).filter(Boolean) || [];
         setCat(categories[0] || '');
@@ -267,14 +277,6 @@ export default function TournamentRegistration() {
             <p style={{ margin: '0.75rem 0 0', color: '#64748B', fontWeight: 500 }}>
               Rellena los datos de tu pareja para apuntaros al torneo.
             </p>
-          )}
-          {tournament.config?.rounds && Object.keys(tournament.config.rounds).length > 0 && (
-            <Link
-              to={`/torneos/${id}/cuadro`}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', marginTop: '1rem', padding: '0.5rem 1.25rem', backgroundColor: '#EBF0FA', color: '#1B3A6E', borderRadius: '2rem', textDecoration: 'none', fontWeight: 700, fontSize: '0.85rem', border: '1.5px solid #C3D4F5' }}
-            >
-              🏆 Ver Cuadro del Torneo →
-            </Link>
           )}
         </div>
 
