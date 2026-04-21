@@ -32,6 +32,7 @@ const Tournaments = () => {
   const navigate = useNavigate();
   const [tournaments, setTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
 
   useEffect(() => {
     const fetch = async () => {
@@ -39,7 +40,13 @@ const Tournaments = () => {
         .from('tournaments')
         .select('id, name, status, config, created_at')
         .order('created_at', { ascending: false });
-      if (!error && data) setTournaments(data);
+      if (error) {
+        console.error('[Tournaments] fetch error:', error);
+        setFetchError(error.message || 'No se pudieron cargar los torneos');
+      } else if (data) {
+        console.log('[Tournaments] fetched', data.length, 'tournaments');
+        setTournaments(data);
+      }
       setLoading(false);
     };
     fetch();
@@ -86,7 +93,14 @@ const Tournaments = () => {
         </p>
       </header>
 
-      {tournaments.length === 0 ? (
+      {fetchError && (
+        <div style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '1rem', padding: '1rem 1.25rem', marginBottom: '1rem', color: '#B91C1C', fontSize: '0.85rem', fontWeight: 500 }}>
+          <strong style={{ display: 'block', marginBottom: '0.25rem' }}>Error al cargar torneos</strong>
+          {fetchError}
+        </div>
+      )}
+
+      {tournaments.length === 0 && !fetchError ? (
         <div style={{
           backgroundColor: 'white',
           borderRadius: '1.5rem',
