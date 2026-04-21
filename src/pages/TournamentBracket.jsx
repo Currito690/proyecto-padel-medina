@@ -155,10 +155,10 @@ export default function TournamentBracket() {
       <div style={{ background: 'linear-gradient(135deg, #1B3A6E 0%, #152D57 100%)', color: 'white', padding: 'clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2rem)', boxShadow: '0 4px 20px rgba(27,58,110,0.3)' }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           <Link
-            to={`/torneos/${id}`}
+            to="/"
             style={{ color: 'rgba(255,255,255,0.65)', textDecoration: 'none', fontSize: '0.82rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginBottom: '1rem' }}
           >
-            ← Inscripción
+            ← Volver a Reservas
           </Link>
           <h1 style={{ margin: '0 0 0.35rem', fontSize: 'clamp(1.5rem, 4vw, 2.25rem)', fontWeight: 900, letterSpacing: '-0.03em', color: 'white' }}>
             {tournament.name}

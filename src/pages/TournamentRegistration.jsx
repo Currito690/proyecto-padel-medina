@@ -254,6 +254,11 @@ export default function TournamentRegistration() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8FAFC', padding: 'clamp(1rem, 4vw, 2rem) 1rem' }} onMouseUp={() => setGridDragging(false)}>
       <style>{`@media (max-width: 480px) { .treg-main { padding: 1.25rem !important; border-radius: 1rem !important; } .treg-title { font-size: 1.5rem !important; } }`}</style>
+      <div style={{ maxWidth: '640px', margin: '0 auto 0.75rem' }}>
+        <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.9rem', padding: 0 }}>
+          ← Volver a Reservas
+        </button>
+      </div>
       <main className="treg-main" style={{ maxWidth: '640px', margin: '0 auto', backgroundColor: 'white', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
 
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
