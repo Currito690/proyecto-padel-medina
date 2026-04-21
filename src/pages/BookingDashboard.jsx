@@ -210,8 +210,124 @@ const BookingDashboard = () => {
     @media (max-width: 380px) {
       .booking-title { font-size: 1.5rem !important; }
       .booking-map iframe { height: 170px !important; }
+      .hero-title { font-size: 1.5rem !important; }
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulseDot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.55; transform: scale(0.85); }
+    }
+    @keyframes floatBlob {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      50% { transform: translate(8px, -6px) scale(1.05); }
+    }
+
+    .hero-card {
+      position: relative;
+      overflow: hidden;
+      border-radius: 1.5rem;
+      padding: 1.75rem 1.375rem 1.625rem;
+      background: linear-gradient(150deg, #1B3A6E 0%, #0F2550 100%);
+      color: white;
+      box-shadow: 0 16px 40px rgba(15, 37, 80, 0.28);
+      margin-bottom: 1rem;
+    }
+    .hero-blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(2px);
+      animation: floatBlob 6s ease-in-out infinite;
+      pointer-events: none;
+    }
+    .hero-title {
+      font-size: 1.7rem;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin: 0 0 0.5rem;
+      color: white;
+    }
+    .hero-subtitle {
+      font-size: 0.9rem;
+      color: rgba(255,255,255,0.78);
+      line-height: 1.5;
+      margin: 0 0 1.125rem;
+      max-width: 32ch;
+    }
+    @media (min-width: 640px) {
+      .hero-card { padding: 2.25rem 1.75rem; border-radius: 1.75rem; }
+      .hero-title { font-size: 2rem; }
+      .hero-subtitle { font-size: 0.95rem; }
+    }
+
+    .stats-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+      padding: 0.875rem 0.5rem;
+      background: white;
+      border: 1px solid var(--color-border);
+      border-radius: 1rem;
+      margin-bottom: 1.75rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem;
+      text-align: center;
+      min-width: 0;
+    }
+    .stat-item + .stat-item {
+      border-left: 1px solid var(--color-border);
+    }
+    .stat-value {
+      font-size: 0.95rem;
+      font-weight: 900;
+      color: var(--color-text-primary);
+      letter-spacing: -0.02em;
+    }
+    .stat-label {
+      font-size: 0.66rem;
+      font-weight: 700;
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    @media (min-width: 640px) {
+      .stat-value { font-size: 1.05rem; }
+      .stat-label { font-size: 0.72rem; }
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    @media (min-width: 640px) {
+      .features-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .feature-card {
+      background: white;
+      border: 1px solid var(--color-border);
+      border-radius: 1rem;
+      padding: 1rem 1.125rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.875rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .feature-icon {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
   `;
 
   const formatDate = (dateStr) => {
@@ -264,24 +380,59 @@ const BookingDashboard = () => {
           </div>
         )}
 
-        <header style={{ marginBottom: '2rem' }}>
-          <h1 className="sr-only">Padel Medina - Club de Pádel</h1>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.1em', background: 'var(--color-accent-light)', padding: '0.3rem 0.75rem', borderRadius: '2rem' }}>
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--color-accent)" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
-              Hola, {firstName}
+        <h1 className="sr-only">Padel Medina - Club de Pádel</h1>
+
+        {/* ── Hero ── */}
+        <section className="hero-card">
+          <span className="hero-blob" style={{ width: '180px', height: '180px', right: '-60px', top: '-60px', background: 'radial-gradient(circle, rgba(61,139,42,0.28), transparent 70%)' }} />
+          <span className="hero-blob" style={{ width: '140px', height: '140px', left: '-40px', bottom: '-50px', background: 'radial-gradient(circle, rgba(96,165,250,0.22), transparent 70%)', animationDelay: '1.5s' }} />
+
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.18)', padding: '0.35rem 0.75rem', borderRadius: '2rem', marginBottom: '1rem', backdropFilter: 'blur(8px)' }}>
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#4ADE80', animation: 'pulseDot 1.8s ease-in-out infinite', boxShadow: '0 0 8px rgba(74,222,128,0.8)' }} />
+            <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'white' }}>Hola, {firstName}</span>
+          </div>
+
+          <h2 className="hero-title">Tu club de pádel en Medina&nbsp;Sidonia</h2>
+          <p className="hero-subtitle">Reserva tu pista en segundos. Pádel y pickleball, abierto todos los días.</p>
+
+          <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem' }}>
+            <a
+              href="#pistas"
+              onClick={(e) => { e.preventDefault(); document.getElementById('pistas')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.65rem 1.1rem', borderRadius: '2rem', background: 'white', color: '#0F2550', fontWeight: 800, fontSize: '0.85rem', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,0,0,0.18)' }}
+            >
+              Reservar ahora
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
+              </svg>
+            </a>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.55rem 0.875rem', borderRadius: '2rem', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.16)', color: 'rgba(255,255,255,0.9)', fontSize: '0.75rem', fontWeight: 600 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+              Medina Sidonia, Cádiz
             </span>
           </div>
-          <h2 className="booking-title" style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: '0 0 0.875rem' }}>
-            ¿Dónde juegas hoy?
-          </h2>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: 'white', border: '1px solid var(--color-border)', borderRadius: '2rem', padding: '0.35rem 0.875rem' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
-            </svg>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Medina Sidonia, Cádiz</span>
+        </section>
+
+        {/* ── Stats strip ── */}
+        <div className="stats-strip">
+          <div className="stat-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2 Q16 6 16 12 Q16 18 12 22"/><path d="M12 2 Q8 6 8 12 Q8 18 12 22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+            <span className="stat-value">Pádel</span>
+            <span className="stat-label">y Pickleball</span>
           </div>
-        </header>
+          <div className="stat-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3D8B2A" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span className="stat-value">09:00–22:00</span>
+            <span className="stat-label">Todos los días</span>
+          </div>
+          <div className="stat-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+            <span className="stat-value">Online</span>
+            <span className="stat-label">Reserva 100%</span>
+          </div>
+        </div>
 
         {/* ── Próximos eventos ── */}
         {events.length > 0 && (
@@ -348,7 +499,7 @@ const BookingDashboard = () => {
           </div>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem', gap: '0.875rem' }}>
+        <div id="pistas" style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem', gap: '0.875rem', scrollMarginTop: '72px' }}>
           <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 800, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>Pistas disponibles</p>
           <div style={{ height: '1px', flex: 1, background: 'var(--color-border)' }} />
         </div>
@@ -434,6 +585,43 @@ const BookingDashboard = () => {
             <p style={{ margin: '0.1rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Abierto de 09:00 a 22:00 todos los días</p>
           </div>
         </div>
+
+        {/* ── ¿Por qué Padel Medina? ── */}
+        <section style={{ marginTop: '2rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.875rem', gap: '0.875rem' }}>
+            <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 800, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>Por qué Padel Medina</p>
+            <div style={{ height: '1px', flex: 1, background: 'var(--color-border)' }} />
+          </div>
+          <div className="features-grid">
+            <div className="feature-card">
+              <div className="feature-icon" style={{ background: '#EFF6FF' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 800, color: 'var(--color-text-primary)', letterSpacing: '-0.01em' }}>Reserva rápida</p>
+                <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>En menos de 30 segundos desde el móvil.</p>
+              </div>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon" style={{ background: '#F0FDF4' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 4 3 12 11 12"/></svg>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 800, color: 'var(--color-text-primary)', letterSpacing: '-0.01em' }}>Cancelación flexible</p>
+                <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>Hasta 24h antes, sin penalización.</p>
+              </div>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon" style={{ background: '#FFF7ED' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EA580C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 800, color: 'var(--color-text-primary)', letterSpacing: '-0.01em' }}>Torneos y eventos</p>
+                <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>Competiciones regulares para todos los niveles.</p>
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* ── Mapa ── */}
         <div className="booking-map" style={{ marginTop: '2rem' }}>
