@@ -96,14 +96,14 @@ const MainLayout = () => {
         .bottom-nav {
           position: fixed;
           bottom: 0; left: 0; right: 0;
-          background: rgba(255,255,255,0.93);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
+          background: rgba(255,255,255,0.96);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
           border-top: 1px solid rgba(226,232,240,0.8);
           display: flex;
           justify-content: space-around;
           align-items: stretch;
-          height: 64px;
+          height: 72px;
           padding-bottom: env(safe-area-inset-bottom);
           box-shadow: 0 -2px 16px rgba(0,0,0,0.06);
           z-index: 100;
@@ -115,35 +115,42 @@ const MainLayout = () => {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 3px;
+          gap: 5px;
           transition: color 0.2s;
           position: relative;
-          padding: 0 4px;
+          padding: 10px 6px 8px;
+          min-width: 0;
         }
         .nav-link-active { color: var(--color-accent); }
         .nav-link-inactive { color: var(--color-text-muted); }
-        .nav-active-dot {
+        .nav-active-pill {
           position: absolute;
-          top: 0; left: 50%;
+          top: 8px;
+          left: 50%;
           transform: translateX(-50%);
-          width: 20px; height: 3px;
-          background: var(--color-accent);
-          border-radius: 0 0 3px 3px;
+          width: 48px;
+          height: 32px;
+          background: var(--color-accent-light);
+          border-radius: 10px;
         }
         .nav-label {
           font-size: 0.62rem;
           font-weight: 700;
           letter-spacing: 0.01em;
           white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 100%;
         }
         .nav-icon-wrap {
           position: relative;
           display: inline-flex;
+          z-index: 1;
         }
         .nav-badge {
           position: absolute;
-          top: -6px;
-          right: -9px;
+          top: -5px;
+          right: -8px;
           min-width: 16px;
           height: 16px;
           padding: 0 4px;
@@ -160,8 +167,10 @@ const MainLayout = () => {
         }
 
         @media (min-width: 640px) {
-          .bottom-nav { height: 68px; }
-          .nav-label { font-size: 0.7rem; }
+          .bottom-nav { height: 76px; }
+          .nav-label { font-size: 0.68rem; }
+          .nav-link { padding: 12px 8px 8px; gap: 6px; }
+          .nav-active-pill { width: 52px; height: 34px; }
         }
 
         @media (min-width: 1024px) {
@@ -206,7 +215,7 @@ const MainLayout = () => {
                 to={path}
                 className={`nav-link ${active ? 'nav-link-active' : 'nav-link-inactive'}`}
               >
-                {active && <span className="nav-active-dot" />}
+                {active && <span className="nav-active-pill" />}
                 <span className="nav-icon-wrap">
                   {icon(active)}
                   {badge > 0 && <span className="nav-badge">{badge > 99 ? '99+' : badge}</span>}
