@@ -272,8 +272,8 @@ const BookingDashboard = () => {
               Hola, {firstName}
             </span>
           </div>
-          <h2 className="booking-title" style={{ fontSize: '2rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.04em', margin: '0 0 0.875rem', lineHeight: 1.1 }}>
-            ¿Dónde juegas<br />hoy?
+          <h2 className="booking-title" style={{ fontSize: '1.875rem', fontWeight: 900, color: 'var(--color-text-primary)', letterSpacing: '-0.03em', margin: '0 0 0.875rem' }}>
+            ¿Dónde juegas hoy?
           </h2>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: 'white', border: '1px solid var(--color-border)', borderRadius: '2rem', padding: '0.35rem 0.875rem' }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
