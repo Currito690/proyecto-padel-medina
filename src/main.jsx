@@ -21,3 +21,16 @@ createRoot(document.getElementById('root')).render(
     </MemoryRouter>
   </StrictMode>,
 )
+
+// Eliminar el loader inicial en el primer frame que React pinta
+// (antes se hacía en window.load que espera TODOS los recursos — mucho más tarde)
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    const loader = document.getElementById('initial-loader');
+    if (loader) {
+      loader.style.transition = 'opacity 0.15s';
+      loader.style.opacity = '0';
+      setTimeout(() => loader.remove(), 150);
+    }
+  });
+});
