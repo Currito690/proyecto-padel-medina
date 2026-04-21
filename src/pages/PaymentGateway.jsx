@@ -14,6 +14,9 @@ const PaymentGateway = () => {
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
   const [clubHours, setClubHours] = useState(null);
+  // allowedByRules: métodos permitidos por reglas admin (pista+franja).
+  // null mientras carga; luego string[] (intersección de todos los items del carrito).
+  const [allowedByRules, setAllowedByRules] = useState(null);
 
   // Calcular si el pago en club está disponible ahora (por día y hora)
   const { isClubOpen, clubOpenTime } = (() => {
@@ -42,6 +45,29 @@ const PaymentGateway = () => {
       .then(({ data }) => { if (data?.club_hours) setClubHours(data.club_hours); });
   }, []);
 
+  // Cargar reglas de métodos de pago por pista+franja y calcular intersección
+  useEffect(() => {
+    if (items.length === 0) { setAllowedByRules(null); return; }
+    const ALL = ['redsys', 'bizum', 'club'];
+    const courtIds = [...new Set(items.map(i => i.courtId))];
+    supabase.from('court_payment_rules')
+      .select('court_id, time_slot, methods')
+      .in('court_id', courtIds)
+      .then(({ data }) => {
+        const ruleMap = {};
+        (data || []).forEach(r => {
+          if (!ruleMap[r.court_id]) ruleMap[r.court_id] = {};
+          ruleMap[r.court_id][r.time_slot] = r.methods || [];
+        });
+        const perItem = items.map(i => {
+          const methods = ruleMap[i.courtId]?.[i.timeSlot];
+          return methods === undefined ? ALL : methods;
+        });
+        const intersection = ALL.filter(m => perItem.every(arr => arr.includes(m)));
+        setAllowedByRules(intersection);
+      });
+  }, [items]);
+
   // Si el club no está abierto y el método es 'club', cambiar a 'redsys'
   useEffect(() => {
     if (!isClubOpen && paymentMethod === 'club') setPaymentMethod('redsys');
@@ -53,6 +79,15 @@ const PaymentGateway = () => {
       setPaymentMethod('club');
     }
   }, [items.length, paymentMethod]);
+
+  // Si el método actual no está permitido por las reglas admin, cambiar al primero disponible
+  useEffect(() => {
+    if (!allowedByRules) return;
+    if (allowedByRules.length === 0) return;
+    if (!allowedByRules.includes(paymentMethod)) {
+      setPaymentMethod(allowedByRules[0]);
+    }
+  }, [allowedByRules, paymentMethod]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
@@ -253,27 +288,43 @@ const PaymentGateway = () => {
             {/* Selector método — oculto si es gratis */}
             {!isFree && (
               <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
-                <button
-                  onClick={() => !isMulti && setPaymentMethod('redsys')}
-                  disabled={isMulti}
-                  className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
-                  title={isMulti ? 'Sólo disponible con una reserva' : ''}
-                >
-                  💳 Tarjeta
-                </button>
-                <button
-                  onClick={() => !isMulti && setPaymentMethod('bizum')}
-                  disabled={isMulti}
-                  className={`pay-tab ${paymentMethod === 'bizum' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
-                  title={isMulti ? 'Sólo disponible con una reserva' : ''}
-                >
-                  📱 Bizum
-                </button>
-                {isClubOpen && (
+                {(!allowedByRules || allowedByRules.includes('redsys')) && (
+                  <button
+                    onClick={() => !isMulti && setPaymentMethod('redsys')}
+                    disabled={isMulti}
+                    className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
+                    title={isMulti ? 'Sólo disponible con una reserva' : ''}
+                  >
+                    💳 Tarjeta
+                  </button>
+                )}
+                {(!allowedByRules || allowedByRules.includes('bizum')) && (
+                  <button
+                    onClick={() => !isMulti && setPaymentMethod('bizum')}
+                    disabled={isMulti}
+                    className={`pay-tab ${paymentMethod === 'bizum' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
+                    title={isMulti ? 'Sólo disponible con una reserva' : ''}
+                  >
+                    📱 Bizum
+                  </button>
+                )}
+                {isClubOpen && (!allowedByRules || allowedByRules.includes('club')) && (
                   <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
                     🏪 Club
                   </button>
                 )}
+              </div>
+            )}
+
+            {allowedByRules && allowedByRules.length === 0 && !isFree && (
+              <div style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '0.75rem', padding: '1rem 1.125rem', marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 800, color: '#991B1B', fontSize: '0.88rem' }}>No hay métodos de pago disponibles</p>
+                  <p style={{ margin: '0.15rem 0 0', fontSize: '0.8rem', color: '#B91C1C', lineHeight: 1.5 }}>El administrador ha bloqueado el pago en esta franja. Elige otra pista u hora, o contacta con el club.</p>
+                </div>
               </div>
             )}
 
@@ -290,6 +341,7 @@ const PaymentGateway = () => {
               </div>
             )}
 
+            {!(allowedByRules && allowedByRules.length === 0 && !isFree) && (
             <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
               {isFree ? (
                 <div style={{ padding: '2rem 1.5rem', textAlign: 'center' }}>
@@ -404,6 +456,7 @@ const PaymentGateway = () => {
                 </div>
               )}
             </div>
+            )}
           </div>
 
           {/* ── Resumen del pedido ── */}

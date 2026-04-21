@@ -210,6 +210,53 @@ const AdminDashboard = () => {
   const [courtPriceEdits, setCourtPriceEdits] = useState({});
   const [savingCourtPrice, setSavingCourtPrice] = useState(null);
   const [courtPriceMsg, setCourtPriceMsg] = useState({});
+  // paymentRules[courtId][timeSlot] = string[] de métodos permitidos.
+  // Sin entrada => todos los métodos permitidos (comportamiento por defecto).
+  const [paymentRules, setPaymentRules] = useState({});
+  const [expandedPaymentCourt, setExpandedPaymentCourt] = useState(null);
+  const [savingPaymentCell, setSavingPaymentCell] = useState(null); // `${courtId}-${slot}-${method}`
+
+  const ALL_METHODS = ['redsys', 'bizum', 'club'];
+  const METHOD_LABELS = { redsys: 'Tarjeta', bizum: 'Bizum', club: 'Club' };
+
+  const getAllowedMethods = (courtId, slot) => {
+    const entry = paymentRules[courtId]?.[slot];
+    return entry === undefined ? ALL_METHODS : entry;
+  };
+
+  const togglePaymentMethod = async (courtId, slot, method) => {
+    const current = getAllowedMethods(courtId, slot);
+    const next = current.includes(method)
+      ? current.filter(m => m !== method)
+      : [...current, method];
+
+    const cellKey = `${courtId}-${slot}-${method}`;
+    setSavingPaymentCell(cellKey);
+
+    // Optimistic update
+    setPaymentRules(prev => ({
+      ...prev,
+      [courtId]: { ...(prev[courtId] || {}), [slot]: next },
+    }));
+
+    const { error } = await supabase
+      .from('court_payment_rules')
+      .upsert(
+        { court_id: courtId, time_slot: slot, methods: next, updated_at: new Date().toISOString() },
+        { onConflict: 'court_id,time_slot' }
+      );
+
+    setSavingPaymentCell(null);
+    if (error) {
+      console.error('Error guardando regla de pago:', error);
+      alert('Error al guardar: ' + error.message);
+      // Revert
+      setPaymentRules(prev => ({
+        ...prev,
+        [courtId]: { ...(prev[courtId] || {}), [slot]: current },
+      }));
+    }
+  };
 
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked] = await Promise.all([
@@ -274,6 +321,20 @@ const AdminDashboard = () => {
         const loaded = data || [];
         courtsRef.current = loaded;
         setCourts(loaded);
+
+        // Cargar reglas de métodos de pago por pista+franja
+        const { data: rulesData } = await supabase
+          .from('court_payment_rules')
+          .select('court_id, time_slot, methods');
+        if (rulesData) {
+          const rulesMap = {};
+          rulesData.forEach(r => {
+            if (!rulesMap[r.court_id]) rulesMap[r.court_id] = {};
+            rulesMap[r.court_id][r.time_slot] = r.methods || [];
+          });
+          setPaymentRules(rulesMap);
+        }
+
         if (loaded.length > 0) await loadSlots(selectedDate);
       } finally {
         setLoading(false);
@@ -1043,6 +1104,80 @@ const AdminDashboard = () => {
                             {msg?.type === 'error' && <span style={{ fontSize: '0.78rem', color: '#DC2626', fontWeight: 700 }}>Error: {msg.text}</span>}
                             {court.price == null && !isDirty && (
                               <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>(precio global: {siteSettings.court_price} €)</span>
+                            )}
+                          </div>
+
+                          {/* Métodos de pago por franja */}
+                          <div style={{ marginTop: '0.875rem', paddingTop: '0.875rem', borderTop: '1px dashed #E2E8F0' }}>
+                            <button
+                              onClick={() => setExpandedPaymentCourt(expandedPaymentCourt === court.id ? null : court.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.75rem', borderRadius: '0.5rem', background: expandedPaymentCourt === court.id ? '#EFF6FF' : '#F8FAFC', border: `1.5px solid ${expandedPaymentCourt === court.id ? '#BFDBFE' : '#E2E8F0'}`, color: expandedPaymentCourt === court.id ? '#1D4ED8' : '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+                              </svg>
+                              Métodos de pago por franja
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expandedPaymentCourt === court.id ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>
+                                <polyline points="6 9 12 15 18 9"/>
+                              </svg>
+                            </button>
+
+                            {expandedPaymentCourt === court.id && (
+                              <div style={{ marginTop: '0.75rem', background: '#F8FAFC', borderRadius: '0.75rem', padding: '0.75rem', border: '1px solid #E2E8F0' }}>
+                                <p style={{ margin: '0 0 0.625rem', fontSize: '0.72rem', color: '#64748B', lineHeight: 1.45 }}>
+                                  Marca qué métodos quedan disponibles en cada franja. Sin marcas en una franja, los clientes no podrán pagar (la reserva queda bloqueada).
+                                </p>
+                                <div style={{ overflowX: 'auto' }}>
+                                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', minWidth: '360px' }}>
+                                    <thead>
+                                      <tr>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.5rem', fontWeight: 700, color: '#64748B', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Franja</th>
+                                        {ALL_METHODS.map(m => (
+                                          <th key={m} style={{ textAlign: 'center', padding: '0.4rem 0.5rem', fontWeight: 700, color: '#64748B', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{METHOD_LABELS[m]}</th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {TIMES.map(slot => {
+                                        const allowed = getAllowedMethods(court.id, slot);
+                                        return (
+                                          <tr key={slot} style={{ borderTop: '1px solid #E2E8F0' }}>
+                                            <td style={{ padding: '0.45rem 0.5rem', color: '#0F172A', fontWeight: 600, whiteSpace: 'nowrap' }}>{slot}</td>
+                                            {ALL_METHODS.map(m => {
+                                              const checked = allowed.includes(m);
+                                              const saving = savingPaymentCell === `${court.id}-${slot}-${m}`;
+                                              return (
+                                                <td key={m} style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
+                                                  <button
+                                                    onClick={() => !saving && togglePaymentMethod(court.id, slot, m)}
+                                                    disabled={saving}
+                                                    aria-label={`${checked ? 'Desactivar' : 'Activar'} ${METHOD_LABELS[m]} en ${slot}`}
+                                                    style={{
+                                                      width: '26px', height: '26px', borderRadius: '0.5rem',
+                                                      border: `1.5px solid ${checked ? '#16A34A' : '#CBD5E1'}`,
+                                                      background: checked ? '#16A34A' : 'white',
+                                                      cursor: saving ? 'wait' : 'pointer',
+                                                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                                      transition: 'all 0.15s',
+                                                      opacity: saving ? 0.6 : 1,
+                                                    }}
+                                                  >
+                                                    {checked && (
+                                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                                        <polyline points="20 6 9 17 4 12"/>
+                                                      </svg>
+                                                    )}
+                                                  </button>
+                                                </td>
+                                              );
+                                            })}
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
                             )}
                           </div>
                         </div>
