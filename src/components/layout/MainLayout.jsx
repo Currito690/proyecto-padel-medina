@@ -192,6 +192,9 @@ const MainLayout = () => {
 
         <main className="main-content">
           <Outlet />
+          <footer style={{ textAlign: 'center', padding: '1rem 1rem 0.5rem', color: 'var(--color-text-muted)', fontSize: '0.7rem', fontWeight: 500 }}>
+            © {new Date().getFullYear()} Dimana STUDIO
+          </footer>
         </main>
 
         <nav className="bottom-nav">
