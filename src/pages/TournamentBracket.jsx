@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 
 const getRoundName = (roundIndex, totalRounds) => {
@@ -95,6 +95,7 @@ function MatchCard({ match, isCons, compact = false }) {
 
 export default function TournamentBracket() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [tournament, setTournament] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -154,12 +155,12 @@ export default function TournamentBracket() {
       {/* Header */}
       <div style={{ background: 'linear-gradient(135deg, #1B3A6E 0%, #152D57 100%)', color: 'white', padding: 'clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2rem)', boxShadow: '0 4px 20px rgba(27,58,110,0.3)' }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-          <Link
-            to="/"
-            style={{ color: 'rgba(255,255,255,0.65)', textDecoration: 'none', fontSize: '0.82rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginBottom: '1rem' }}
+          <button
+            onClick={() => navigate(-1)}
+            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.75)', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '1rem', padding: 0 }}
           >
-            ← Volver a Reservas
-          </Link>
+            ← Volver
+          </button>
           <h1 style={{ margin: '0 0 0.35rem', fontSize: 'clamp(1.5rem, 4vw, 2.25rem)', fontWeight: 900, letterSpacing: '-0.03em', color: 'white' }}>
             {tournament.name}
           </h1>
