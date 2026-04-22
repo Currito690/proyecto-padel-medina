@@ -131,9 +131,14 @@ export default function EventsManager() {
   };
 
   const togglePublish = async (ev) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('events').update({ published: !ev.published }).eq('id', ev.id).select().single();
-    if (data) setEvents(prev => prev.map(e => e.id === data.id ? data : e));
+    if (error || !data) {
+      console.error('togglePublish error:', error);
+      alert('No se pudo actualizar el evento. Verifica que estás logeado como admin y que la migración RLS de events está aplicada en Supabase.');
+      return;
+    }
+    setEvents(prev => prev.map(e => e.id === data.id ? data : e));
   };
 
   const notifyPlayers = async (ev) => {
@@ -157,11 +162,25 @@ export default function EventsManager() {
   const deleteEvent = async (evId) => {
     if (!window.confirm('¿Eliminar este evento? No se puede deshacer.')) return;
     const ev = events.find(e => e.id === evId);
+
+    const { error, count } = await supabase
+      .from('events')
+      .delete({ count: 'exact' })
+      .eq('id', evId);
+    if (error) {
+      alert('Error al eliminar el evento: ' + error.message);
+      return;
+    }
+    if (count === 0) {
+      alert('No se pudo eliminar el evento. Posiblemente lo creó otra sesión de admin y la política RLS lo bloquea. Aplica la migración 20260422_events_admin_full.sql en Supabase.');
+      return;
+    }
+
+    // Cartel: borrar solo si la fila se eliminó de verdad
     if (ev?.poster_url) {
       const path = ev.poster_url.split('/event-posters/').pop();
       if (path) await supabase.storage.from('event-posters').remove([decodeURIComponent(path)]);
     }
-    await supabase.from('events').delete().eq('id', evId);
     setEvents(prev => prev.filter(e => e.id !== evId));
   };
 
