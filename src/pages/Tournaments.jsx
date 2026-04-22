@@ -44,8 +44,9 @@ const Tournaments = () => {
         console.error('[Tournaments] fetch error:', error);
         setFetchError(error.message || 'No se pudieron cargar los torneos');
       } else if (data) {
-        console.log('[Tournaments] fetched', data.length, 'tournaments');
-        setTournaments(data);
+        const visible = data.filter(t => t.status !== 'draft');
+        console.log('[Tournaments] fetched', visible.length, 'tournaments (', data.length - visible.length, 'drafts ocultos)');
+        setTournaments(visible);
       }
       setLoading(false);
     };

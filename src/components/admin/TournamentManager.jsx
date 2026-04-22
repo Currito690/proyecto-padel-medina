@@ -44,10 +44,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const savedData = loadSavedState();
-  console.log("DEBUG: TournamentManager rendered, publishedId =", savedData?.publishedId);
-  const [phase, setPhase] = useState(savedData?.phase || 'config'); 
-  const [publishedId, setPublishedId] = useState(savedData?.publishedId || null);
+  const [phase, setPhase] = useState(savedData?.phase || 'config');
+  // publishedId == tournamentKey desde el momento que el torneo existe en DB
+  // (todos se crean ya en Supabase). Se mantiene como estado por compatibilidad.
+  const [publishedId, setPublishedId] = useState(tournamentKey);
   const [syncing, setSyncing] = useState(false);
+  const [dbLoaded, setDbLoaded] = useState(false);
+  const [dbStatus, setDbStatus] = useState('draft');
   
   const [tConfig, setTConfig] = useState(() => {
     const fallback = {
@@ -108,6 +111,63 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
   }, [phase, tConfig, participants, rounds, consRounds, publishedId, tournamentKey]);
 
+  // Fetch desde Supabase al montar. La DB es la fuente de verdad: si trae datos,
+  // sobrescribe el estado local para que lo que se haya guardado desde otro
+  // dispositivo se refleje al abrir el editor aquí.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('tournaments')
+          .select('config, status, name')
+          .eq('id', tournamentKey)
+          .single();
+        if (cancelled) return;
+        if (error) {
+          console.warn('No se pudo cargar el torneo desde DB:', error.message);
+          setDbLoaded(true);
+          return;
+        }
+        if (data) {
+          setDbStatus(data.status || 'draft');
+          const cfg = data.config || {};
+          const hasDbData = !!(cfg.startDate || cfg.name || cfg.categories
+            || (cfg.rounds && Object.keys(cfg.rounds).length)
+            || (cfg.participants && cfg.participants.length));
+          if (hasDbData) {
+            const { rounds: dbRounds, consRounds: dbConsRounds, participants: dbParticipants, phase: dbPhase, ...dbTConfig } = cfg;
+            if (data.name && !dbTConfig.name) dbTConfig.name = data.name;
+            setTConfig(prev => ({ ...prev, ...dbTConfig }));
+            if (dbRounds && typeof dbRounds === 'object') setRounds(dbRounds);
+            if (dbConsRounds && typeof dbConsRounds === 'object') setConsRounds(dbConsRounds);
+            if (Array.isArray(dbParticipants)) setParticipants(dbParticipants);
+            if (dbPhase) setPhase(dbPhase);
+          }
+        }
+        setDbLoaded(true);
+      } catch (e) {
+        console.warn('Error cargando torneo:', e);
+        setDbLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tournamentKey]);
+
+  // Autosave a Supabase (debounced 1.2s) — solo después de haber cargado de DB
+  // para no pisar datos remotos con estado local inicial.
+  useEffect(() => {
+    if (!dbLoaded) return;
+    const timer = setTimeout(() => {
+      const config = { ...tConfig, rounds, consRounds, participants, phase };
+      supabase.from('tournaments')
+        .update({ config, name: tConfig.name || 'Torneo' })
+        .eq('id', tournamentKey)
+        .then(({ error }) => { if (error) console.warn('Autosave torneo falló:', error.message); });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [dbLoaded, tournamentKey, tConfig, rounds, consRounds, participants, phase]);
+
   // Helper: get available courts count for a given slot hour
   const getAvailableCourtsForHour = (hourStr, courtsCount, courtStartHours) => {
     if (!courtStartHours || Object.keys(courtStartHours).length === 0) return courtsCount;
@@ -166,18 +226,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   const handlePublish = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data, error } = await supabase.from('tournaments')
-        .insert({ name: tConfig.name, config: tConfig, admin_id: user?.id })
-        .select()
-        .single();
-        
+      const config = { ...tConfig, rounds, consRounds, participants, phase };
+      const { error } = await supabase.from('tournaments')
+        .update({ name: tConfig.name || 'Torneo', config, status: 'open' })
+        .eq('id', tournamentKey);
       if (error) throw error;
-      setPublishedId(data.id);
-      alert('¡Torneo publicado! Ya puedes enviar el enlace a los jugadores.');
+      setPublishedId(tournamentKey);
+      setDbStatus('open');
+      alert('¡Torneo publicado! Ya aparece en la página pública y puedes enviar el enlace a los jugadores.');
     } catch (e) {
       console.error(e);
-      alert('Error al publicar el torneo. Comprueba tu conexión o verifica que la base de datos esté lista.');
+      alert('Error al publicar el torneo: ' + (e.message || e));
     }
   };
 
@@ -1415,7 +1474,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <p className="section-label" style={{ margin: 0 }}>{tConfig.name ? `Fase 2: Inscripción - ${tConfig.name}` : 'Inscripción de Torneo'}</p>
 
           <div className="tm-btn-group">
-            {!publishedId ? (
+            {dbStatus === 'draft' ? (
               <button onClick={handlePublish} style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#3B82F6', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                 Publicar Link
@@ -2152,36 +2211,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 };
 
 const TournamentManager = () => {
-  const [tournaments, setTournaments] = useState(() => {
-    try {
-      const saved = localStorage.getItem('padel_medina_tournaments_list');
-      if (saved) return JSON.parse(saved);
-    } catch (e) { }
-    // Migration: si existe el torneo antiguo unificado, lo metemos en la lista.
-    if (localStorage.getItem('padel_medina_current_tournament')) {
-       const legacyData = JSON.parse(localStorage.getItem('padel_medina_current_tournament'));
-       const legacyId = 'legacy_1';
-       localStorage.setItem(`padel_medina_tournament_${legacyId}`, JSON.stringify(legacyData));
-       localStorage.removeItem('padel_medina_current_tournament');
-       const nName = legacyData.tConfig?.name || 'Torneo Activo';
-       const newList = [{ id: legacyId, name: nName, date: new Date().toISOString() }];
-       localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
-       return newList;
-    }
-    return [];
-  });
+  const [tournaments, setTournaments] = useState([]);
+  const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState(null);
 
-  const [activeId, setActiveId] = useState(() => {
-    const saved = localStorage.getItem('adminActiveTournamentId');
-    // Only restore if the tournament still exists
-    if (saved) {
-      try {
-        const list = JSON.parse(localStorage.getItem('padel_medina_tournaments_list') || '[]');
-        if (list.some(t => t.id === saved)) return saved;
-      } catch {}
-    }
-    return null;
-  });
+  const [activeId, setActiveId] = useState(() => localStorage.getItem('adminActiveTournamentId') || null);
 
   const setActiveIdPersist = (id) => {
     setActiveId(id);
@@ -2189,40 +2223,103 @@ const TournamentManager = () => {
     else localStorage.removeItem('adminActiveTournamentId');
   };
 
-  const createNewTournament = () => {
-     const newId = Date.now().toString();
-     const newList = [...tournaments, { id: newId, name: 'Nuevo Torneo', date: new Date().toISOString() }];
-     setTournaments(newList);
-     localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
-     setActiveIdPersist(newId);
+  const fetchTournaments = async () => {
+    setListError(null);
+    const { data, error } = await supabase
+      .from('tournaments')
+      .select('id, name, status, config, created_at')
+      .order('created_at', { ascending: false });
+    if (error) {
+      setListError(error.message || 'Error al cargar torneos');
+      setLoadingList(false);
+      return;
+    }
+    setTournaments((data || []).map(t => ({
+      id: t.id,
+      name: t.name || 'Sin nombre',
+      date: t.created_at,
+      status: t.status,
+      config: t.config || {},
+    })));
+    setLoadingList(false);
   };
 
-  const deleteTournament = (id) => {
-     if (window.confirm('¿Estás seguro de que quieres eliminar este torneo permanentemente?')) {
-        const newList = tournaments.filter(t => t.id !== id);
-        setTournaments(newList);
-        localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
-        localStorage.removeItem(`padel_medina_tournament_${id}`);
-     }
+  useEffect(() => {
+    fetchTournaments();
+    // Migración puntual: si quedó lista vieja en localStorage y no hay torneos en DB,
+    // la subimos a Supabase una vez para no perder nada.
+    (async () => {
+      try {
+        const legacy = localStorage.getItem('padel_medina_tournaments_list');
+        if (!legacy) return;
+        const list = JSON.parse(legacy);
+        if (!Array.isArray(list) || list.length === 0) return;
+        const { data: existing } = await supabase.from('tournaments').select('id').limit(1);
+        if (existing && existing.length > 0) {
+          // Ya hay torneos en DB: solo limpiamos el legacy, no migramos para evitar duplicados.
+          localStorage.removeItem('padel_medina_tournaments_list');
+          return;
+        }
+        const { data: { user } } = await supabase.auth.getUser();
+        const rows = list.map(t => {
+          let cfg = {};
+          try { cfg = JSON.parse(localStorage.getItem(`padel_medina_tournament_${t.id}`) || '{}'); } catch {}
+          const config = { ...(cfg.tConfig || {}), rounds: cfg.rounds || {}, consRounds: cfg.consRounds || {}, participants: cfg.participants || [], phase: cfg.phase || 'config' };
+          return { name: t.name || 'Sin nombre', config, status: 'draft', admin_id: user?.id || null };
+        });
+        await supabase.from('tournaments').insert(rows);
+        localStorage.removeItem('padel_medina_tournaments_list');
+        fetchTournaments();
+      } catch (e) {
+        console.warn('Migración de torneos localStorage → DB falló:', e);
+      }
+    })();
+  }, []);
+
+  const createNewTournament = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('tournaments')
+      .insert({ name: 'Nuevo Torneo', config: {}, status: 'draft', admin_id: user?.id || null })
+      .select('id, name, status, config, created_at')
+      .single();
+    if (error) {
+      alert('Error al crear torneo: ' + error.message);
+      return;
+    }
+    setTournaments(prev => [{ id: data.id, name: data.name, date: data.created_at, status: data.status, config: data.config || {} }, ...prev]);
+    setActiveIdPersist(data.id);
   };
 
-  const updateTournamentName = (id, newName) => {
-     if (!newName) return;
-     const newList = tournaments.map(t => t.id === id ? { ...t, name: newName } : t);
-     setTournaments(newList);
-     localStorage.setItem('padel_medina_tournaments_list', JSON.stringify(newList));
+  const deleteTournament = async (id) => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar este torneo permanentemente?')) return;
+    const { error } = await supabase.from('tournaments').delete().eq('id', id);
+    if (error) {
+      alert('Error al eliminar: ' + error.message);
+      return;
+    }
+    setTournaments(prev => prev.filter(t => t.id !== id));
+    localStorage.removeItem(`padel_medina_tournament_${id}`);
+  };
+
+  const updateTournamentName = async (id, newName) => {
+    if (!newName) return;
+    setTournaments(prev => prev.map(t => t.id === id ? { ...t, name: newName } : t));
+    const { error } = await supabase.from('tournaments').update({ name: newName }).eq('id', id);
+    if (error) console.warn('Error actualizando nombre:', error);
   };
 
   if (activeId) {
      return <TournamentEditor tournamentKey={activeId} onBack={(newName) => {
          if (newName) updateTournamentName(activeId, newName);
          setActiveIdPersist(null);
+         fetchTournaments();
      }} />;
   }
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '1rem' }}>
-       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 900, color: '#0F172A' }}>Mis Torneos</h1>
             <p style={{ margin: '0.2rem 0 0', color: '#64748B', fontSize: '0.9rem' }}>Gestiona tus competiciones activas y crea nuevas.</p>
@@ -2232,41 +2329,55 @@ const TournamentManager = () => {
           </button>
        </div>
 
-       {tournaments.length === 0 ? (
+       {listError && (
+          <div style={{ padding: '1rem 1.25rem', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '0.75rem', color: '#B91C1C', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Error: {listError}
+          </div>
+       )}
+
+       {loadingList ? (
+          <div style={{ padding: '3rem', textAlign: 'center' }}>
+            <div style={{ width: '32px', height: '32px', border: '3px solid #E2E8F0', borderTopColor: '#0F172A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+       ) : tournaments.length === 0 ? (
           <div style={{ padding: '3rem', textAlign: 'center', backgroundColor: '#F8FAFC', borderRadius: '1rem', border: '1px dashed #CBD5E1' }}>
              <p style={{ color: '#64748B', fontSize: '1.1rem', fontWeight: 600 }}>No hay torneos creados activos.</p>
              <p style={{ color: '#94A3B8', fontSize: '0.9rem' }}>Haz clic en el botón superior para empezar uno nuevo.</p>
           </div>
        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
-             {tournaments.map(t => (
-                <div key={t.id} style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' }}>
+             {tournaments.map(t => {
+                const startDate = t.config?.startDate;
+                const endDate = t.config?.endDate;
+                const isPublished = t.status && t.status !== 'draft';
+                return (
+                <div key={t.id} style={{ backgroundColor: 'white', padding: '1.25rem', borderRadius: '1rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                    <div>
-                      <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1E293B' }}>{t.name}</h3>
-                      {(() => {
-                        try {
-                          const d = JSON.parse(localStorage.getItem(`padel_medina_tournament_${t.id}`) || '{}');
-                          const { startDate, endDate } = d.tConfig || {};
-                          if (startDate && endDate) return (
-                            <p style={{ margin: '0.2rem 0 0', fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>
-                              {fmtDateDisplay(startDate)} — {fmtDateDisplay(endDate)}
-                            </p>
-                          );
-                        } catch {}
-                        return null;
-                      })()}
-                      <span style={{ fontSize: '0.75rem', color: '#94A3B8' }}>Creado: {new Date(t.date).toLocaleDateString()}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.3rem' }}>
+                        <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#1E293B' }}>{t.name}</h3>
+                        <span style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0.15rem 0.5rem', borderRadius: '999px', backgroundColor: isPublished ? '#DCFCE7' : '#F1F5F9', color: isPublished ? '#15803D' : '#64748B' }}>
+                          {isPublished ? 'Publicado' : 'Borrador'}
+                        </span>
+                      </div>
+                      {startDate && endDate && (
+                        <p style={{ margin: '0.2rem 0 0', fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>
+                          {fmtDateDisplay(startDate)} — {fmtDateDisplay(endDate)}
+                        </p>
+                      )}
+                      <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>Creado: {new Date(t.date).toLocaleDateString('es-ES')}</span>
                    </div>
                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
-                      <button onClick={() => setActiveIdPersist(t.id)} style={{ flex: 1, padding: '0.6rem', borderRadius: '0.5rem', backgroundColor: '#0F172A', color: 'white', fontWeight: 600, border: 'none', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <button onClick={() => setActiveIdPersist(t.id)} style={{ flex: 1, padding: '0.65rem', borderRadius: '0.5rem', backgroundColor: '#0F172A', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.85rem', minHeight: '40px' }}>
                          Abrir / Editar
                       </button>
-                      <button onClick={() => deleteTournament(t.id)} style={{ padding: '0.6rem', borderRadius: '0.5rem', backgroundColor: '#FEE2E2', color: '#EF4444', fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <button aria-label="Eliminar torneo" onClick={() => deleteTournament(t.id)} style={{ padding: '0.65rem 0.75rem', borderRadius: '0.5rem', backgroundColor: '#FEE2E2', color: '#EF4444', fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40px' }}>
                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                       </button>
                    </div>
                 </div>
-             ))}
+             );
+             })}
           </div>
        )}
     </div>
