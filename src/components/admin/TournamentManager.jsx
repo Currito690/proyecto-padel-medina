@@ -2103,8 +2103,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                </div>
 
               {[
-                { title: `🥇 P. ${cat}`, data: catRounds, isCons: false, id: `export-main-${cat.replace(/\s+/g, '_')}` },
-                { title: `🥈 C. ${cat}`, data: catCons, isCons: true, id: `export-cons-${cat.replace(/\s+/g, '_')}` }
+                { title: `🥇 Principal · ${cat}`, data: catRounds, isCons: false, id: `export-main-${cat.replace(/\s+/g, '_')}` },
+                { title: `🥈 Consolación · ${cat}`, data: catCons, isCons: true, id: `export-cons-${cat.replace(/\s+/g, '_')}` }
               ].map(bracket => {
                 if (!bracket.data || bracket.data.length === 0) return null;
                 const swapKey = `${bracket.isCons}-${cat}`;
