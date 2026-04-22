@@ -9,6 +9,7 @@ const MyBookings = () => {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagoOk, setPagoOk] = useState(false);
+  const [cancelSettings, setCancelSettings] = useState({ enabled: true, hours: 24 });
 
   const sendConfirmationEmail = (booking) => {
     if (!user?.email) return;
@@ -86,6 +87,19 @@ const MyBookings = () => {
     } else {
       loadBookings();
     }
+
+    (async () => {
+      const { data } = await supabase
+        .from('site_settings')
+        .select('cancellation_enabled, cancellation_hours')
+        .single();
+      if (data) {
+        setCancelSettings({
+          enabled: data.cancellation_enabled ?? true,
+          hours: data.cancellation_hours ?? 24,
+        });
+      }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -109,14 +123,19 @@ const MyBookings = () => {
   };
 
   const isCancelable = (dateStr, timeStr) => {
+    if (!cancelSettings.enabled) return false;
     if (!dateStr || !timeStr) return true;
     const bookingDateTime = new Date(`${dateStr}T${timeStr.split(' - ')[0]}:00`);
-    return (bookingDateTime - new Date()) / (1000 * 60 * 60) >= 24;
+    return (bookingDateTime - new Date()) / (1000 * 60 * 60) >= cancelSettings.hours;
   };
 
   const cancelBooking = async (booking) => {
+    if (!cancelSettings.enabled) {
+      alert('La cancelación de reservas está desactivada. Contacta con el club.');
+      return;
+    }
     if (!isCancelable(booking.date, booking.time_slot)) {
-      alert('Las reservas no se pueden cancelar con menos de 24 horas de antelación.');
+      alert(`Las reservas no se pueden cancelar con menos de ${cancelSettings.hours} horas de antelación.`);
       return;
     }
     if (!window.confirm('¿Cancelar esta reserva?')) return;
@@ -228,7 +247,9 @@ const MyBookings = () => {
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                             </svg>
-                            <span style={{ fontSize: '.75rem', color: '#94A3B8', fontWeight: 600 }}>{'< 24h'}</span>
+                            <span style={{ fontSize: '.75rem', color: '#94A3B8', fontWeight: 600 }}>
+                              {cancelSettings.enabled ? `< ${cancelSettings.hours}h` : 'No cancelable'}
+                            </span>
                           </div>
                         )}
                       </div>

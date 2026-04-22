@@ -185,7 +185,7 @@ const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('adminActiveTab') || 'schedule');
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const DEFAULT_CLUB_HOURS = { 0:'00:00', 1:'00:00', 2:'00:00', 3:'00:00', 4:'00:00', 5:'00:00', 6:'00:00' };
-  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS });
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS, cancellation_enabled: true, cancellation_hours: 24 });
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -314,6 +314,8 @@ const AdminDashboard = () => {
             slots_release_time: settingsData.slots_release_time || '00:00',
             club_open_time: settingsData.club_open_time || '00:00',
             club_hours: settingsData.club_hours || DEFAULT_CLUB_HOURS,
+            cancellation_enabled: settingsData.cancellation_enabled ?? true,
+            cancellation_hours: settingsData.cancellation_hours ?? 24,
           });
         }
 
@@ -508,6 +510,8 @@ const AdminDashboard = () => {
       slots_release_time: siteSettings.slots_release_time || '00:00',
       club_open_time: siteSettings.club_open_time || '00:00',
       club_hours: siteSettings.club_hours,
+      cancellation_enabled: !!siteSettings.cancellation_enabled,
+      cancellation_hours: Math.max(0, parseInt(siteSettings.cancellation_hours, 10) || 0),
     }).eq('id', 1);
     setSavingSettings(false);
     if (error) {
@@ -1018,6 +1022,45 @@ const AdminDashboard = () => {
                           );
                         })}
                       </div>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
+                        ❌ Cancelación de reservas por el cliente
+                      </label>
+                      <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
+                        Permite o bloquea que los clientes cancelen sus propias reservas desde "Mis Reservas". Si lo activas, puedes exigir un mínimo de antelación.
+                      </p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 0.875rem', borderRadius: '0.75rem', border: '1.5px solid', borderColor: siteSettings.cancellation_enabled ? '#BBF7D0' : '#E2E8F0', background: siteSettings.cancellation_enabled ? '#F0FDF4' : '#F8FAFC' }}>
+                        <button
+                          type="button"
+                          onClick={() => setSiteSettings(s => ({ ...s, cancellation_enabled: !s.cancellation_enabled }))}
+                          style={{ flexShrink: 0, width: '40px', height: '22px', borderRadius: '11px', border: 'none', background: siteSettings.cancellation_enabled ? '#16A34A' : '#CBD5E1', position: 'relative', cursor: 'pointer', transition: 'background .2s' }}
+                        >
+                          <span style={{ position: 'absolute', width: '16px', height: '16px', borderRadius: '50%', background: 'white', top: '3px', left: siteSettings.cancellation_enabled ? '21px' : '3px', transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
+                        </button>
+                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0F172A' }}>
+                          {siteSettings.cancellation_enabled ? 'Permitida' : 'No permitida'}
+                        </span>
+                      </div>
+
+                      {siteSettings.cancellation_enabled && (
+                        <div style={{ marginTop: '0.875rem' }}>
+                          <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 700, color: '#1E293B', fontSize: '0.85rem' }}>
+                            Antelación mínima para cancelar (horas)
+                          </label>
+                          <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', color: '#64748B', lineHeight: '1.4' }}>
+                            A partir de cuántas horas antes del inicio de la reserva se puede cancelar. Por ejemplo, <strong>24</strong> significa que el cliente podrá cancelar si faltan 24h o más. Pon <strong>0</strong> para permitir cancelar hasta el último momento.
+                          </p>
+                          <input
+                            type="number"
+                            min="0" max="168"
+                            value={siteSettings.cancellation_hours}
+                            onChange={(e) => setSiteSettings({ ...siteSettings, cancellation_hours: e.target.value })}
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '1rem', fontWeight: 600, color: '#0F172A' }}
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {settingsMsg && (
