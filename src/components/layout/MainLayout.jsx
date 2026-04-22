@@ -82,7 +82,10 @@ const MainLayout = () => {
         .top-header {
           position: fixed;
           top: 0; left: 0; right: 0;
-          height: 56px;
+          height: calc(56px + env(safe-area-inset-top));
+          padding-top: env(safe-area-inset-top);
+          padding-left: calc(1.25rem + env(safe-area-inset-left));
+          padding-right: calc(1.25rem + env(safe-area-inset-right));
           background: rgba(255,255,255,0.97);
           backdrop-filter: blur(16px);
           -webkit-backdrop-filter: blur(16px);
@@ -90,7 +93,6 @@ const MainLayout = () => {
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 0 1.25rem;
           box-shadow: 0 1px 12px rgba(0,0,0,0.06);
           z-index: 100;
         }
@@ -102,7 +104,7 @@ const MainLayout = () => {
         }
 
         .main-content {
-          padding-top: 56px;
+          padding-top: calc(56px + env(safe-area-inset-top));
           padding-bottom: 0;
         }
 

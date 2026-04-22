@@ -117,6 +117,82 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px var(--color-accent-ring) !important;
 }
 
+/* Date/time inputs — fix iOS Safari rendering empty as gray box */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: #FFFFFF;
+  color: var(--color-text-primary);
+  min-height: 44px;
+  font-size: 16px; /* evita zoom al enfocar en iOS */
+  line-height: 1.2;
+  font-family: inherit;
+  display: block;
+  position: relative;
+}
+
+input[type="date"]::-webkit-datetime-edit,
+input[type="time"]::-webkit-datetime-edit,
+input[type="datetime-local"]::-webkit-datetime-edit {
+  color: var(--color-text-primary);
+  padding: 0;
+}
+input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+  color: var(--color-text-primary);
+}
+input[type="date"]::-webkit-datetime-edit-month-field,
+input[type="date"]::-webkit-datetime-edit-day-field,
+input[type="date"]::-webkit-datetime-edit-year-field,
+input[type="time"]::-webkit-datetime-edit-hour-field,
+input[type="time"]::-webkit-datetime-edit-minute-field {
+  color: var(--color-text-primary);
+}
+input[type="date"]:not([value])::-webkit-datetime-edit,
+input[type="date"][value=""]::-webkit-datetime-edit {
+  color: #94A3B8;
+}
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 4px;
+  margin-left: 4px;
+}
+
+/* General: todos los inputs de texto en mobile usan 16px para evitar zoom */
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+input[type="url"],
+select,
+textarea {
+  font-size: 16px;
+}
+@media (min-width: 768px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="number"],
+  input[type="search"],
+  input[type="url"],
+  select,
+  textarea,
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"] {
+    font-size: 0.95rem;
+  }
+}
+
 /* Dashboard Layout */
 .dashboard-container {
   padding: 1.25rem 1rem 5.5rem;
@@ -183,10 +259,10 @@ table {
 /* Admin body padding on small screens */
 @media (max-width: 480px) {
   .admin-body {
-    padding: 1rem 0.875rem !important;
-  }
-  .admin-header {
-    padding: 0.75rem 1rem !important;
+    padding-left: calc(0.875rem + env(safe-area-inset-left)) !important;
+    padding-right: calc(0.875rem + env(safe-area-inset-right)) !important;
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
   }
 }
 

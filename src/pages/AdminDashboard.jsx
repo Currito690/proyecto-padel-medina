@@ -552,9 +552,12 @@ const AdminDashboard = () => {
       <style>{`
         .admin-layout { display: flex; min-height: 100vh; background: var(--color-bg-secondary); }
         .admin-sidebar {
-          width: 280px; background: white; border-right: 1px solid var(--color-border);
+          width: min(280px, 85vw); background: white; border-right: 1px solid var(--color-border);
           display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
+          padding-top: env(safe-area-inset-top);
+          padding-bottom: env(safe-area-inset-bottom);
           transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          overflow-y: auto;
         }
         .admin-sidebar.open { transform: translateX(0); }
         .sidebar-overlay {
@@ -564,8 +567,41 @@ const AdminDashboard = () => {
         .sidebar-overlay.open { opacity: 1; pointer-events: auto; }
 
         .admin-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 100vh; }
-        .admin-header { background: white; border-bottom: 1px solid var(--color-border); padding: 0.875rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm); }
-        .admin-body { flex: 1; padding: 1.5rem 1.25rem; max-width: 100%; width: 100%; }
+        .admin-header {
+          background: white; border-bottom: 1px solid var(--color-border);
+          padding: 0.75rem 1rem;
+          padding-top: calc(0.75rem + env(safe-area-inset-top));
+          padding-left: calc(1rem + env(safe-area-inset-left));
+          padding-right: calc(1rem + env(safe-area-inset-right));
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 0.75rem;
+          position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm);
+          min-height: calc(56px + env(safe-area-inset-top));
+        }
+        .admin-header-title {
+          flex: 1;
+          min-width: 0;
+          text-align: center;
+          font-weight: 800;
+          color: #0F172A;
+          font-size: 1rem;
+          letter-spacing: -0.02em;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .admin-burger {
+          flex-shrink: 0;
+          width: 44px; height: 44px;
+          display: flex; align-items: center; justify-content: center;
+          border: 1.5px solid var(--color-border);
+          background: white;
+          border-radius: 0.625rem;
+          color: #0F172A;
+          cursor: pointer;
+          padding: 0;
+        }
+        .admin-body { flex: 1; padding: 1.5rem 1rem; max-width: 100%; width: 100%; padding-left: calc(1rem + env(safe-area-inset-left)); padding-right: calc(1rem + env(safe-area-inset-right)); }
 
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
         .slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }
@@ -649,13 +685,17 @@ const AdminDashboard = () => {
         <div className="admin-main">
           {/* Header (hidden on desktop) */}
           <div className="admin-header desktop-hide">
-            <button aria-label="Abrir panel" onClick={() => setIsSidebarOpen(true)} style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-              <img src="/logo.png" alt="Padel Medina" style={{ height: '36px', objectFit: 'contain' }} />
+            <button aria-label="Abrir panel" onClick={() => setIsSidebarOpen(true)} className="admin-burger">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
             </button>
-            <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '1.05rem', letterSpacing: '-0.02em' }}>
+            <span className="admin-header-title">
               {menuItems.find(m => m.key === activeTab)?.label.split(' (')[0]}
             </span>
-            <div style={{ width: '32px' }} />
+            <div style={{ width: '44px', flexShrink: 0 }} />
           </div>
 
           <div className="admin-body">
