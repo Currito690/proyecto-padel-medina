@@ -746,6 +746,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return slots;
   };
 
+  // Inyecta un perdedor del cuadro principal en el cuadro de consolación.
+  // Reemplaza el primer placeholder disponible en R0 (cons-placeholder-*).
+  // Si no hay consolación generada o no quedan placeholders, no hace nada.
+  const pushLoserToConsolation = (cat, loser) => {
+    const catCons = consRounds[cat];
+    if (!catCons || catCons.length === 0 || !loser || loser.isBye) return null;
+    // Evitar duplicar si ya está en el cuadro
+    const alreadyIn = catCons.some(r => r.some(m => m.p1?.id === loser.id || m.p2?.id === loser.id));
+    if (alreadyIn) return null;
+
+    const nextCons = catCons.map(r => r.map(m => ({ ...m })));
+    const r0 = nextCons[0];
+    for (const m of r0) {
+      if (m.p1?.isPlaceholder) { m.p1 = { ...loser }; return nextCons; }
+      if (m.p2?.isPlaceholder) { m.p2 = { ...loser }; return nextCons; }
+    }
+    // Sin placeholders libres: reemplaza un BYE vs BYE vacío si existe
+    for (const m of r0) {
+      if (m.p1?.isBye && m.p2?.isBye) { m.p1 = { ...loser }; return nextCons; }
+    }
+    return null;
+  };
+
   const handleSetWinner = (match, participant, isCons = false, cat) => {
     if (!participant || participant.isBye) return;
     const targetRoundsGlob = isCons ? consRounds : rounds;
@@ -784,8 +807,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       }
     }
 
-    if (isCons) setConsRounds({...consRounds, [cat]: nextRounds});
-    else setRounds({...rounds, [cat]: nextRounds});
+    if (isCons) {
+      setConsRounds({ ...consRounds, [cat]: nextRounds });
+    } else {
+      setRounds({ ...rounds, [cat]: nextRounds });
+
+      // ── Auto-inyectar perdedor en el cuadro de consolación ──────────────
+      // Reglas:
+      //   · Perdedor de R0  → siempre va a consolación.
+      //   · Perdedor de R1  → solo si su oponente de R0 era BYE (él no jugó R0).
+      if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
+        const loser = participant.id === match.p1.id ? match.p2 : match.p1;
+        if (loser && !loser.isBye) {
+          let sendToCons = false;
+          if (match.round === 0) {
+            sendToCons = true;
+          } else if (match.round === 1) {
+            // ¿tuvo el perdedor un BYE en R0?
+            const r0 = rounds[cat] || [];
+            const r0Match = (r0[0] || []).find(r0m => r0m.p1?.id === loser.id || r0m.p2?.id === loser.id);
+            if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) sendToCons = true;
+          }
+          if (sendToCons) {
+            const updatedCons = pushLoserToConsolation(cat, loser);
+            if (updatedCons) setConsRounds({ ...consRounds, [cat]: updatedCons });
+          }
+        }
+      }
+    }
   };
 
 
