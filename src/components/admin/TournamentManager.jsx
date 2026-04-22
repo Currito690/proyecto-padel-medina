@@ -2292,12 +2292,34 @@ const TournamentManager = () => {
   };
 
   const deleteTournament = async (id) => {
-    if (!window.confirm('¿Estás seguro de que quieres eliminar este torneo permanentemente?')) return;
-    const { error } = await supabase.from('tournaments').delete().eq('id', id);
+    if (!window.confirm('¿Estás seguro de que quieres eliminar este torneo permanentemente?\n\nTambién se borrarán todas las inscripciones asociadas.')) return;
+
+    // 1) Borrar inscripciones asociadas primero (por si el FK no tiene ON DELETE CASCADE).
+    const { error: regErr } = await supabase
+      .from('tournament_registrations')
+      .delete()
+      .eq('tournament_id', id);
+    if (regErr) {
+      console.warn('Error borrando inscripciones:', regErr);
+      alert('Error al borrar inscripciones: ' + regErr.message);
+      return;
+    }
+
+    // 2) Borrar el torneo.
+    const { error, count } = await supabase
+      .from('tournaments')
+      .delete({ count: 'exact' })
+      .eq('id', id);
     if (error) {
       alert('Error al eliminar: ' + error.message);
       return;
     }
+    if (count === 0) {
+      // RLS bloqueó el borrado silenciosamente (no eres admin o no está aplicada la migración).
+      alert('No se pudo eliminar el torneo. Verifica que estás logeado como admin y que la migración RLS está aplicada en Supabase.');
+      return;
+    }
+
     setTournaments(prev => prev.filter(t => t.id !== id));
     localStorage.removeItem(`padel_medina_tournament_${id}`);
   };
