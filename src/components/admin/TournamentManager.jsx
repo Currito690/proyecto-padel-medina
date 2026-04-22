@@ -283,8 +283,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const handleUpdateDeadline = async () => {
     if (!publishedId) return;
     try {
+      const config = { ...tConfig, rounds, consRounds, participants, phase };
       const { error } = await supabase.from('tournaments')
-        .update({ config: { ...tConfig, rounds, consRounds } })
+        .update({ config })
         .eq('id', publishedId);
       if (error) throw error;
       alert('Plazo de inscripción actualizado.');
@@ -300,14 +301,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       return;
     }
     try {
+      const config = { ...tConfig, rounds, consRounds, participants, phase };
       const { error } = await supabase.from('tournaments')
-        .update({ config: { ...tConfig, rounds, consRounds } })
+        .update({ config, status: 'open' })
         .eq('id', publishedId);
       if (error) throw error;
-      alert('¡Cuadro publicado! Los jugadores pueden verlo en:\n/torneos/' + publishedId + '/cuadro');
+      alert('¡Cuadro publicado! Los jugadores pueden verlo (incluida la consolación si la has generado) en:\n/torneos/' + publishedId + '/cuadro');
     } catch (e) {
       console.error(e);
-      alert('Error al publicar el cuadro.');
+      alert('Error al publicar el cuadro: ' + (e.message || e));
     }
   };
 
@@ -1511,11 +1513,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             <button
               onClick={async () => {
                 try {
+                  const fullConfig = { ...tConfig, rounds, consRounds, participants, phase };
                   const { error } = await supabase.from('tournaments')
-                    .update({ config: { ...tConfig } })
+                    .update({ config: fullConfig, name: tConfig.name || 'Torneo' })
                     .eq('id', publishedId);
                   if (error) throw error;
-                  alert('✅ Enlace actualizado con la configuración actual (fechas, horarios, categorías, pistas).');
+                  alert('✅ Enlace actualizado con la configuración actual (fechas, horarios, categorías, pistas, cuadros).');
                 } catch (e) {
                   console.error(e);
                   alert('Error al actualizar el enlace.');
