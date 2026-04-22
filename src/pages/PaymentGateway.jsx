@@ -45,23 +45,31 @@ const PaymentGateway = () => {
       .then(({ data }) => { if (data?.club_hours) setClubHours(data.club_hours); });
   }, []);
 
-  // Cargar reglas de métodos de pago por pista+franja y calcular intersección
+  // Cargar reglas de métodos de pago por pista+franja+día y calcular intersección
   useEffect(() => {
     if (items.length === 0) { setAllowedByRules(null); return; }
     const ALL = ['redsys', 'bizum', 'club'];
     const courtIds = [...new Set(items.map(i => i.courtId))];
     supabase.from('court_payment_rules')
-      .select('court_id, time_slot, methods')
+      .select('court_id, time_slot, day_of_week, methods')
       .in('court_id', courtIds)
       .then(({ data }) => {
+        // ruleMap[court][day][slot] = methods[]
         const ruleMap = {};
         (data || []).forEach(r => {
+          const day = r.day_of_week ?? -1;
           if (!ruleMap[r.court_id]) ruleMap[r.court_id] = {};
-          ruleMap[r.court_id][r.time_slot] = r.methods || [];
+          if (!ruleMap[r.court_id][day]) ruleMap[r.court_id][day] = {};
+          ruleMap[r.court_id][day][r.time_slot] = r.methods || [];
         });
         const perItem = items.map(i => {
-          const methods = ruleMap[i.courtId]?.[i.timeSlot];
-          return methods === undefined ? ALL : methods;
+          const dow = i.date ? new Date(`${i.date}T12:00:00`).getDay() : -1;
+          const courtRules = ruleMap[i.courtId];
+          const specific = courtRules?.[dow]?.[i.timeSlot];
+          if (specific !== undefined) return specific;
+          const fallback = courtRules?.[-1]?.[i.timeSlot];
+          if (fallback !== undefined) return fallback;
+          return ALL;
         });
         const intersection = ALL.filter(m => perItem.every(arr => arr.includes(m)));
         setAllowedByRules(intersection);

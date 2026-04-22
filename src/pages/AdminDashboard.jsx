@@ -210,40 +210,61 @@ const AdminDashboard = () => {
   const [courtPriceEdits, setCourtPriceEdits] = useState({});
   const [savingCourtPrice, setSavingCourtPrice] = useState(null);
   const [courtPriceMsg, setCourtPriceMsg] = useState({});
-  // paymentRules[courtId][timeSlot] = string[] de métodos permitidos.
-  // Sin entrada => todos los métodos permitidos (comportamiento por defecto).
+  // paymentRules[courtId][day][timeSlot] = string[] de métodos permitidos.
+  // day: -1 = todos los días, 0..6 = dom..sáb (Date.getDay()).
+  // Sin entrada para (court, day, slot) → cae a (court, -1, slot) → si tampoco hay, todos los métodos.
   const [paymentRules, setPaymentRules] = useState({});
   const [expandedPaymentCourt, setExpandedPaymentCourt] = useState(null);
-  const [savingPaymentCell, setSavingPaymentCell] = useState(null); // `${courtId}-${slot}-${method}`
+  const [paymentDayFilter, setPaymentDayFilter] = useState(-1); // selector de día activo en la UI
+  const [savingPaymentCell, setSavingPaymentCell] = useState(null); // `${courtId}-${day}-${slot}-${method}`
 
   const ALL_METHODS = ['redsys', 'bizum', 'club'];
   const METHOD_LABELS = { redsys: 'Tarjeta', bizum: 'Bizum', club: 'Club' };
+  const DAY_OPTIONS = [
+    { key: -1, label: 'Todos los días', short: 'Todos' },
+    { key: 1, label: 'Lunes', short: 'Lun' },
+    { key: 2, label: 'Martes', short: 'Mar' },
+    { key: 3, label: 'Miércoles', short: 'Mié' },
+    { key: 4, label: 'Jueves', short: 'Jue' },
+    { key: 5, label: 'Viernes', short: 'Vie' },
+    { key: 6, label: 'Sábado', short: 'Sáb' },
+    { key: 0, label: 'Domingo', short: 'Dom' },
+  ];
 
-  const getAllowedMethods = (courtId, slot) => {
-    const entry = paymentRules[courtId]?.[slot];
-    return entry === undefined ? ALL_METHODS : entry;
+  // Devuelve los métodos permitidos para (court, slot) en un día concreto.
+  // Prioridad: regla del día específico → regla de "todos los días" → ALL_METHODS.
+  const getAllowedMethods = (courtId, slot, day = paymentDayFilter) => {
+    const courtRules = paymentRules[courtId];
+    if (!courtRules) return ALL_METHODS;
+    if (courtRules[day]?.[slot] !== undefined) return courtRules[day][slot];
+    if (day !== -1 && courtRules[-1]?.[slot] !== undefined) return courtRules[-1][slot];
+    return ALL_METHODS;
   };
 
   const togglePaymentMethod = async (courtId, slot, method) => {
-    const current = getAllowedMethods(courtId, slot);
+    const day = paymentDayFilter;
+    const current = getAllowedMethods(courtId, slot, day);
     const next = current.includes(method)
       ? current.filter(m => m !== method)
       : [...current, method];
 
-    const cellKey = `${courtId}-${slot}-${method}`;
+    const cellKey = `${courtId}-${day}-${slot}-${method}`;
     setSavingPaymentCell(cellKey);
 
     // Optimistic update
     setPaymentRules(prev => ({
       ...prev,
-      [courtId]: { ...(prev[courtId] || {}), [slot]: next },
+      [courtId]: {
+        ...(prev[courtId] || {}),
+        [day]: { ...(prev[courtId]?.[day] || {}), [slot]: next },
+      },
     }));
 
     const { error } = await supabase
       .from('court_payment_rules')
       .upsert(
-        { court_id: courtId, time_slot: slot, methods: next, updated_at: new Date().toISOString() },
-        { onConflict: 'court_id,time_slot' }
+        { court_id: courtId, time_slot: slot, day_of_week: day, methods: next, updated_at: new Date().toISOString() },
+        { onConflict: 'court_id,time_slot,day_of_week' }
       );
 
     setSavingPaymentCell(null);
@@ -253,7 +274,10 @@ const AdminDashboard = () => {
       // Revert
       setPaymentRules(prev => ({
         ...prev,
-        [courtId]: { ...(prev[courtId] || {}), [slot]: current },
+        [courtId]: {
+          ...(prev[courtId] || {}),
+          [day]: { ...(prev[courtId]?.[day] || {}), [slot]: current },
+        },
       }));
     }
   };
@@ -324,15 +348,17 @@ const AdminDashboard = () => {
         courtsRef.current = loaded;
         setCourts(loaded);
 
-        // Cargar reglas de métodos de pago por pista+franja
+        // Cargar reglas de métodos de pago por pista + franja + día
         const { data: rulesData } = await supabase
           .from('court_payment_rules')
-          .select('court_id, time_slot, methods');
+          .select('court_id, time_slot, day_of_week, methods');
         if (rulesData) {
           const rulesMap = {};
           rulesData.forEach(r => {
+            const day = r.day_of_week ?? -1;
             if (!rulesMap[r.court_id]) rulesMap[r.court_id] = {};
-            rulesMap[r.court_id][r.time_slot] = r.methods || [];
+            if (!rulesMap[r.court_id][day]) rulesMap[r.court_id][day] = {};
+            rulesMap[r.court_id][day][r.time_slot] = r.methods || [];
           });
           setPaymentRules(rulesMap);
         }
@@ -1281,8 +1307,43 @@ const AdminDashboard = () => {
                             {expandedPaymentCourt === court.id && (
                               <div style={{ marginTop: '0.75rem', background: '#F8FAFC', borderRadius: '0.75rem', padding: '0.75rem', border: '1px solid #E2E8F0' }}>
                                 <p style={{ margin: '0 0 0.625rem', fontSize: '0.72rem', color: '#64748B', lineHeight: 1.45 }}>
-                                  Marca qué métodos quedan disponibles en cada franja. Sin marcas en una franja, los clientes no podrán pagar (la reserva queda bloqueada).
+                                  Marca qué métodos quedan disponibles en cada franja. Selecciona un día para configurarlo solo para ese día (por defecto la regla de "Todos los días" se aplica a los días sin regla específica). Sin marcas en una franja, los clientes no podrán pagar.
                                 </p>
+
+                                {/* Selector de día */}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.75rem' }}>
+                                  {DAY_OPTIONS.map(opt => {
+                                    const active = paymentDayFilter === opt.key;
+                                    const isAll = opt.key === -1;
+                                    return (
+                                      <button
+                                        key={opt.key}
+                                        type="button"
+                                        onClick={() => setPaymentDayFilter(opt.key)}
+                                        style={{
+                                          padding: '0.35rem 0.7rem',
+                                          borderRadius: '999px',
+                                          border: `1.5px solid ${active ? (isAll ? '#1D4ED8' : '#16A34A') : '#CBD5E1'}`,
+                                          background: active ? (isAll ? '#1D4ED8' : '#16A34A') : 'white',
+                                          color: active ? 'white' : '#475569',
+                                          fontFamily: 'inherit',
+                                          fontWeight: 700,
+                                          fontSize: '0.72rem',
+                                          cursor: 'pointer',
+                                          minHeight: '34px',
+                                        }}
+                                      >
+                                        {opt.short}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <p style={{ margin: '0 0 0.625rem', fontSize: '0.7rem', color: paymentDayFilter === -1 ? '#1D4ED8' : '#15803D', fontWeight: 700 }}>
+                                  {paymentDayFilter === -1
+                                    ? 'Editando regla por defecto (todos los días)'
+                                    : `Editando solo ${DAY_OPTIONS.find(o => o.key === paymentDayFilter)?.label}`}
+                                </p>
+
                                 <div style={{ overflowX: 'auto' }}>
                                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', minWidth: '360px' }}>
                                     <thead>
@@ -1295,13 +1356,19 @@ const AdminDashboard = () => {
                                     </thead>
                                     <tbody>
                                       {TIMES.map(slot => {
-                                        const allowed = getAllowedMethods(court.id, slot);
+                                        const allowed = getAllowedMethods(court.id, slot, paymentDayFilter);
+                                        // Si la celda actual hereda de "Todos los días" (no hay regla propia),
+                                        // la marcamos en gris claro para hacerlo visible.
+                                        const isInherited = paymentDayFilter !== -1 && paymentRules[court.id]?.[paymentDayFilter]?.[slot] === undefined;
                                         return (
-                                          <tr key={slot} style={{ borderTop: '1px solid #E2E8F0' }}>
-                                            <td style={{ padding: '0.45rem 0.5rem', color: '#0F172A', fontWeight: 600, whiteSpace: 'nowrap' }}>{slot}</td>
+                                          <tr key={slot} style={{ borderTop: '1px solid #E2E8F0', opacity: isInherited ? 0.7 : 1 }}>
+                                            <td style={{ padding: '0.45rem 0.5rem', color: '#0F172A', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                              {slot}
+                                              {isInherited && <span style={{ marginLeft: '0.4rem', fontSize: '0.62rem', color: '#94A3B8', fontWeight: 600 }}>(heredado)</span>}
+                                            </td>
                                             {ALL_METHODS.map(m => {
                                               const checked = allowed.includes(m);
-                                              const saving = savingPaymentCell === `${court.id}-${slot}-${m}`;
+                                              const saving = savingPaymentCell === `${court.id}-${paymentDayFilter}-${slot}-${m}`;
                                               return (
                                                 <td key={m} style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
                                                   <button
