@@ -35,9 +35,16 @@ const TrashIcon = () => (
   </svg>
 );
 
+const fmtMs = (ms) => {
+  const totalSec = Math.ceil(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+};
+
 const Cart = () => {
   const navigate = useNavigate();
-  const { items, removeItem, total } = useCart();
+  const { items, removeItem, total, getRemainingMs } = useCart();
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
@@ -150,10 +157,33 @@ const Cart = () => {
                   </p>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem', flexShrink: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem', flexShrink: 0 }}>
                   <span style={{ fontSize: '1.05rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>
                     {Number(item.price).toFixed(2).replace('.', ',')} €
                   </span>
+                  {(() => {
+                    const remaining = getRemainingMs(item);
+                    const isUrgent = remaining < 60 * 1000;
+                    return (
+                      <span
+                        title="La pista se libera automáticamente si no completas el pago a tiempo"
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                          fontSize: '0.7rem', fontWeight: 800,
+                          color: isUrgent ? '#B91C1C' : '#9A3412',
+                          background: isUrgent ? '#FEE2E2' : '#FFF7ED',
+                          border: `1px solid ${isUrgent ? '#FECACA' : '#FED7AA'}`,
+                          padding: '0.18rem 0.5rem', borderRadius: '999px',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        {fmtMs(remaining)}
+                      </span>
+                    );
+                  })()}
                   <button
                     onClick={() => removeItem(item.cartId)}
                     aria-label="Eliminar del carrito"
