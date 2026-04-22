@@ -865,7 +865,39 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // (consRounds doesn't have this cat yet, but we pass what we have)
     const slotUsage = buildSlotUsage(globalSlots, rounds, consRounds);
 
-    
+    // Asignador de slots respetando horas por pista (mismo que en generateBracket)
+    const pickSlot = (candidates, usage, courts) => {
+      if (!globalSlots.length) return 'Sin horario';
+      const getCapacity = (slot) => {
+        const hourPart = slot.split(' ')[1];
+        return getAvailableCourtsForHour(hourPart, courts, tConfig.courtStartHours);
+      };
+      const free = (candidates.length ? candidates : globalSlots).find(s => (usage[s] ?? 0) < getCapacity(s));
+      if (free) return free;
+      const globalFree = globalSlots.find(s => (usage[s] ?? 0) < getCapacity(s));
+      if (globalFree) return globalFree;
+      const lastSlot = globalSlots[globalSlots.length - 1];
+      const [lastDateLabel, lastHour] = lastSlot.split(' ');
+      const lastHourIdx = HOURS.indexOf(lastHour);
+      for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
+        const s = `${lastDateLabel} ${HOURS[h]}`;
+        if ((usage[s] ?? 0) < getCapacity(s)) return s;
+      }
+      const [ld, lm] = lastDateLabel.split('/').map(Number);
+      const lastDateObj = new Date(new Date().getFullYear(), lm - 1, ld);
+      for (let extra = 1; extra <= 30; extra++) {
+        const next = new Date(lastDateObj);
+        next.setDate(lastDateObj.getDate() + extra);
+        const nextLabel = fmtDateLabel(next);
+        for (let h = 0; h < HOURS.length; h++) {
+          const s = `${nextLabel} ${HOURS[h]}`;
+          if ((usage[s] ?? 0) < getCapacity(s)) return s;
+        }
+      }
+      return lastSlot;
+    };
+
+
     for (let r = 0; r < numRounds; r++) {
       const numMatchesInRound = pow / Math.pow(2, r + 1);
       const matches = [];
