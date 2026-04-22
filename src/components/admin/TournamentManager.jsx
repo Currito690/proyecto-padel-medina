@@ -1023,9 +1023,51 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         .tm-add-form select { flex: 1; min-width: 110px; }
         .tm-deadline-row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
         .tm-deadline-row input { flex: 1; min-width: 130px; }
+        .tm-fmt-row {
+          display: flex; align-items: center; gap: 0.75rem;
+          padding: 0.6rem 0.75rem;
+          background: white;
+          border: 1px solid #E2E8F0;
+          border-radius: 0.625rem;
+        }
+        .tm-fmt-label {
+          flex-shrink: 0;
+          min-width: 100px;
+          font-size: 0.9rem;
+          font-weight: 700;
+          color: #1E293B;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .tm-fmt-select {
+          flex: 1;
+          min-width: 0;
+          min-height: 44px;
+          padding: 0.5rem 0.75rem;
+          padding-right: 2rem;
+          border-radius: 0.5rem;
+          border: 1.5px solid #CBD5E1;
+          background-color: white;
+          color: #0F172A;
+          font-weight: 600;
+          cursor: pointer;
+          -webkit-appearance: none;
+          appearance: none;
+          background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 0.75rem center;
+        }
         @media (max-width: 480px) {
           .tm-btn-group button { font-size: 0.75rem !important; padding: 0.5rem 0.65rem !important; }
           .tm-header-info h2 { font-size: 1.15rem !important; }
+          .tm-fmt-row {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.4rem;
+            padding: 0.75rem;
+          }
+          .tm-fmt-label { min-width: 0; }
         }
       `}</style>
         <div style={{ marginBottom: '1.5rem', maxWidth: '600px', margin: '0 auto 1.5rem' }}>
@@ -1178,14 +1220,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.85rem', fontWeight: 800, color: '#334155' }}>
                 Formato por categoría
               </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(cat => (
-                  <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span style={{ minWidth: '100px', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>{cat}</span>
+                  <div key={cat} className="tm-fmt-row">
+                    <span className="tm-fmt-label">{cat}</span>
                     <select
                       value={tConfig.formatByCategory?.[cat] || 'eliminatoria'}
                       onChange={e => setTConfig({ ...tConfig, formatByCategory: { ...tConfig.formatByCategory, [cat]: e.target.value } })}
-                      style={{ flex: 1, padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', fontSize: '0.875rem', cursor: 'pointer', backgroundColor: 'white' }}
+                      className="tm-fmt-select"
                     >
                       <option value="eliminatoria">Eliminatoria (cuadro)</option>
                       <option value="liguilla">Liguilla (todos contra todos)</option>
