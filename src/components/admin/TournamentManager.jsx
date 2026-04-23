@@ -2065,8 +2065,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const standings = Object.values(standingsMap).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
            return (
              <div key={cat} style={{ marginBottom: '4rem' }}>
-               <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', color: 'white', borderRadius: '1rem', marginBottom: '2rem' }}>
-                 <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>Categoría: {cat} — Liguilla</h2>
+               <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', borderRadius: '1rem', marginBottom: '2rem' }}>
+                 <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'white' }}>Categoría: {cat} — Liguilla</h2>
                </div>
                {/* Standings */}
                <div style={{ backgroundColor: 'white', borderRadius: '1rem', border: '1px solid #E2E8F0', overflow: 'hidden', marginBottom: '2rem' }}>
