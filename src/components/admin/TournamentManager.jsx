@@ -2415,6 +2415,67 @@ const TournamentManager = () => {
     if (error) console.warn('Error actualizando nombre:', error);
   };
 
+  // Sube a Supabase cualquier torneo que haya quedado en el localStorage de
+  // este navegador (por usar una versión antigua de la app). Evita duplicados
+  // comparando por nombre + startDate contra lo que ya exista en DB.
+  const syncLocalTournamentsToDb = async () => {
+    const found = [];
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith('padel_medina_tournament_')) continue;
+      if (key === 'padel_medina_tournaments_list') continue;
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        const cfg = data.tConfig || {};
+        const name = cfg.name || data.name || null;
+        if (!name) continue;
+        const config = { ...cfg, rounds: data.rounds || {}, consRounds: data.consRounds || {}, participants: data.participants || [], phase: data.phase || 'config' };
+        found.push({ name, config, startDate: cfg.startDate || null, localKey: key });
+      } catch {}
+    }
+    if (found.length === 0) {
+      alert('No hay torneos locales pendientes de subir en este dispositivo.');
+      return;
+    }
+
+    // Coger lo que ya está en DB para detectar duplicados por (nombre + startDate)
+    const { data: existing, error: exErr } = await supabase
+      .from('tournaments')
+      .select('id, name, config');
+    if (exErr) {
+      alert('Error al consultar torneos existentes: ' + exErr.message);
+      return;
+    }
+    const isDup = (candidate) => (existing || []).some(t =>
+      (t.name || '').trim().toLowerCase() === candidate.name.trim().toLowerCase()
+      && (t.config?.startDate || null) === (candidate.startDate || null)
+    );
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const toUpload = found.filter(f => !isDup(f));
+    if (toUpload.length === 0) {
+      alert(`Los ${found.length} torneos locales ya están en la base de datos. No se subió nada nuevo.`);
+      return;
+    }
+
+    const rows = toUpload.map(f => ({
+      name: f.name,
+      config: f.config,
+      status: 'draft',
+      admin_id: user?.id || null,
+    }));
+
+    const { error: insErr } = await supabase.from('tournaments').insert(rows);
+    if (insErr) {
+      alert('Error al subir torneos: ' + insErr.message + '\n\nSi ves un error de RLS, aplica la migración 20260422_tournaments_admin_write.sql en Supabase.');
+      return;
+    }
+
+    alert(`✅ ${toUpload.length} torneo${toUpload.length === 1 ? '' : 's'} subido${toUpload.length === 1 ? '' : 's'} a la base de datos. Se verá${toUpload.length === 1 ? '' : 'n'} ahora desde cualquier dispositivo.`);
+    fetchTournaments();
+  };
+
   if (activeId) {
      return <TournamentEditor tournamentKey={activeId} onBack={(newName) => {
          if (newName) updateTournamentName(activeId, newName);
@@ -2425,15 +2486,27 @@ const TournamentManager = () => {
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '1rem' }}>
-       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
+       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 900, color: '#0F172A' }}>Mis Torneos</h1>
             <p style={{ margin: '0.2rem 0 0', color: '#64748B', fontSize: '0.9rem' }}>Gestiona tus competiciones activas y crea nuevas.</p>
           </div>
-          <button onClick={createNewTournament} style={{ padding: '0.75rem 1.25rem', borderRadius: '0.75rem', backgroundColor: '#16A34A', color: 'white', fontWeight: 700, cursor: 'pointer', border: 'none', boxShadow: '0 4px 6px -1px rgba(22,163,74,0.2)' }}>
-             ➕ Crear Nuevo Torneo
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              onClick={syncLocalTournamentsToDb}
+              title="Sube a la base de datos cualquier torneo que haya quedado solo en el navegador (versión antigua de la app)."
+              style={{ padding: '0.6rem 1rem', borderRadius: '0.75rem', backgroundColor: 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', border: '1.5px solid #CBD5E1', fontSize: '0.82rem' }}
+            >
+              🔄 Sincronizar desde este dispositivo
+            </button>
+            <button onClick={createNewTournament} style={{ padding: '0.75rem 1.25rem', borderRadius: '0.75rem', backgroundColor: '#16A34A', color: 'white', fontWeight: 700, cursor: 'pointer', border: 'none', boxShadow: '0 4px 6px -1px rgba(22,163,74,0.2)' }}>
+               ➕ Crear Nuevo Torneo
+            </button>
+          </div>
        </div>
+       <p style={{ margin: '0 0 1.25rem', fontSize: '0.78rem', color: '#94A3B8', lineHeight: 1.5 }}>
+         ¿Ves distintos torneos en cada dispositivo aunque uses la misma cuenta? Entra desde el dispositivo donde creaste el torneo y pulsa <strong>Sincronizar desde este dispositivo</strong>: subirá a Supabase lo que haya quedado solo en ese navegador.
+       </p>
 
        {listError && (
           <div style={{ padding: '1rem 1.25rem', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '0.75rem', color: '#B91C1C', fontSize: '0.85rem', marginBottom: '1rem' }}>
