@@ -66,6 +66,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 },
       formatByCategory: {},
       dualCategoryMaxMatches: 1,
+      restMinutesBetweenMatches: 30,
     };
     if (savedData?.tConfig) {
       return { ...fallback, ...savedData.tConfig, categories: savedData.tConfig.categories || 'Masculino, Femenino' };
@@ -720,22 +721,26 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Helper: slotUsage con los times ya asignados (manuales + los que vayamos fijando)
     const buildUsageNow = () => buildSlotUsage(globalSlots, nextMain, nextCons);
 
+    const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
+
     // Scheduler: procesar ronda a ronda para que los predecesores estén listos.
     const scheduleCatRounds = (catRoundsObj) => {
-      Object.values(catRoundsObj).forEach(catRounds => {
+      Object.entries(catRoundsObj).forEach(([cat, catRounds]) => {
+        const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
+        const gapSlots = Math.ceil((durationMin + restMin) / 60);
         for (let r = 0; r < catRounds.length; r++) {
           catRounds[r].forEach((m, mIdx) => {
             if (m.timeManual && m.time) return; // respeta lo puesto por admin
             if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye) return;
 
-            // earliestIdx: después del máximo de los predecesores
+            // earliestIdx: después del máximo de los predecesores + cansancio
             let earliestIdx = 0;
             if (r > 0) {
               const predA = catRounds[r - 1][mIdx * 2];
               const predB = catRounds[r - 1][mIdx * 2 + 1];
               const aIdx = slotIdx(getSlot(predA?.time));
               const bIdx = slotIdx(getSlot(predB?.time));
-              earliestIdx = Math.max(aIdx, bIdx) + 1;
+              earliestIdx = Math.max(aIdx, bIdx) + gapSlots;
             }
 
             const usage = buildUsageNow();
@@ -930,7 +935,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const predB = nextRounds[match.round][nextMatchIdx * 2 + 1];
         const predAIdx = slotIdx(getSlotFromMatch(predA));
         const predBIdx = slotIdx(getSlotFromMatch(predB));
-        const earliestIdx = Math.max(predAIdx, predBIdx) + 1;
+        // Factor cansancio: nextStart >= predStart + duración + descanso
+        const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
+        const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
+        const gapSlots = Math.ceil((durationMin + restMin) / 60);
+        const earliestIdx = Math.max(predAIdx, predBIdx) + gapSlots;
 
         // Cuándo re-schedulear:
         //   · si no hay hora asignada aún, o
@@ -1515,6 +1524,28 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <p style={{ margin: '0.6rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>
                 Tiempo estimado por partido incluyendo calentamiento, por cada categoría.
               </p>
+            </div>
+
+            <div style={{ padding: '1rem', backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: '#334155' }}>
+                💤 Descanso mínimo entre partidos de un mismo jugador
+              </label>
+              <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#64748B', lineHeight: 1.45 }}>
+                El auto-programador usará <strong>duración del partido + este descanso</strong> como hueco mínimo entre el inicio del partido anterior de una pareja y el siguiente.
+              </p>
+              <select
+                value={tConfig.restMinutesBetweenMatches ?? 30}
+                onChange={e => setTConfig({ ...tConfig, restMinutesBetweenMatches: parseInt(e.target.value) })}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#0F172A', cursor: 'pointer', boxSizing: 'border-box' }}
+              >
+                <option value={0}>Sin descanso obligatorio</option>
+                <option value={15}>15 min</option>
+                <option value={30}>30 min (recomendado)</option>
+                <option value={45}>45 min</option>
+                <option value={60}>60 min (1h)</option>
+                <option value={90}>90 min</option>
+                <option value={120}>120 min (2h)</option>
+              </select>
             </div>
 
             <div style={{ padding: '1rem', backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
