@@ -107,6 +107,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [availabilityCategory, setAvailabilityCategory] = useState('');
   const [hoveredSlot, setHoveredSlot] = useState(null);
   const [gridDragAction, setGridDragAction] = useState(null);
+  // Editor de horario con cuadrante (día × hora × pista)
+  const [editingTime, setEditingTime] = useState(null); // { match, isCons, cat } | null
+  const [editingTimeDay, setEditingTimeDay] = useState(null);
 
   useEffect(() => {
     localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
@@ -622,16 +625,71 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const handleEditTime = (match, isCons = false, cat) => {
-    const newTime = prompt("Introduce el horario para este partido (Ej: Sábado 18:00):", match.time || "");
-    if (newTime !== null) {
-       const targetRoundsGlob = isCons ? consRounds : rounds;
-       const targetRounds = targetRoundsGlob[cat];
-       const nextRounds = [...targetRounds];
-       nextRounds[match.round] = [...nextRounds[match.round]];
-       nextRounds[match.round][match.matchIndex] = { ...nextRounds[match.round][match.matchIndex], time: newTime.trim() };
-       if (isCons) setConsRounds({...consRounds, [cat]: nextRounds}); 
-       else setRounds({...rounds, [cat]: nextRounds});
-    }
+    setEditingTime({ match, isCons, cat });
+    // Prellenar el día a partir de la hora actual si existe, si no el primer día
+    const currentSlot = match.time ? match.time.split(' - Pista')[0].trim() : null;
+    const currentDay = currentSlot ? currentSlot.split(' ')[0] : null;
+    const activeDays = getActiveDates(tConfig.startDate, tConfig.endDate);
+    setEditingTimeDay(currentDay || activeDays[0] || null);
+  };
+
+  // Cuadrante de ocupación:
+  //   occupancy[slot (dd/mm HH:00)][court (1..N)] = { matchId, cat, isCons, label } | undefined
+  const buildOccupancyMap = () => {
+    const map = {};
+    const addRounds = (roundsObj, isCons) => {
+      Object.entries(roundsObj).forEach(([ct, catR]) => {
+        catR.forEach(round => round.forEach(m => {
+          if (!m.time || m.time === 'A convenir') return;
+          const [slotPart, courtPart] = m.time.split(' - Pista');
+          const slot = slotPart.trim();
+          const court = parseInt(courtPart);
+          if (!map[slot]) map[slot] = {};
+          map[slot][court] = {
+            matchId: m.id,
+            cat: ct,
+            isCons,
+            label: `${m.p1?.name || '?'} vs ${m.p2?.name || '?'}`,
+          };
+        }));
+      });
+    };
+    addRounds(rounds, false);
+    addRounds(consRounds, true);
+    return map;
+  };
+
+  const commitEditingTime = (day, hour, court) => {
+    if (!editingTime) return;
+    const { match, isCons, cat } = editingTime;
+    const newTime = `${day} ${hour} - Pista ${court}`;
+    const targetRoundsGlob = isCons ? consRounds : rounds;
+    const targetRounds = targetRoundsGlob[cat];
+    const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+    nextRounds[match.round][match.matchIndex] = {
+      ...nextRounds[match.round][match.matchIndex],
+      time: newTime,
+      timeManual: true, // marca puesta por admin → se muestra aunque el match no esté listo
+    };
+    if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
+    else setRounds({ ...rounds, [cat]: nextRounds });
+    setEditingTime(null);
+  };
+
+  const clearEditingTime = () => {
+    if (!editingTime) return;
+    const { match, isCons, cat } = editingTime;
+    const targetRoundsGlob = isCons ? consRounds : rounds;
+    const targetRounds = targetRoundsGlob[cat];
+    const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+    nextRounds[match.round][match.matchIndex] = {
+      ...nextRounds[match.round][match.matchIndex],
+      time: null,
+      timeManual: false,
+    };
+    if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
+    else setRounds({ ...rounds, [cat]: nextRounds });
+    setEditingTime(null);
   };
 
 
@@ -802,7 +860,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         let common = p1Slots.filter(s => p2Slots.includes(s));
         if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
 
-        const assigned = common.find(s => slotUsage[s] !== undefined && slotUsage[s] < tConfig.courtsCount)
+        // Enforce round ordering: nextMatch debe jugarse DESPUÉS de los dos partidos
+        // previos de los jugadores que avanzan. Usamos el índice del slot en globalSlots
+        // (que ya está ordenado por día+hora) como tiempo discreto comparable.
+        const slotIdx = (s) => globalSlots.indexOf(s);
+        const getSlotFromMatch = (m) => m?.time ? m.time.split(' - Pista')[0].trim() : null;
+        const predA = nextRounds[match.round][nextMatchIdx * 2];
+        const predB = nextRounds[match.round][nextMatchIdx * 2 + 1];
+        const predAIdx = slotIdx(getSlotFromMatch(predA));
+        const predBIdx = slotIdx(getSlotFromMatch(predB));
+        const earliestIdx = Math.max(predAIdx, predBIdx) + 1;
+
+        const afterPrev = (s) => slotIdx(s) >= earliestIdx;
+
+        let assigned = common.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
+        if (!assigned) assigned = globalSlots.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
+        if (!assigned) assigned = globalSlots.filter(afterPrev)[0];
+        if (!assigned) assigned = common.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount)
           || common.reduce((min, s) => (slotUsage[s] ?? 0) < (slotUsage[min] ?? 0) ? s : min, common[0] || globalSlots[0]);
         nextMatch.time = assigned ? `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}` : '';
       }
@@ -1953,6 +2027,120 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   return (
     <div>
+      {/* ── Modal editor de horario con cuadrante día × pista × hora ── */}
+      {editingTime && (() => {
+        const occ = buildOccupancyMap();
+        const activeDays = getActiveDates(tConfig.startDate, tConfig.endDate);
+        const day = editingTimeDay || activeDays[0];
+        // Horas válidas para ese día según tConfig (firstDayStartHour para el día 1)
+        const isFirstDay = activeDays[0] === day;
+        const sHourIdx = HOURS.indexOf(isFirstDay && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : tConfig.startHour);
+        const eHourIdx = HOURS.indexOf(tConfig.endHour);
+        const dayHours = (sHourIdx >= 0 && eHourIdx >= 0) ? HOURS.slice(sHourIdx, eHourIdx) : HOURS;
+        const courts = Array.from({ length: tConfig.courtsCount }, (_, i) => i + 1);
+        const { match, isCons, cat } = editingTime;
+        const currentSlot = match.time ? match.time.split(' - Pista')[0].trim() : null;
+        const currentCourt = match.time ? parseInt(match.time.split(' - Pista')[1]) : null;
+
+        return (
+          <div
+            onClick={() => setEditingTime(null)}
+            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '860px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+              <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>Elegir horario · {isCons ? 'Consolación' : 'Principal'} · {cat}</h3>
+                  <p style={{ margin: '0.2rem 0 0', fontSize: '0.82rem', color: '#64748B' }}>
+                    {match.p1?.name || '¿?'} <span style={{ color: '#CBD5E1' }}>vs</span> {match.p2?.name || '¿?'}
+                  </p>
+                </div>
+                <button onClick={() => setEditingTime(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+              </div>
+              <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                  {activeDays.map(d => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setEditingTimeDay(d)}
+                      style={{ padding: '0.5rem 0.9rem', borderRadius: '999px', border: `1.5px solid ${day === d ? '#1B3A6E' : '#CBD5E1'}`, background: day === d ? '#1B3A6E' : 'white', color: day === d ? 'white' : '#475569', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', gap: '1.25rem', fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#F0FDF4', border: '1.5px solid #BBF7D0' }} /> Libre
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#FEE2E2', border: '1.5px solid #FECACA' }} /> Ocupada
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#DBEAFE', border: '1.5px solid #93C5FD' }} /> Selección actual
+                  </span>
+                </div>
+
+                <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F8FAFC' }}>
+                        <th style={{ textAlign: 'right', padding: '0.5rem 0.75rem', fontWeight: 700, color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0' }}>Hora</th>
+                        {courts.map(c => (
+                          <th key={c} style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 700, color: '#0F172A', fontSize: '0.78rem', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', minWidth: '140px' }}>
+                            Pista {c}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dayHours.map(hour => (
+                        <tr key={hour}>
+                          <td style={{ textAlign: 'right', padding: '0.45rem 0.75rem', color: '#475569', fontWeight: 700, borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
+                          {courts.map(c => {
+                            const slot = `${day} ${hour}`;
+                            const info = occ[slot]?.[c];
+                            const isCurrent = currentSlot === slot && currentCourt === c;
+                            const isThisMatch = info?.matchId === match.id;
+                            const occupied = !!info && !isThisMatch;
+                            const bg = isCurrent ? '#DBEAFE' : occupied ? '#FEE2E2' : '#F0FDF4';
+                            const border = isCurrent ? '1.5px solid #93C5FD' : occupied ? '1.5px solid #FECACA' : '1.5px solid #BBF7D0';
+                            return (
+                              <td key={c} style={{ padding: '0.25rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
+                                <button
+                                  type="button"
+                                  disabled={occupied}
+                                  onClick={() => !occupied && commitEditingTime(day, hour, c)}
+                                  style={{ width: '100%', minHeight: '40px', padding: '0.25rem 0.4rem', borderRadius: '0.4rem', background: bg, border, color: occupied ? '#B91C1C' : isCurrent ? '#1D4ED8' : '#15803D', fontWeight: 700, fontSize: '0.7rem', cursor: occupied ? 'not-allowed' : 'pointer', textAlign: 'center', lineHeight: 1.3 }}
+                                  title={occupied ? `Ocupada: ${info.label}` : isCurrent ? 'Asignada a este partido' : 'Libre — pulsa para asignar'}
+                                >
+                                  {occupied ? info.label : isCurrent ? 'Actual' : 'Libre'}
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <button type="button" onClick={clearEditingTime} style={{ padding: '0.55rem 1rem', borderRadius: '0.625rem', border: '1.5px solid #FECACA', background: '#FEF2F2', color: '#DC2626', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    Borrar horario (volverá a auto-asignarse)
+                  </button>
+                  <button type="button" onClick={() => setEditingTime(null)} style={{ padding: '0.55rem 1rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    Cerrar sin cambios
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <style>{`
         .tm-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
         .tm-header-info { flex: 1; min-width: 220px; }
@@ -2102,7 +2290,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                      {roundMatches.map(match => (
                        <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden' }}>
                          <div style={{ backgroundColor: '#F8FAFC', padding: '0.35rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                           <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B' }}>{match.time || 'Horario por definir'}</span>
+                           {(() => {
+                             const isReady = match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye;
+                             const show = isReady || match.timeManual;
+                             return (
+                               <span style={{ fontSize: '0.65rem', fontWeight: 700, color: show ? '#64748B' : '#CBD5E1' }}>
+                                 {show ? (match.time || 'Horario por definir') : 'Esperando rondas previas'}
+                               </span>
+                             );
+                           })()}
                            {!isExporting && <button onClick={() => handleEditTime(match, false, cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.1rem' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>}
                          </div>
                          <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -2202,9 +2398,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', margin: '1rem 0', opacity: match.p1?.isBye && match.p2?.isBye ? 0.3 : 1 }}>
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
                         <div style={{ backgroundColor: '#F8FAFC', padding: '0.4rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            {match.time || 'Horario por definir'}
-                          </span>
+                          {(() => {
+                            const isReady = match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye;
+                            const show = isReady || match.timeManual;
+                            return (
+                              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: show ? '#64748B' : '#CBD5E1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {show ? (match.time || 'Horario por definir') : 'Esperando rondas previas'}
+                              </span>
+                            );
+                          })()}
                           {!isExporting && (
                              <button onClick={() => handleEditTime(match, bracket.isCons, cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem' }}>
                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
