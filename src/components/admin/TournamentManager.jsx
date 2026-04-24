@@ -692,6 +692,81 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setEditingTime(null);
   };
 
+  // Recalcula los horarios de TODOS los partidos no-manuales aplicando afinidad
+  // horaria + orden entre rondas + cupo de pistas. Útil para reparar brackets
+  // que quedaron mal programados con la versión vieja del auto-scheduler.
+  const recomputeAllAutoTimes = () => {
+    const globalSlots = buildGlobalSlots();
+    if (globalSlots.length === 0) { alert('Configura las fechas del torneo antes de recalcular.'); return; }
+    const slotIdx = (s) => globalSlots.indexOf(s);
+    const getSlot = (t) => t ? t.split(' - Pista')[0].trim() : null;
+
+    // Clonar todo y limpiar times auto-asignados; respetar los manuales.
+    const cloneCatRounds = (obj) => Object.fromEntries(
+      Object.entries(obj).map(([c, rs]) => [c, rs.map(r => r.map(m => ({ ...m })))])
+    );
+    const nextMain = cloneCatRounds(rounds);
+    const nextCons = cloneCatRounds(consRounds);
+
+    // Limpia times no manuales.
+    const clearAuto = (obj) => Object.values(obj).forEach(cr =>
+      cr.forEach(round => round.forEach(m => {
+        if (!m.timeManual) m.time = null;
+      }))
+    );
+    clearAuto(nextMain);
+    clearAuto(nextCons);
+
+    // Helper: slotUsage con los times ya asignados (manuales + los que vayamos fijando)
+    const buildUsageNow = () => buildSlotUsage(globalSlots, nextMain, nextCons);
+
+    // Scheduler: procesar ronda a ronda para que los predecesores estén listos.
+    const scheduleCatRounds = (catRoundsObj) => {
+      Object.values(catRoundsObj).forEach(catRounds => {
+        for (let r = 0; r < catRounds.length; r++) {
+          catRounds[r].forEach((m, mIdx) => {
+            if (m.timeManual && m.time) return; // respeta lo puesto por admin
+            if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye) return;
+
+            // earliestIdx: después del máximo de los predecesores
+            let earliestIdx = 0;
+            if (r > 0) {
+              const predA = catRounds[r - 1][mIdx * 2];
+              const predB = catRounds[r - 1][mIdx * 2 + 1];
+              const aIdx = slotIdx(getSlot(predA?.time));
+              const bIdx = slotIdx(getSlot(predB?.time));
+              earliestIdx = Math.max(aIdx, bIdx) + 1;
+            }
+
+            const usage = buildUsageNow();
+            const p1Slots = expandPlayerSlots(m.p1, globalSlots);
+            const p2Slots = expandPlayerSlots(m.p2, globalSlots);
+            let common = p1Slots.filter(s => p2Slots.includes(s));
+            if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
+
+            const afterPrev = (s) => slotIdx(s) >= earliestIdx;
+            let assigned = common.filter(afterPrev).find(s => (usage[s] ?? 0) < tConfig.courtsCount);
+            if (!assigned) assigned = globalSlots.filter(afterPrev).find(s => (usage[s] ?? 0) < tConfig.courtsCount);
+            if (!assigned) assigned = globalSlots.filter(afterPrev)[0];
+            if (!assigned) assigned = common.find(s => (usage[s] ?? 0) < tConfig.courtsCount) || globalSlots[earliestIdx] || globalSlots[0];
+
+            if (assigned) {
+              const pistaN = Math.min((usage[assigned] ?? 0) + 1, tConfig.courtsCount);
+              m.time = `${assigned} - Pista ${pistaN}`;
+            }
+          });
+        }
+      });
+    };
+
+    scheduleCatRounds(nextMain);
+    scheduleCatRounds(nextCons);
+
+    setRounds(nextMain);
+    setConsRounds(nextCons);
+    alert('✅ Horarios recalculados respetando afinidad de jugadores, orden entre rondas y cupo de pistas. Los horarios que tú hayas puesto a mano se respetaron.');
+  };
+
 
   // Helper: expand slots for a participant excluding their blocked slots
   const expandPlayerSlots = (part, globalSlots) => {
@@ -847,22 +922,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     if (nextRoundIdx < nextRounds.length) {
       const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
-      if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye && !nextMatch.time) {
+      if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye) {
         const globalSlots = buildGlobalSlots();
-
-        // Build snapshots with the new nextRounds applied
-        const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
-        const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
-        const slotUsage = buildSlotUsage(globalSlots, updatedMain, updatedCons);
-
-        const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
-        const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
-        let common = p1Slots.filter(s => p2Slots.includes(s));
-        if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-
-        // Enforce round ordering: nextMatch debe jugarse DESPUÉS de los dos partidos
-        // previos de los jugadores que avanzan. Usamos el índice del slot en globalSlots
-        // (que ya está ordenado por día+hora) como tiempo discreto comparable.
         const slotIdx = (s) => globalSlots.indexOf(s);
         const getSlotFromMatch = (m) => m?.time ? m.time.split(' - Pista')[0].trim() : null;
         const predA = nextRounds[match.round][nextMatchIdx * 2];
@@ -871,14 +932,37 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const predBIdx = slotIdx(getSlotFromMatch(predB));
         const earliestIdx = Math.max(predAIdx, predBIdx) + 1;
 
-        const afterPrev = (s) => slotIdx(s) >= earliestIdx;
+        // Cuándo re-schedulear:
+        //   · si no hay hora asignada aún, o
+        //   · si la hora actual no la fijó el admin Y viola el orden entre rondas
+        //     (p.ej. la generó una versión vieja del auto-scheduler sin enforcement).
+        const curIdx = slotIdx(getSlotFromMatch(nextMatch));
+        const violatesOrder = curIdx !== -1 && curIdx < earliestIdx;
+        const shouldSchedule = !nextMatch.time || (!nextMatch.timeManual && violatesOrder);
 
-        let assigned = common.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
-        if (!assigned) assigned = globalSlots.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
-        if (!assigned) assigned = globalSlots.filter(afterPrev)[0];
-        if (!assigned) assigned = common.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount)
-          || common.reduce((min, s) => (slotUsage[s] ?? 0) < (slotUsage[min] ?? 0) ? s : min, common[0] || globalSlots[0]);
-        nextMatch.time = assigned ? `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}` : '';
+        if (shouldSchedule) {
+          // Construir snapshot con el borrado del time si hay que re-asignar, para
+          // que slotUsage no cuente la asignación antigua.
+          if (violatesOrder && !nextMatch.timeManual) nextMatch.time = null;
+
+          const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
+          const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
+          const slotUsage = buildSlotUsage(globalSlots, updatedMain, updatedCons);
+
+          const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
+          const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
+          let common = p1Slots.filter(s => p2Slots.includes(s));
+          if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
+
+          const afterPrev = (s) => slotIdx(s) >= earliestIdx;
+
+          let assigned = common.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
+          if (!assigned) assigned = globalSlots.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
+          if (!assigned) assigned = globalSlots.filter(afterPrev)[0];
+          if (!assigned) assigned = common.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount)
+            || common.reduce((min, s) => (slotUsage[s] ?? 0) < (slotUsage[min] ?? 0) ? s : min, common[0] || globalSlots[0]);
+          nextMatch.time = assigned ? `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}` : '';
+        }
       }
     }
 
@@ -2185,6 +2269,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
                 Atrás a Inscripción
+              </button>
+              <button
+                onClick={recomputeAllAutoTimes}
+                title="Re-asigna horarios de todos los partidos respetando afinidad de jugadores, orden entre rondas y cupo de pistas. No toca los horarios que hayas puesto manualmente."
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #BFDBFE', backgroundColor: '#EFF6FF', color: '#1D4ED8', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+              >
+                🔄 Recalcular horarios
               </button>
               <button
                 onClick={() => {
