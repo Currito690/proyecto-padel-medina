@@ -344,11 +344,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (rIdx < rArray.length - 1) {
       const nextMatchIdx = Math.floor(mIdx / 2);
       const isTop = mIdx % 2 === 0;
-      if (isTop) rArray[rIdx + 1][nextMatchIdx].p1 = winner;
-      else rArray[rIdx + 1][nextMatchIdx].p2 = winner;
-      
-      // Limpiar el ganador de rondas futuras si cambiamos el ganador de una ronda anterior
-      // (Para no arrastrar ganadores antiguos si administramos clics "atrás")
+      const nextMatch = rArray[rIdx + 1][nextMatchIdx];
+      const prevPlayer = isTop ? nextMatch.p1 : nextMatch.p2;
+      const changed = prevPlayer?.id !== winner.id;
+      if (isTop) nextMatch.p1 = winner;
+      else nextMatch.p2 = winner;
+      // Si cambió el jugador que avanza y la hora NO es manual, borramos la
+      // hora para que el auto-scheduler la recalcule con las disponibilidades
+      // de la nueva pareja.
+      if (changed && !nextMatch.timeManual) nextMatch.time = null;
+
+      // Limpiar el ganador y rastro de rondas futuras cuando el admin corrige
+      // un ganador anterior. También borramos tiempos no-manuales aguas abajo
+      // donde los jugadores se quedan "sin definir" (hay que re-programar).
       let fR = rIdx + 1;
       let fM = nextMatchIdx;
       while (fR < rArray.length) {
@@ -356,15 +364,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          const nextF = Math.floor(fM / 2);
          if (fR < rArray.length - 1) {
              const isTopF = fM % 2 === 0;
-             if (isTopF && rArray[fR + 1][nextF].p1?.id !== winner.id) rArray[fR + 1][nextF].p1 = null;
-             if (!isTopF && rArray[fR + 1][nextF].p2?.id !== winner.id) rArray[fR + 1][nextF].p2 = null;
+             const downstream = rArray[fR + 1][nextF];
+             const downstreamPrev = isTopF ? downstream.p1 : downstream.p2;
+             if (downstreamPrev?.id !== winner.id) {
+               if (isTopF) downstream.p1 = null;
+               else downstream.p2 = null;
+               if (!downstream.timeManual) downstream.time = null;
+             }
          }
          fM = nextF;
          fR++;
       }
 
       // Auto-advance if opponent in next round is a bye
-      const nextMatch = rArray[rIdx + 1][nextMatchIdx];
       if ((isTop && nextMatch.p2?.isBye) || (!isTop && nextMatch.p1?.isBye)) {
          advanceWinnerMut(rArray, rIdx + 1, nextMatchIdx, winner);
       }
