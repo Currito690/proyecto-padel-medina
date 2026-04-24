@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
+import { useAuth } from '../../context/AuthContext';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -2295,6 +2296,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 };
 
 const TournamentManager = () => {
+  const { user } = useAuth();
   const [tournaments, setTournaments] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState(null);
@@ -2344,7 +2346,6 @@ const TournamentManager = () => {
           localStorage.removeItem('padel_medina_tournaments_list');
           return;
         }
-        const { data: { user } } = await supabase.auth.getUser();
         const rows = list.map(t => {
           let cfg = {};
           try { cfg = JSON.parse(localStorage.getItem(`padel_medina_tournament_${t.id}`) || '{}'); } catch {}
@@ -2361,7 +2362,6 @@ const TournamentManager = () => {
   }, []);
 
   const createNewTournament = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
     const { data, error } = await supabase
       .from('tournaments')
       .insert({ name: 'Nuevo Torneo', config: {}, status: 'draft', admin_id: user?.id || null })
@@ -2452,7 +2452,6 @@ const TournamentManager = () => {
       && (t.config?.startDate || null) === (candidate.startDate || null)
     );
 
-    const { data: { user } } = await supabase.auth.getUser();
     const toUpload = found.filter(f => !isDup(f));
     if (toUpload.length === 0) {
       alert(`Los ${found.length} torneos locales ya están en la base de datos. No se subió nada nuevo.`);
