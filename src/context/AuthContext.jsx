@@ -3,14 +3,30 @@ import { supabase } from '../services/supabase';
 
 const AuthContext = createContext();
 
-const ADMIN_EMAILS = ['admin@padelmedina.com'];
+// Fallback: el admin original sigue reconociéndose por email aunque el fetch
+// a profiles.role falle (problemas de red, RLS mal aplicado, etc.).
+const LEGACY_ADMIN_EMAILS = ['admin@padelmedina.com'];
 
-const buildUser = (u) => ({
+const buildUser = (u, role) => ({
   id: u.id,
   email: u.email,
   name: u.user_metadata?.name || u.email.split('@')[0],
-  role: ADMIN_EMAILS.includes(u.email) ? 'admin' : 'client',
+  role: role || (LEGACY_ADMIN_EMAILS.includes(u.email) ? 'admin' : 'client'),
 });
+
+// Consulta profiles.role del usuario logeado. Si falla o no existe devuelve null.
+const fetchRole = async (userId) => {
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .maybeSingle();
+    return data?.role || null;
+  } catch {
+    return null;
+  }
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -18,12 +34,18 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let settled = false;
+    let cancelled = false;
 
-    const finish = (sessionUser) => {
+    const finish = async (sessionUser) => {
       if (settled) return;
       settled = true;
-      setUser(sessionUser ? buildUser(sessionUser) : null);
-      setLoading(false);
+      if (!sessionUser) {
+        setUser(null);
+      } else {
+        const role = await fetchRole(sessionUser.id);
+        if (!cancelled) setUser(buildUser(sessionUser, role));
+      }
+      if (!cancelled) setLoading(false);
     };
 
     const timeout = setTimeout(() => finish(null), 5000);
@@ -40,7 +62,7 @@ export function AuthProvider({ children }) {
         finish(null);
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'INITIAL_SESSION') return;
       const supaUser = session?.user;
       // Solo loguear si el email está verificado
@@ -48,10 +70,16 @@ export function AuthProvider({ children }) {
         setUser(null);
         return;
       }
-      setUser(supaUser ? buildUser(supaUser) : null);
+      if (!supaUser) {
+        setUser(null);
+        return;
+      }
+      const role = await fetchRole(supaUser.id);
+      if (!cancelled) setUser(buildUser(supaUser, role));
     });
 
     return () => {
+      cancelled = true;
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
