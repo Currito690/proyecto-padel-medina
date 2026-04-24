@@ -14,14 +14,20 @@ const buildUser = (u, role) => ({
   role: role || (LEGACY_ADMIN_EMAILS.includes(u.email) ? 'admin' : 'client'),
 });
 
-// Consulta profiles.role del usuario logeado. Si falla o no existe devuelve null.
+// Consulta profiles.role del usuario logeado. Nunca lanza; si falla/tarda,
+// devuelve null y el caller cae al fallback por email. Timeout de 2.5s para
+// no bloquear la UI si la red va lenta o RLS no está bien configurada.
 const fetchRole = async (userId) => {
   try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 2500);
     const { data } = await supabase
       .from('profiles')
       .select('role')
       .eq('id', userId)
+      .abortSignal(controller.signal)
       .maybeSingle();
+    clearTimeout(tid);
     return data?.role || null;
   } catch {
     return null;
@@ -33,49 +39,53 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let settled = false;
     let cancelled = false;
 
-    const finish = async (sessionUser) => {
-      if (settled) return;
-      settled = true;
+    // Resuelve el rol en segundo plano SIN bloquear el render. El login ya
+    // muestra al usuario con el rol del fallback (email) y lo sobrescribe
+    // después si profiles devuelve otra cosa.
+    const applyUser = (sessionUser) => {
       if (!sessionUser) {
-        setUser(null);
-      } else {
-        const role = await fetchRole(sessionUser.id);
-        if (!cancelled) setUser(buildUser(sessionUser, role));
+        if (!cancelled) setUser(null);
+        return;
       }
-      if (!cancelled) setLoading(false);
+      // 1) Pinta el usuario inmediatamente con rol por fallback.
+      if (!cancelled) setUser(buildUser(sessionUser, null));
+      // 2) Refina el rol con profiles.role en background.
+      fetchRole(sessionUser.id).then(role => {
+        if (cancelled || !role) return;
+        setUser(prev => prev && prev.id === sessionUser.id ? buildUser(sessionUser, role) : prev);
+      });
     };
 
-    const timeout = setTimeout(() => finish(null), 5000);
+    const timeout = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 5000);
 
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         clearTimeout(timeout);
         const supaUser = session?.user;
         // Solo restaurar sesión si el email está verificado
-        finish(supaUser?.email_confirmed_at ? supaUser : null);
+        applyUser(supaUser?.email_confirmed_at ? supaUser : null);
+        if (!cancelled) setLoading(false);
       })
       .catch(() => {
         clearTimeout(timeout);
-        finish(null);
+        if (!cancelled) {
+          setUser(null);
+          setLoading(false);
+        }
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'INITIAL_SESSION') return;
       const supaUser = session?.user;
-      // Solo loguear si el email está verificado
       if (supaUser && !supaUser.email_confirmed_at) {
-        setUser(null);
+        if (!cancelled) setUser(null);
         return;
       }
-      if (!supaUser) {
-        setUser(null);
-        return;
-      }
-      const role = await fetchRole(supaUser.id);
-      if (!cancelled) setUser(buildUser(supaUser, role));
+      applyUser(supaUser || null);
     });
 
     return () => {
