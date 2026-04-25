@@ -159,6 +159,10 @@ const BookingDashboard = () => {
   };
 
   const handleCourtChange = (courtId) => {
+    if (slotsLocked) {
+      alert(`Las reservas se abren a las ${siteSettings.slots_release_time}. Vuelve en ese momento para elegir tu pista.`);
+      return;
+    }
     setSelectedCourt(courtId);
     setSelectedSlot(null);
     setView('calendar');
@@ -172,6 +176,10 @@ const BookingDashboard = () => {
   };
 
   const handleBook = () => {
+    if (slotsLocked) {
+      alert(`Las reservas se abren a las ${siteSettings.slots_release_time}.`);
+      return;
+    }
     const slot = slots.find(s => s.id === selectedSlot);
     const court = courts.find(c => c.id === selectedCourt);
     addItem({
@@ -185,6 +193,22 @@ const BookingDashboard = () => {
     });
     navigate('/carrito');
   };
+
+  // Re-evaluar el bloqueo cada 30s para que se desbloquee solo a la hora exacta
+  // (release_time = 09:00) sin obligar al usuario a recargar la página.
+  useEffect(() => {
+    if (!siteSettings.slots_release_time) return;
+    const evaluate = () => {
+      const now = new Date();
+      const [rH, rM] = siteSettings.slots_release_time.split(':').map(Number);
+      const releaseMin = rH * 60 + rM;
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      setSlotsLocked(nowMin < releaseMin);
+    };
+    evaluate();
+    const id = setInterval(evaluate, 30 * 1000);
+    return () => clearInterval(id);
+  }, [siteSettings.slots_release_time]);
 
   const currentCourt = courts.find(c => c.id === selectedCourt);
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || 'Jugador';
@@ -520,11 +544,15 @@ const BookingDashboard = () => {
               <button
                 key={court.id}
                 onClick={() => handleCourtChange(court.id)}
+                disabled={slotsLocked}
+                aria-disabled={slotsLocked}
                 onMouseOver={(e) => {
+                  if (slotsLocked) return;
                   e.currentTarget.style.transform = 'translateY(-4px)';
                   e.currentTarget.style.boxShadow = '0 20px 40px rgba(0,0,0,0.14)';
                 }}
                 onMouseOut={(e) => {
+                  if (slotsLocked) return;
                   e.currentTarget.style.transform = 'translateY(0)';
                   e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)';
                 }}
@@ -532,7 +560,10 @@ const BookingDashboard = () => {
                   display: 'flex', flexDirection: 'column',
                   padding: 0, borderRadius: '1.25rem',
                   background: 'white', border: '1px solid #E2E8F0',
-                  cursor: 'pointer', textAlign: 'left', overflow: 'hidden',
+                  opacity: slotsLocked ? 0.55 : 1,
+                  cursor: slotsLocked ? 'not-allowed' : 'pointer',
+                  filter: slotsLocked ? 'grayscale(0.5)' : 'none',
+                  textAlign: 'left', overflow: 'hidden',
                   boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
                   transition: 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.22s',
                 }}
