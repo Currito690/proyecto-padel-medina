@@ -158,9 +158,17 @@ const BookingDashboard = () => {
     setLoadingSlots(false);
   };
 
+  // El release_time solo bloquea fechas FUTURAS. Hoy siempre se puede reservar
+  // (los slots pasados ya quedan marcados como ocupados por loadSlots).
+  const isDateLocked = (dateStr) => {
+    if (!slotsLocked) return false;
+    const todayStr = new Date().toISOString().split('T')[0];
+    return dateStr > todayStr;
+  };
+
   const handleCourtChange = (courtId) => {
-    if (slotsLocked) {
-      alert(`Las reservas se abren a las ${siteSettings.slots_release_time}. Vuelve en ese momento para elegir tu pista.`);
+    if (isDateLocked(selectedDate)) {
+      alert(`Las reservas para fechas futuras se abren a las ${siteSettings.slots_release_time}. Hoy puedes reservar normalmente.`);
       return;
     }
     setSelectedCourt(courtId);
@@ -176,8 +184,8 @@ const BookingDashboard = () => {
   };
 
   const handleBook = () => {
-    if (slotsLocked) {
-      alert(`Las reservas se abren a las ${siteSettings.slots_release_time}.`);
+    if (isDateLocked(selectedDate)) {
+      alert(`Las reservas para esta fecha se abren a las ${siteSettings.slots_release_time}.`);
       return;
     }
     const slot = slots.find(s => s.id === selectedSlot);
@@ -517,8 +525,8 @@ const BookingDashboard = () => {
               </svg>
             </div>
             <div>
-              <p style={{ margin: 0, fontWeight: 800, color: '#9A3412', fontSize: '0.9rem' }}>Reservas cerradas hasta las {siteSettings.slots_release_time}</p>
-              <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: '#C2410C' }}>Las pistas se desbloquean automáticamente a esa hora. Vuelve entonces para reservar.</p>
+              <p style={{ margin: 0, fontWeight: 800, color: '#9A3412', fontSize: '0.9rem' }}>Reservas de fechas futuras cerradas hasta las {siteSettings.slots_release_time}</p>
+              <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: '#C2410C' }}>Hoy puedes reservar con normalidad. Las pistas de mañana en adelante se desbloquean a esa hora.</p>
             </div>
           </div>
         )}
@@ -544,15 +552,11 @@ const BookingDashboard = () => {
               <button
                 key={court.id}
                 onClick={() => handleCourtChange(court.id)}
-                disabled={slotsLocked}
-                aria-disabled={slotsLocked}
                 onMouseOver={(e) => {
-                  if (slotsLocked) return;
                   e.currentTarget.style.transform = 'translateY(-4px)';
                   e.currentTarget.style.boxShadow = '0 20px 40px rgba(0,0,0,0.14)';
                 }}
                 onMouseOut={(e) => {
-                  if (slotsLocked) return;
                   e.currentTarget.style.transform = 'translateY(0)';
                   e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)';
                 }}
@@ -560,10 +564,7 @@ const BookingDashboard = () => {
                   display: 'flex', flexDirection: 'column',
                   padding: 0, borderRadius: '1.25rem',
                   background: 'white', border: '1px solid #E2E8F0',
-                  opacity: slotsLocked ? 0.55 : 1,
-                  cursor: slotsLocked ? 'not-allowed' : 'pointer',
-                  filter: slotsLocked ? 'grayscale(0.5)' : 'none',
-                  textAlign: 'left', overflow: 'hidden',
+                  cursor: 'pointer', textAlign: 'left', overflow: 'hidden',
                   boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
                   transition: 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.22s',
                 }}
