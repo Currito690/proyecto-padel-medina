@@ -733,18 +733,31 @@ const BookingDashboard = () => {
 
         <main>
           <p className="section-label">Horas disponibles</p>
+          {isDateLocked(selectedDate) && (
+            <div style={{ background: '#FEF2F2', border: '1.5px solid #FECACA', borderRadius: '0.875rem', padding: '0.875rem 1rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              <div>
+                <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 800, color: '#B91C1C' }}>Fecha bloqueada hasta las {siteSettings.slots_release_time}</p>
+                <p style={{ margin: '0.1rem 0 0', fontSize: '0.78rem', color: '#7F1D1D' }}>Vuelve a esa hora para poder reservar este día. Para hoy puedes reservar con normalidad.</p>
+              </div>
+            </div>
+          )}
           {loadingSlots ? (
             <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94A3B8' }}>
               <div style={{ width: '28px', height: '28px', border: '3px solid #DCFCE7', borderTopColor: '#16A34A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
             </div>
           ) : (
-            <TimeSlotList
-              slots={slots}
-              selectedSlot={selectedSlot}
-              onSelectSlot={setSelectedSlot}
-              onBook={handleBook}
-              price={currentCourt?.price != null ? currentCourt.price : siteSettings.court_price}
-            />
+            <div style={{ pointerEvents: isDateLocked(selectedDate) ? 'none' : 'auto', opacity: isDateLocked(selectedDate) ? 0.45 : 1, filter: isDateLocked(selectedDate) ? 'grayscale(0.6)' : 'none' }}>
+              <TimeSlotList
+                slots={slots}
+                selectedSlot={selectedSlot}
+                onSelectSlot={setSelectedSlot}
+                onBook={handleBook}
+                price={currentCourt?.price != null ? currentCourt.price : siteSettings.court_price}
+              />
+            </div>
           )}
         </main>
       </div>
