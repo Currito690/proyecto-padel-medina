@@ -66,15 +66,48 @@ serve(async (req) => {
 
     const responseCode = parseInt(decoded.Ds_Response ?? '9999', 10);
     const merchantData = JSON.parse(decoded.Ds_MerchantData ?? '{}');
-    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones } = merchantData;
+    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones, kind, registrationId } = merchantData;
 
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
+
+    // ── Pago de inscripción a torneo ─────────────────────────────────────
+    if (kind === 'tournament') {
+      const amountCentsRaw = decoded.Ds_Amount ?? '0';
+      const amountPaid = parseFloat(amountCentsRaw) / 100;
+
+      if (responseCode <= 99) {
+        const { error: updErr } = await supabase
+          .from('tournament_registrations')
+          .update({
+            payment_status: 'paid',
+            payment_method: 'redsys',
+            paid_at: new Date().toISOString(),
+            amount_paid: amountPaid,
+          })
+          .eq('id', registrationId);
+        if (updErr) {
+          console.error('Error marcando inscripción como pagada:', updErr);
+          return new Response('KO', { status: 500 });
+        }
+        console.log(`Redsys OK: inscripción ${registrationId} marcada como pagada (${amountPaid}€)`);
+      } else {
+        const { error: failErr } = await supabase
+          .from('tournament_registrations')
+          .update({ payment_status: 'failed' })
+          .eq('id', registrationId);
+        if (failErr) console.warn('Error marcando inscripción como fallida:', failErr);
+        console.log(`Redsys: pago de inscripción ${registrationId} rechazado con código ${responseCode}`);
+      }
+
+      return new Response('OK', { status: 200 });
+    }
+
+    // ── Pago de reserva de pista (flujo original) ────────────────────────
     // Códigos 0000–0099 = pago OK
     if (responseCode <= 99) {
-      const supabase = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-      );
-
       const { data: bookingRow, error } = await supabase.from('bookings').insert({
         court_id:  courtId,
         user_id:   userId,

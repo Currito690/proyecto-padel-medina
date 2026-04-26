@@ -165,7 +165,6 @@ export default function TournamentRegistration() {
   const feeEnabled = !!tournament?.config?.registrationFeeEnabled;
   const feeRequired = tournament?.config?.registrationFeeRequired !== false;
   const feeAmount = parseFloat(tournament?.config?.registrationFeeAmount || 0);
-  const feeCurrency = tournament?.config?.registrationFeeCurrency || 'EUR';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -197,8 +196,9 @@ export default function TournamentRegistration() {
     }));
 
     const paymentStatus = feeEnabled && feeAmount > 0 ? 'pending' : 'not_required';
+    const totalFee = feeEnabled && feeAmount > 0 ? feeAmount * 2 : 0; // por pareja = 2 jugadores
 
-    const { error: insError } = await supabase
+    const { data: regRow, error: insError } = await supabase
       .from('tournament_registrations')
       .insert({
         tournament_id: id,
@@ -214,16 +214,76 @@ export default function TournamentRegistration() {
         player2_shirt_size: giftIsShirt ? (p2Size || null) : null,
         payment_status: paymentStatus,
         amount_paid: null,
-      });
+      })
+      .select('id')
+      .single();
 
     if (insError) {
       alert('Hubo un error al registrarte. Vuelve a intentarlo.');
       console.error(insError);
       setLoading(false);
-    } else {
-      setSuccess(true);
-      setLoading(false);
+      return;
     }
+
+    // Si hay cuota online y es obligatoria, redirigir a Redsys.
+    // Si es opcional, mostrar success con un botón "Pagar ahora" más adelante.
+    if (totalFee > 0 && feeRequired && regRow?.id) {
+      try {
+        await redirectToRedsys(regRow.id, totalFee);
+        return; // el navegador navegará al TPV
+      } catch (e) {
+        console.error('Error iniciando pago:', e);
+        alert('No se pudo conectar con la pasarela de pago. Tu inscripción quedó como pendiente; el club te indicará cómo pagar.');
+        setSuccess(true);
+        setLoading(false);
+        return;
+      }
+    }
+
+    setSuccess(true);
+    setLoading(false);
+  };
+
+  const redirectToRedsys = async (registrationId, amount) => {
+    const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
+    const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/torneos/${id}?inscripcion=ok`)}`;
+    const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/torneos/${id}?inscripcion=fallo`)}`;
+    const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
+
+    const res = await supabase.functions.invoke('redsys-create', {
+      body: {
+        kind: 'tournament',
+        registrationId,
+        tournamentName: tournament?.name || 'Torneo',
+        amount,
+        successUrl,
+        failUrl,
+        notifyUrl,
+        paymentMethod: 'card',
+      },
+    });
+    if (res.error || !res.data || res.data.error) {
+      throw new Error(res.error?.message || res.data?.error || 'Pasarela no disponible');
+    }
+    const data = res.data;
+
+    // Crear formulario y postearlo a Redsys
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = data.redsysUrl;
+    [
+      ['Ds_SignatureVersion', 'HMAC_SHA256_V1'],
+      ['Ds_MerchantParameters', data.Ds_MerchantParameters],
+      ['Ds_Signature', data.Ds_Signature],
+    ].forEach(([name, value]) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
   };
 
   if (loading) {
@@ -386,14 +446,17 @@ export default function TournamentRegistration() {
               </p>
             )}
             {feeEnabled && feeAmount > 0 && (
-              <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '0.75rem' }}>
-                <p style={{ margin: 0, fontSize: '0.82rem', color: '#15803D', fontWeight: 700 }}>
-                  💳 Cuota de inscripción: {feeAmount.toFixed(2).replace('.', ',')} {feeCurrency === 'EUR' ? '€' : feeCurrency}
+              <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', backgroundColor: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: '0.75rem' }}>
+                <p style={{ margin: 0, fontSize: '0.85rem', color: '#15803D', fontWeight: 800 }}>
+                  💳 Cuota de inscripción
                 </p>
-                <p style={{ margin: '0.2rem 0 0', fontSize: '0.75rem', color: '#166534', lineHeight: 1.4 }}>
+                <p style={{ margin: '0.3rem 0 0', fontSize: '0.78rem', color: '#166534', lineHeight: 1.5 }}>
+                  {feeAmount.toFixed(2).replace('.', ',')} € por jugador · <strong>{(feeAmount * 2).toFixed(2).replace('.', ',')} € por pareja</strong>
+                </p>
+                <p style={{ margin: '0.35rem 0 0', fontSize: '0.74rem', color: '#166534', lineHeight: 1.4 }}>
                   {feeRequired
-                    ? 'Tras inscribirte, el club te indicará cómo abonarla. La inscripción quedará como “pendiente de pago” hasta que confirme el cobro.'
-                    : 'El pago es opcional — quedará como pendiente y podrás abonarlo en el club.'}
+                    ? 'Al pulsar "Inscribirse" se abrirá la pasarela de pago segura para abonar la cuota. Si el pago falla, podrás reintentar desde el listado del club.'
+                    : 'El pago es opcional. Tu inscripción quedará como pendiente y podrás pagar en el club.'}
                 </p>
               </div>
             )}

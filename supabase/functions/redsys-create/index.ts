@@ -59,20 +59,31 @@ serve(async (req) => {
   }
 
   try {
-    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones, splitToken } = await req.json();
+    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones, splitToken, kind, registrationId, tournamentName } = await req.json();
 
     const orderId = customOrderId ?? generateOrderId();
     const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
 
-    const merchantDataObj: Record<string, unknown> = {
-      courtId,
-      userId,
-      date,
-      timeSlot,
-      isSharedPayment: !!isSharedPayment,
-      sharedPhones: isSharedPayment ? sharedPhones : []
-    };
-    if (splitToken) merchantDataObj.splitToken = splitToken;
+    // Diferenciamos pago de reserva (kind='booking', default) vs pago de
+    // inscripción a torneo (kind='tournament').
+    const isTournament = kind === 'tournament';
+
+    const merchantDataObj: Record<string, unknown> = isTournament
+      ? { kind: 'tournament', registrationId }
+      : {
+          kind: 'booking',
+          courtId,
+          userId,
+          date,
+          timeSlot,
+          isSharedPayment: !!isSharedPayment,
+          sharedPhones: isSharedPayment ? sharedPhones : []
+        };
+    if (splitToken && !isTournament) merchantDataObj.splitToken = splitToken;
+
+    const productDescription = isTournament
+      ? `Inscripcion torneo ${(tournamentName || '').slice(0, 60)}`.slice(0, 125)
+      : `Pista padel ${date} ${timeSlot}`;
 
     const params: Record<string, string> = {
       DS_MERCHANT_MERCHANTCODE:       MERCHANT_CODE,
@@ -85,7 +96,7 @@ serve(async (req) => {
       DS_MERCHANT_URLKO:              failUrl,
       DS_MERCHANT_MERCHANTURL:        notifyUrl,
       DS_MERCHANT_CONSUMERLANGUAGE:   '002', // Español
-      DS_MERCHANT_PRODUCTDESCRIPTION: `Pista padel ${date} ${timeSlot}`,
+      DS_MERCHANT_PRODUCTDESCRIPTION: productDescription,
       DS_MERCHANT_MERCHANTDATA:       JSON.stringify(merchantDataObj),
     };
 
