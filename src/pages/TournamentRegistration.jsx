@@ -198,9 +198,15 @@ export default function TournamentRegistration() {
     const paymentStatus = feeEnabled && feeAmount > 0 ? 'pending' : 'not_required';
     const totalFee = feeEnabled && feeAmount > 0 ? feeAmount * 2 : 0; // por pareja = 2 jugadores
 
-    const { data: regRow, error: insError } = await supabase
+    // Generamos el UUID en el cliente para no necesitar SELECT después del
+    // INSERT (los clientes no-admin no tienen policy SELECT sobre la tabla).
+    const registrationId = (crypto.randomUUID && crypto.randomUUID())
+      || `r_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    const { error: insError } = await supabase
       .from('tournament_registrations')
       .insert({
+        id: registrationId,
         tournament_id: id,
         category: dualCategory && cat2 && cat2 !== cat ? `${cat} + ${cat2}` : cat,
         player1_name: p1Name,
@@ -214,9 +220,7 @@ export default function TournamentRegistration() {
         player2_shirt_size: giftIsShirt ? (p2Size || null) : null,
         payment_status: paymentStatus,
         amount_paid: null,
-      })
-      .select('id')
-      .single();
+      });
 
     if (insError) {
       alert('Hubo un error al registrarte. Vuelve a intentarlo.');
@@ -227,9 +231,9 @@ export default function TournamentRegistration() {
 
     // Si hay cuota online y es obligatoria, redirigir a Redsys.
     // Si es opcional, mostrar success con un botón "Pagar ahora" más adelante.
-    if (totalFee > 0 && feeRequired && regRow?.id) {
+    if (totalFee > 0 && feeRequired) {
       try {
-        await redirectToRedsys(regRow.id, totalFee);
+        await redirectToRedsys(registrationId, totalFee);
         return; // el navegador navegará al TPV
       } catch (e) {
         console.error('Error iniciando pago:', e);
