@@ -302,12 +302,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   const downloadRegistrationsCsv = () => {
     if (regsList.length === 0) { alert('No hay inscripciones que exportar.'); return; }
-    const headers = ['Categoría','Jugador 1','Email 1','Tel 1','Jugador 2','Email 2','Tel 2','Talla','Estado pago','Importe','Pagado en','Fecha inscripción'];
+    const headers = ['Categoría','Jugador 1','Email 1','Tel 1','Talla 1','Jugador 2','Email 2','Tel 2','Talla 2','Estado pago','Importe','Pagado en','Fecha inscripción'];
     const rows = regsList.map(r => [
       r.category,
-      r.player1_name, r.player1_email, r.player1_phone,
-      r.player2_name, r.player2_email, r.player2_phone,
-      r.shirt_size || '',
+      r.player1_name, r.player1_email, r.player1_phone, r.player1_shirt_size || r.shirt_size || '',
+      r.player2_name, r.player2_email, r.player2_phone, r.player2_shirt_size || '',
       r.payment_status,
       r.amount_paid != null ? Number(r.amount_paid).toFixed(2) : '',
       r.paid_at ? new Date(r.paid_at).toLocaleString('es-ES') : '',
@@ -2476,7 +2475,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           </td>
                           {tConfig.gift === 'shirt' && (
                             <td style={{ ...tdCell, fontWeight: 700, color: '#0369A1' }}>
-                              {r.shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}
+                              <div>{r.player1_shirt_size || r.shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}</div>
+                              <div>{r.player2_shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}</div>
                             </td>
                           )}
                           {tConfig.registrationFeeEnabled && (

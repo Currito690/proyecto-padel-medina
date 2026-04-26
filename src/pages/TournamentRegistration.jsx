@@ -196,11 +196,6 @@ export default function TournamentRegistration() {
       slots: hours.map(h => `${day} ${h}`),
     }));
 
-    // shirt_size combinado: si ambas iguales -> "M"; si distintas -> "M / L"
-    const shirtSize = giftIsShirt
-      ? (p1Size === p2Size ? p1Size : `${p1Size} / ${p2Size}`)
-      : null;
-
     const paymentStatus = feeEnabled && feeAmount > 0 ? 'pending' : 'not_required';
 
     const { error: insError } = await supabase
@@ -215,7 +210,8 @@ export default function TournamentRegistration() {
         player2_email: p2Email,
         player2_phone: p2Phone,
         unavailable_times: unavailableTimes,
-        shirt_size: shirtSize,
+        player1_shirt_size: giftIsShirt ? (p1Size || null) : null,
+        player2_shirt_size: giftIsShirt ? (p2Size || null) : null,
         payment_status: paymentStatus,
         amount_paid: null,
       });
