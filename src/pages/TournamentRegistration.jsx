@@ -46,9 +46,11 @@ export default function TournamentRegistration() {
   const [p1Name, setP1Name] = useState('');
   const [p1Email, setP1Email] = useState('');
   const [p1Phone, setP1Phone] = useState('');
+  const [p1Size, setP1Size] = useState('');
   const [p2Name, setP2Name] = useState('');
   const [p2Email, setP2Email] = useState('');
   const [p2Phone, setP2Phone] = useState('');
+  const [p2Size, setP2Size] = useState('');
 
   // Dual category
   const [cat2, setCat2] = useState('');
@@ -159,6 +161,12 @@ export default function TournamentRegistration() {
     });
   };
 
+  const giftIsShirt = tournament?.config?.gift === 'shirt';
+  const feeEnabled = !!tournament?.config?.registrationFeeEnabled;
+  const feeRequired = tournament?.config?.registrationFeeRequired !== false;
+  const feeAmount = parseFloat(tournament?.config?.registrationFeeAmount || 0);
+  const feeCurrency = tournament?.config?.registrationFeeCurrency || 'EUR';
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!p1Name || !p2Name || !cat) {
@@ -167,6 +175,10 @@ export default function TournamentRegistration() {
     }
     if (!p1Phone || !p2Phone) {
       alert('El teléfono de ambos jugadores es obligatorio.');
+      return;
+    }
+    if (giftIsShirt && (!p1Size || !p2Size)) {
+      alert('Indica la talla de camiseta de cada jugador.');
       return;
     }
     setLoading(true);
@@ -184,6 +196,13 @@ export default function TournamentRegistration() {
       slots: hours.map(h => `${day} ${h}`),
     }));
 
+    // shirt_size combinado: si ambas iguales -> "M"; si distintas -> "M / L"
+    const shirtSize = giftIsShirt
+      ? (p1Size === p2Size ? p1Size : `${p1Size} / ${p2Size}`)
+      : null;
+
+    const paymentStatus = feeEnabled && feeAmount > 0 ? 'pending' : 'not_required';
+
     const { error: insError } = await supabase
       .from('tournament_registrations')
       .insert({
@@ -196,6 +215,9 @@ export default function TournamentRegistration() {
         player2_email: p2Email,
         player2_phone: p2Phone,
         unavailable_times: unavailableTimes,
+        shirt_size: shirtSize,
+        payment_status: paymentStatus,
+        amount_paid: null,
       });
 
     if (insError) {
@@ -341,6 +363,12 @@ export default function TournamentRegistration() {
                 <input type="text" required placeholder="Nombre completo" value={p1Name} onChange={e => setP1Name(e.target.value)} style={inputStyle} />
                 <input type="email" placeholder="Correo (opcional)" value={p1Email} onChange={e => setP1Email(e.target.value)} style={inputStyle} />
                 <input type="tel" required placeholder="Teléfono *" value={p1Phone} onChange={e => setP1Phone(e.target.value)} style={inputStyle} />
+                {giftIsShirt && (
+                  <select required value={p1Size} onChange={e => setP1Size(e.target.value)} style={{ ...inputStyle, cursor: 'pointer', backgroundColor: '#F0F9FF' }}>
+                    <option value="">Talla camiseta *</option>
+                    {['XS','S','M','L','XL','XXL'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                )}
               </div>
               {/* Jugador 2 */}
               <div style={{ border: '1.5px solid #E2E8F0', borderRadius: '1rem', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
@@ -348,8 +376,31 @@ export default function TournamentRegistration() {
                 <input type="text" required placeholder="Nombre completo" value={p2Name} onChange={e => setP2Name(e.target.value)} style={inputStyle} />
                 <input type="email" placeholder="Correo (opcional)" value={p2Email} onChange={e => setP2Email(e.target.value)} style={inputStyle} />
                 <input type="tel" required placeholder="Teléfono *" value={p2Phone} onChange={e => setP2Phone(e.target.value)} style={inputStyle} />
+                {giftIsShirt && (
+                  <select required value={p2Size} onChange={e => setP2Size(e.target.value)} style={{ ...inputStyle, cursor: 'pointer', backgroundColor: '#F0F9FF' }}>
+                    <option value="">Talla camiseta *</option>
+                    {['XS','S','M','L','XL','XXL'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                )}
               </div>
             </div>
+            {giftIsShirt && (
+              <p style={{ margin: '0.6rem 0 0', fontSize: '0.78rem', color: '#0369A1', fontWeight: 600 }}>
+                🎁 Este torneo regala camiseta a los inscritos. Indica la talla de cada jugador.
+              </p>
+            )}
+            {feeEnabled && feeAmount > 0 && (
+              <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '0.75rem' }}>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: '#15803D', fontWeight: 700 }}>
+                  💳 Cuota de inscripción: {feeAmount.toFixed(2).replace('.', ',')} {feeCurrency === 'EUR' ? '€' : feeCurrency}
+                </p>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.75rem', color: '#166534', lineHeight: 1.4 }}>
+                  {feeRequired
+                    ? 'Tras inscribirte, el club te indicará cómo abonarla. La inscripción quedará como “pendiente de pago” hasta que confirme el cobro.'
+                    : 'El pago es opcional — quedará como pendiente y podrás abonarlo en el club.'}
+                </p>
+              </div>
+            )}
           </section>
 
           {/* 3 — Horarios no disponibles */}

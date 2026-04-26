@@ -322,6 +322,13 @@ export default function TournamentBracket() {
                     { title: 'Cuadro de Consolación', data: catCons, isCons: true },
                   ].map(bracket => {
                     if (!bracket.data || bracket.data.length === 0) return null;
+                    // Para diferenciar visualmente la consolación del cuadro
+                    // principal, la pintamos invertida: el primer round queda
+                    // a la derecha (mobile: abajo) y la final a la izquierda
+                    // (mobile: arriba). Mantenemos el índice original en
+                    // getRoundName para que la etiqueta siga siendo correcta.
+                    const indexed = bracket.data.map((round, originalIdx) => ({ round, originalIdx }));
+                    const renderedRounds = bracket.isCons ? [...indexed].reverse() : indexed;
                     return (
                       <div key={bracket.title} style={{ marginBottom: '3rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
@@ -332,7 +339,7 @@ export default function TournamentBracket() {
                                   <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M18 2H6v7a6 6 0 0 0 12 0V2z"/>
                                 </svg>
                               </span>
-                              {bracket.title}
+                              {bracket.title}{bracket.isCons && <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#92400E', marginLeft: '0.4rem', backgroundColor: '#FFFBEB', padding: '0.15rem 0.5rem', borderRadius: '999px', border: '1px solid #FDE68A' }}>Vista invertida</span>}
                             </span>
                           </h3>
                           <div style={{ flex: 1, height: '2px', backgroundColor: bracket.isCons ? '#FDE68A' : '#E2E8F0', borderRadius: '1px' }} />
@@ -340,13 +347,13 @@ export default function TournamentBracket() {
 
                         {/* Mobile: vertical list */}
                         <div className="bracket-mobile">
-                          {bracket.data.map((roundMatches, rIdx) => {
+                          {renderedRounds.map(({ round: roundMatches, originalIdx }) => {
                             const visibleMatches = roundMatches.filter(m => !(m.p1?.isBye && m.p2?.isBye));
                             if (visibleMatches.length === 0) return null;
                             return (
-                              <div key={rIdx} style={{ marginBottom: '1.25rem' }}>
+                              <div key={originalIdx} style={{ marginBottom: '1.25rem' }}>
                                 <div style={{ display: 'inline-block', padding: '0.3rem 0.875rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#EBF0FA', color: bracket.isCons ? '#92400E' : '#1B3A6E', borderRadius: '2rem', fontWeight: 800, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
-                                  {getRoundName(rIdx, bracket.data.length)}
+                                  {getRoundName(originalIdx, bracket.data.length)}
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                   {visibleMatches.map(match => (
@@ -361,13 +368,13 @@ export default function TournamentBracket() {
                         {/* Desktop: horizontal bracket */}
                         <div className="bracket-desktop" style={{ overflowX: 'auto', paddingBottom: '1rem' }}>
                           <div style={{ display: 'flex', gap: '1.5rem', minWidth: 'max-content', alignItems: 'stretch', paddingRight: '0.5rem' }}>
-                            {bracket.data.map((roundMatches, rIdx) => {
+                            {renderedRounds.map(({ round: roundMatches, originalIdx }) => {
                               const visibleMatches = roundMatches.filter(m => !(m.p1?.isBye && m.p2?.isBye));
-                              if (visibleMatches.length === 0 && rIdx > 0) return null;
+                              if (visibleMatches.length === 0 && originalIdx > 0) return null;
                               return (
-                                <div key={rIdx} style={{ display: 'flex', flexDirection: 'column', width: '210px', flexShrink: 0 }}>
+                                <div key={originalIdx} style={{ display: 'flex', flexDirection: 'column', width: '210px', flexShrink: 0 }}>
                                   <div style={{ textAlign: 'center', padding: '0.4rem 0.75rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#EBF0FA', color: bracket.isCons ? '#92400E' : '#1B3A6E', borderRadius: '0.5rem', fontWeight: 800, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.875rem', whiteSpace: 'nowrap', border: `1px solid ${bracket.isCons ? '#FDE68A' : '#C3D4F5'}` }}>
-                                    {getRoundName(rIdx, bracket.data.length)}
+                                    {getRoundName(originalIdx, bracket.data.length)}
                                   </div>
                                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', gap: '0.75rem' }}>
                                     {roundMatches.map(match => (

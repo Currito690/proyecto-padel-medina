@@ -111,6 +111,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Editor de horario con cuadrante (día × hora × pista)
   const [editingTime, setEditingTime] = useState(null); // { match, isCons, cat } | null
   const [editingTimeDay, setEditingTimeDay] = useState(null);
+  // Panel de inscripciones (con talla y pago)
+  const [showRegistrations, setShowRegistrations] = useState(false);
+  const [regsList, setRegsList] = useState([]);
+  const [loadingRegs, setLoadingRegs] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
@@ -243,6 +247,83 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       console.error(e);
       alert('Error al publicar el torneo: ' + (e.message || e));
     }
+  };
+
+  // ── Inscripciones: cargar, marcar como pagado, exportar CSV ───────────────
+  const loadRegistrations = async () => {
+    if (!publishedId) return;
+    setLoadingRegs(true);
+    const { data, error } = await supabase
+      .from('tournament_registrations')
+      .select('*')
+      .eq('tournament_id', publishedId)
+      .order('created_at', { ascending: true });
+    if (error) {
+      alert('Error al cargar inscripciones: ' + error.message);
+      setLoadingRegs(false);
+      return;
+    }
+    setRegsList(data || []);
+    setLoadingRegs(false);
+  };
+
+  const openRegistrationsPanel = async () => {
+    setShowRegistrations(true);
+    await loadRegistrations();
+  };
+
+  const markRegistrationPaid = async (regId, currentStatus) => {
+    const newStatus = currentStatus === 'paid' ? 'pending' : 'paid';
+    const updates = { payment_status: newStatus };
+    if (newStatus === 'paid') {
+      updates.paid_at = new Date().toISOString();
+      updates.payment_method = 'manual';
+      const fee = parseFloat(tConfig.registrationFeeAmount || 0);
+      if (fee > 0) updates.amount_paid = fee;
+    } else {
+      updates.paid_at = null;
+    }
+    const { error } = await supabase
+      .from('tournament_registrations')
+      .update(updates)
+      .eq('id', regId);
+    if (error) { alert('Error: ' + error.message); return; }
+    setRegsList(prev => prev.map(r => r.id === regId ? { ...r, ...updates } : r));
+  };
+
+  const csvEscape = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const downloadRegistrationsCsv = () => {
+    if (regsList.length === 0) { alert('No hay inscripciones que exportar.'); return; }
+    const headers = ['Categoría','Jugador 1','Email 1','Tel 1','Jugador 2','Email 2','Tel 2','Talla','Estado pago','Importe','Pagado en','Fecha inscripción'];
+    const rows = regsList.map(r => [
+      r.category,
+      r.player1_name, r.player1_email, r.player1_phone,
+      r.player2_name, r.player2_email, r.player2_phone,
+      r.shirt_size || '',
+      r.payment_status,
+      r.amount_paid != null ? Number(r.amount_paid).toFixed(2) : '',
+      r.paid_at ? new Date(r.paid_at).toLocaleString('es-ES') : '',
+      r.created_at ? new Date(r.created_at).toLocaleString('es-ES') : '',
+    ]);
+    const csv = [headers, ...rows].map(row => row.map(csvEscape).join(',')).join('\n');
+    // BOM para que Excel detecte UTF-8 con tildes
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `inscripciones_${(tConfig.name || 'torneo').replace(/[^a-z0-9]+/gi, '_')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const syncRegistrations = async () => {
@@ -1598,6 +1679,70 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </select>
             </div>
 
+            {/* ── Regalo por inscripción ── */}
+            <div style={{ padding: '1rem', backgroundColor: '#F0F9FF', borderRadius: '0.75rem', border: '1px solid #BAE6FD' }}>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: '#075985' }}>
+                🎁 Regalo por inscripción
+              </label>
+              <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#0369A1', lineHeight: 1.5 }}>
+                Si eliges <strong>Camiseta</strong>, los jugadores tendrán que indicar su talla (XS-XXL) al inscribirse.
+              </p>
+              <select
+                value={tConfig.gift || 'none'}
+                onChange={e => setTConfig({ ...tConfig, gift: e.target.value })}
+                style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #BAE6FD', fontSize: '0.875rem', cursor: 'pointer', backgroundColor: 'white', color: '#0F172A' }}
+              >
+                <option value="none">Ninguno</option>
+                <option value="shirt">Camiseta</option>
+                <option value="material">Material deportivo</option>
+              </select>
+            </div>
+
+            {/* ── Pago online de inscripción ── */}
+            <div style={{ padding: '1rem', backgroundColor: '#F0FDF4', borderRadius: '0.75rem', border: '1px solid #BBF7D0' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: '#166534', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!!tConfig.registrationFeeEnabled}
+                  onChange={e => setTConfig({ ...tConfig, registrationFeeEnabled: e.target.checked })}
+                  style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#16A34A' }}
+                />
+                💳 Cobrar inscripción online
+              </label>
+              <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#15803D', lineHeight: 1.5 }}>
+                Mostrará a los jugadores el importe a pagar al inscribirse. La pasarela automática se conectará en una entrega aparte; mientras tanto el admin marca el pago como recibido a mano desde "Inscripciones".
+              </p>
+              {tConfig.registrationFeeEnabled && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                    <input
+                      type="number" min="0" step="0.5"
+                      placeholder="Importe"
+                      value={tConfig.registrationFeeAmount ?? ''}
+                      onChange={e => setTConfig({ ...tConfig, registrationFeeAmount: e.target.value === '' ? null : parseFloat(e.target.value) })}
+                      style={{ flex: 1, padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #BBF7D0', fontSize: '0.875rem', backgroundColor: 'white', color: '#0F172A', boxSizing: 'border-box' }}
+                    />
+                    <select
+                      value={tConfig.registrationFeeCurrency || 'EUR'}
+                      onChange={e => setTConfig({ ...tConfig, registrationFeeCurrency: e.target.value })}
+                      style={{ width: '90px', padding: '0.6rem 0.5rem', borderRadius: '0.625rem', border: '1.5px solid #BBF7D0', fontSize: '0.875rem', backgroundColor: 'white', cursor: 'pointer' }}
+                    >
+                      <option value="EUR">EUR €</option>
+                    </select>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: '#166534', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={tConfig.registrationFeeRequired !== false}
+                      onChange={e => setTConfig({ ...tConfig, registrationFeeRequired: e.target.checked })}
+                      style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#16A34A' }}
+                    />
+                    El pago es obligatorio para confirmar la inscripción
+                  </label>
+                </div>
+              )}
+            </div>
+
           </div>
 
           <button onClick={() => setPhase('setup')}
@@ -1775,6 +1920,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <button onClick={syncRegistrations} disabled={syncing} style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#0F172A', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: syncing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <svg style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                 Sincronizar (Web)
+              </button>
+            )}
+            {publishedId && (
+              <button onClick={openRegistrationsPanel} style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#7C3AED', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                📋 Inscripciones
               </button>
             )}
           </div>
@@ -2265,6 +2415,110 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </div>
             </div>
           </div>
+        );
+      })()}
+
+      {/* ── Panel de inscripciones (talla, pago, CSV) ── */}
+      {showRegistrations && (() => {
+        const thCell = { textAlign: 'left', padding: '0.55rem 0.75rem', fontSize: '0.7rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' };
+        const tdCell = { padding: '0.6rem 0.75rem', verticalAlign: 'top', color: '#0F172A' };
+        return (
+        <div onClick={() => setShowRegistrations(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '1000px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>📋 Inscripciones · {tConfig.name}</h3>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.82rem', color: '#64748B' }}>
+                  {regsList.length} pareja{regsList.length === 1 ? '' : 's'} inscrita{regsList.length === 1 ? '' : 's'}
+                  {tConfig.gift === 'shirt' && ' · 🎁 Camiseta'}
+                  {tConfig.registrationFeeEnabled && tConfig.registrationFeeAmount > 0 && ` · 💳 ${tConfig.registrationFeeAmount}€`}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button onClick={loadRegistrations} disabled={loadingRegs} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
+                  {loadingRegs ? 'Cargando…' : '🔄 Refrescar'}
+                </button>
+                <button onClick={downloadRegistrationsCsv} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
+                  ⬇ Exportar CSV
+                </button>
+                <button onClick={() => setShowRegistrations(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+              </div>
+            </div>
+            <div style={{ padding: '1rem 1.5rem 1.5rem' }}>
+              {regsList.length === 0 ? (
+                <div style={{ padding: '3rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.9rem' }}>
+                  {loadingRegs ? 'Cargando…' : 'Aún no hay inscripciones online.'}
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F8FAFC' }}>
+                        <th style={thCell}>Pareja</th>
+                        <th style={thCell}>Categoría</th>
+                        <th style={thCell}>Contacto</th>
+                        {tConfig.gift === 'shirt' && <th style={thCell}>Talla</th>}
+                        {tConfig.registrationFeeEnabled && <th style={thCell}>Pago</th>}
+                        {tConfig.registrationFeeEnabled && <th style={thCell}>Acción</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {regsList.map(r => (
+                        <tr key={r.id} style={{ borderTop: '1px solid #F1F5F9' }}>
+                          <td style={tdCell}>
+                            <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player1_name}</div>
+                            <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player2_name}</div>
+                          </td>
+                          <td style={tdCell}>{r.category}</td>
+                          <td style={tdCell}>
+                            <div style={{ fontSize: '0.75rem', color: '#475569' }}>{r.player1_phone}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#475569' }}>{r.player2_phone}</div>
+                          </td>
+                          {tConfig.gift === 'shirt' && (
+                            <td style={{ ...tdCell, fontWeight: 700, color: '#0369A1' }}>
+                              {r.shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}
+                            </td>
+                          )}
+                          {tConfig.registrationFeeEnabled && (
+                            <td style={tdCell}>
+                              {(() => {
+                                const colors = {
+                                  paid: { bg: '#DCFCE7', color: '#15803D', label: '✓ Pagado' },
+                                  pending: { bg: '#FEF3C7', color: '#92400E', label: '⏳ Pendiente' },
+                                  failed: { bg: '#FEE2E2', color: '#B91C1C', label: '✗ Fallido' },
+                                  not_required: { bg: '#F1F5F9', color: '#64748B', label: 'Sin pago' },
+                                };
+                                const c = colors[r.payment_status] || colors.pending;
+                                return (
+                                  <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 800, background: c.bg, color: c.color }}>
+                                    {c.label}
+                                    {r.amount_paid != null && ` · ${Number(r.amount_paid).toFixed(2)}€`}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                          )}
+                          {tConfig.registrationFeeEnabled && (
+                            <td style={tdCell}>
+                              {r.payment_status !== 'not_required' && (
+                                <button
+                                  onClick={() => markRegistrationPaid(r.id, r.payment_status)}
+                                  style={{ padding: '0.3rem 0.7rem', borderRadius: '0.4rem', border: 'none', background: r.payment_status === 'paid' ? '#FEF2F2' : '#16A34A', color: r.payment_status === 'paid' ? '#DC2626' : 'white', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                                >
+                                  {r.payment_status === 'paid' ? 'Marcar pendiente' : 'Marcar pagado'}
+                                </button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
         );
       })()}
 
