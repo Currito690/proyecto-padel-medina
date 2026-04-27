@@ -42,6 +42,7 @@ const BookingDashboard = () => {
   const [pagoCancelado, setPagoCancelado] = useState(false);
   const [courts, setCourts] = useState([]);
   const [events, setEvents] = useState([]);
+  const [openTournaments, setOpenTournaments] = useState([]);
 
   // Leer el param, mostrarlo en estado y limpiar la URL de inmediato
   useEffect(() => {
@@ -75,6 +76,24 @@ const BookingDashboard = () => {
   useEffect(() => {
     loadCourts();
     supabase.from('events').select('*').eq('published', true).order('event_date', { ascending: true }).then(({ data }) => setEvents(data || []));
+    // Torneos públicos abiertos a inscripción (status no 'draft', plazo no pasado, sin cuadro generado todavía).
+    supabase.from('tournaments')
+      .select('id, name, status, config, created_at')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        const now = Date.now();
+        const open = (data || []).filter(t => {
+          if (t.status === 'draft') return false;
+          // Cuadro publicado → ya no se inscribe
+          if (t.config?.rounds && Object.keys(t.config.rounds).length > 0) return false;
+          if (t.config?.registrationDeadline) {
+            const ms = new Date(t.config.registrationDeadline + 'T23:59:59').getTime();
+            if (now > ms) return false;
+          }
+          return true;
+        });
+        setOpenTournaments(open);
+      });
   }, []);
 
   const loadCourts = async () => {
@@ -527,6 +546,68 @@ const BookingDashboard = () => {
             <div>
               <p style={{ margin: 0, fontWeight: 800, color: '#9A3412', fontSize: '0.9rem' }}>Reservas de fechas futuras cerradas hasta las {siteSettings.slots_release_time}</p>
               <p style={{ margin: '0.15rem 0 0', fontSize: '0.78rem', color: '#C2410C' }}>Hoy puedes reservar con normalidad. Las pistas de mañana en adelante se desbloquean a esa hora.</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Torneos abiertos a inscripción ── */}
+        {openTournaments.length > 0 && (
+          <div style={{ marginBottom: '1.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.875rem', gap: '0.875rem' }}>
+              <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 800, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>🏆 Torneos abiertos</p>
+              <div style={{ height: '1px', flex: 1, background: 'var(--color-border)' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {openTournaments.map(t => {
+                const cats = t.config?.categories?.split(',').map(c => c.trim()).filter(Boolean) || [];
+                const startFmt = t.config?.startDate ? new Date(t.config.startDate + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : null;
+                const endFmt = t.config?.endDate ? new Date(t.config.endDate + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : null;
+                const deadline = t.config?.registrationDeadline ? new Date(t.config.registrationDeadline + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }) : null;
+                const fee = parseFloat(t.config?.registrationFeeAmount || 0);
+                const feeOn = t.config?.registrationFeeEnabled && fee > 0;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => navigate(`/torneos/${t.id}`)}
+                    style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch', textAlign: 'left', padding: 0, border: '1px solid #FDE68A', borderRadius: '1rem', overflow: 'hidden', backgroundColor: 'white', cursor: 'pointer', boxShadow: '0 2px 8px rgba(245,158,11,0.12)' }}
+                    onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(245,158,11,0.2)'; }}
+                    onMouseOut={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(245,158,11,0.12)'; }}
+                  >
+                    <div style={{ background: 'linear-gradient(135deg,#F59E0B,#D97706)', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '0.65rem', fontWeight: 800, color: 'white', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Inscripción abierta</span>
+                      {feeOn && (
+                        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#92400E', backgroundColor: '#FFFBEB', padding: '0.15rem 0.55rem', borderRadius: '999px' }}>{fee.toFixed(2).replace('.', ',')} €/jugador</span>
+                      )}
+                    </div>
+                    <div style={{ padding: '0.85rem 1rem' }}>
+                      <h3 style={{ margin: '0 0 0.3rem', fontSize: '1rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>{t.name}</h3>
+                      {(startFmt || endFmt) && (
+                        <p style={{ margin: '0 0 0.35rem', fontSize: '0.78rem', color: '#475569', fontWeight: 600 }}>
+                          📅 {startFmt}{endFmt && endFmt !== startFmt ? ` — ${endFmt}` : ''}
+                        </p>
+                      )}
+                      {cats.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginBottom: '0.5rem' }}>
+                          {cats.map(c => (
+                            <span key={c} style={{ fontSize: '0.7rem', fontWeight: 700, color: '#475569', backgroundColor: '#F1F5F9', padding: '0.2rem 0.55rem', borderRadius: '0.4rem', border: '1px solid #E2E8F0' }}>{c}</span>
+                          ))}
+                        </div>
+                      )}
+                      {deadline && (
+                        <p style={{ margin: '0 0 0.5rem', fontSize: '0.72rem', color: '#92400E', fontWeight: 600 }}>
+                          ⏰ Plazo de inscripción: {deadline}
+                        </p>
+                      )}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', fontWeight: 800, color: '#D97706' }}>
+                        Inscribirse
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                        </svg>
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
