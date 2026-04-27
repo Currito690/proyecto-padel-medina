@@ -53,8 +53,11 @@ const Tournaments = () => {
     fetch();
   }, []);
 
-  const hasBracket = (t) =>
-    t.config?.rounds && Object.keys(t.config.rounds).length > 0;
+  // Solo se considera "cuadro publicado" cuando el admin ha pulsado
+  // "Publicar Cuadro" → bracketPublished = true. Si solo está generado en
+  // local (rounds llenas pero sin publicar), aún NO se muestra al público
+  // y el botón sigue siendo "Inscribirse".
+  const hasBracket = (t) => t.config?.bracketPublished === true;
 
   const deadlinePassed = (t) => {
     if (!t.config?.registrationDeadline) return false;

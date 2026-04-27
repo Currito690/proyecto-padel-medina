@@ -74,8 +74,11 @@ export default function TournamentRegistration() {
       if (error || !data) {
         setError('Este torneo no existe o ya ha cerrado inscripciones.');
       } else {
-        // If bracket is published, redirect to bracket view
-        if (data.config?.rounds && Object.keys(data.config.rounds).length > 0) {
+        // El cuadro solo se ve cuando el admin lo publica explícitamente
+        // (config.bracketPublished === true). Si solo lo ha generado en
+        // local pero no publicado, mantenemos el form de inscripción
+        // accesible para que sigan llegando inscritos.
+        if (data.config?.bracketPublished === true) {
           navigate(`/torneos/${id}/cuadro`, { replace: true });
           return;
         }

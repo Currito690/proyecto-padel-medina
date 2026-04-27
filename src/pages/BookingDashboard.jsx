@@ -84,8 +84,8 @@ const BookingDashboard = () => {
         const now = Date.now();
         const open = (data || []).filter(t => {
           if (t.status === 'draft') return false;
-          // Cuadro publicado → ya no se inscribe
-          if (t.config?.rounds && Object.keys(t.config.rounds).length > 0) return false;
+          // Cuadro publicado por el admin → ya no aparece como "abierto"
+          if (t.config?.bracketPublished === true) return false;
           if (t.config?.registrationDeadline) {
             const ms = new Date(t.config.registrationDeadline + 'T23:59:59').getTime();
             if (now > ms) return false;

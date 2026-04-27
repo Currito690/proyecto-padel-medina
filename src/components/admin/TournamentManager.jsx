@@ -404,12 +404,33 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       alert('Primero debes publicar el torneo (Fase 2).');
       return;
     }
+    // Aviso si el plazo de inscripción aún está abierto: publicar el cuadro
+    // antes de tiempo bloquea inscripciones que aún podrían llegar.
+    const deadlineStr = tConfig.registrationDeadline;
+    if (deadlineStr) {
+      const deadlineMs = new Date(deadlineStr + 'T23:59:59').getTime();
+      if (Date.now() < deadlineMs) {
+        const fmt = new Date(deadlineStr + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+        const ok = window.confirm(
+          `⚠️ El plazo de inscripción todavía está abierto hasta el ${fmt}.\n\n` +
+          'Si publicas el cuadro ahora, el enlace público pasará a mostrar el cuadro y se cerrará la posibilidad de inscribirse.\n\n' +
+          '¿Estás seguro de que quieres publicar el cuadro?'
+        );
+        if (!ok) return;
+      }
+    }
     try {
-      const config = { ...tConfig, rounds, consRounds, participants, phase };
+      // bracketPublished=true marca el cuadro como visible al público.
+      // Mientras esto sea false (o ausente), el enlace /torneos/:id sigue
+      // mostrando el formulario de inscripción aunque haya rounds generadas
+      // (las rounds se generan localmente con "Generar Cuadro" en admin).
+      const tConfigWithFlag = { ...tConfig, bracketPublished: true };
+      const config = { ...tConfigWithFlag, rounds, consRounds, participants, phase };
       const { error } = await supabase.from('tournaments')
         .update({ config, status: 'open' })
         .eq('id', publishedId);
       if (error) throw error;
+      setTConfig(tConfigWithFlag);
       alert('¡Cuadro publicado! Los jugadores pueden verlo (incluida la consolación si la has generado) en:\n/torneos/' + publishedId + '/cuadro');
     } catch (e) {
       console.error(e);

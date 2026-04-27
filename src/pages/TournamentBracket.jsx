@@ -129,6 +129,12 @@ export default function TournamentBracket() {
       if (error || !data) {
         setError('No se encontró este torneo.');
       } else {
+        // Si el cuadro aún NO está publicado, redirigir al form de inscripción.
+        // (El admin debe pulsar "Publicar Cuadro" para hacerlo visible.)
+        if (data.config?.bracketPublished !== true) {
+          navigate(`/torneos/${id}`, { replace: true });
+          return;
+        }
         setTournament(data);
         const rounds = data.config?.rounds || {};
         const cats = Object.keys(rounds);
