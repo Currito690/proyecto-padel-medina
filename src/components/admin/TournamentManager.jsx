@@ -115,6 +115,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showRegistrations, setShowRegistrations] = useState(false);
   const [regsList, setRegsList] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
+  // Editor de pistas durante el torneo (panel modal)
+  const [showCourtsEditor, setShowCourtsEditor] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
@@ -598,18 +600,59 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        while (pow < catParts.length) pow *= 2;
 
        const byesCount = pow - catParts.length;
-       // Intercalar BYEs entre parejas reales para evitar partidos BYE vs BYE
-       // y que ninguna pareja llegue a la final sin haber jugado antes
-       const paddedParts = [];
-       let byeAdded = 0;
-       for (let i = 0; i < catParts.length; i++) {
-         paddedParts.push(catParts[i]);
-         if (byeAdded < byesCount) {
-           paddedParts.push({ id: `bye-${cat}-${byeAdded}`, name: '---', isBye: true });
-           byeAdded++;
+
+       // ── Cabezas de serie ───────────────────────────────────────────────
+       // Si alguna pareja tiene un campo `seed` numérico, las colocamos en
+       // las posiciones estándar del cuadro para que el #1 y #2 solo se
+       // crucen en la final. El resto se reparte en las posiciones libres.
+       const seededHere = catParts.filter(p => Number.isFinite(p.seed) && p.seed > 0)
+         .sort((a, b) => a.seed - b.seed);
+       const hasSeeds = seededHere.length > 0;
+
+       if (hasSeeds) {
+         // seedPositions(n) → array de tamaño n con los rankings de seed que
+         // deben ir en cada posición del cuadro (estándar).
+         const seedPositions = (n) => {
+           if (n === 1) return [1];
+           const half = seedPositions(n / 2);
+           const out = [];
+           for (const s of half) { out.push(s); out.push(n + 1 - s); }
+           return out;
+         };
+         const positions = seedPositions(pow); // ej. pow=8 → [1,8,4,5,2,7,3,6]
+
+         const slot = new Array(pow).fill(null);
+         // Coloca cada seed en su slot según su ranking
+         seededHere.forEach(p => {
+           const idx = positions.indexOf(p.seed);
+           if (idx >= 0 && idx < pow) slot[idx] = p;
+         });
+         // Resto de parejas (sin seed o con seed > pow) en orden ya barajado
+         const unseeded = catParts.filter(p => !slot.some(s => s?.id === p.id));
+         let ui = 0;
+         for (let i = 0; i < pow; i++) {
+           if (slot[i]) continue;
+           if (ui < unseeded.length) {
+             slot[i] = unseeded[ui++];
+           } else {
+             slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
+           }
          }
+         catParts = slot;
+       } else {
+         // Sin seeds → comportamiento original: intercalar BYEs entre parejas
+         // reales para evitar partidos BYE vs BYE.
+         const paddedParts = [];
+         let byeAdded = 0;
+         for (let i = 0; i < catParts.length; i++) {
+           paddedParts.push(catParts[i]);
+           if (byeAdded < byesCount) {
+             paddedParts.push({ id: `bye-${cat}-${byeAdded}`, name: '---', isBye: true });
+             byeAdded++;
+           }
+         }
+         catParts = paddedParts;
        }
-       catParts = paddedParts;
        
        const numRounds = Math.log2(pow);
        const catRounds = [];
@@ -1097,6 +1140,96 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
+
+  // Genera el cuadro de eliminatorias finales tras una liguilla.
+  // Toma los top N (configurable) de la clasificación de la categoría y los
+  // empareja al estilo estándar (1º vs último, 2º vs penúltimo, etc.) en
+  // consRounds[cat], reutilizando la estructura existente.
+  const generateLiguillaKO = (cat) => {
+    const catRounds = rounds[cat];
+    if (!catRounds || catRounds.length === 0) return;
+
+    // Construir clasificación a partir de los partidos de liguilla
+    const standings = {};
+    catRounds.forEach(round => round.forEach(m => {
+      [m.p1, m.p2].forEach(p => {
+        if (p && !p.isBye && !standings[p.id]) standings[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0 };
+      });
+      if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) {
+        standings[m.p1.id].pj++; standings[m.p2.id].pj++;
+        if (m.winner.id === m.p1.id) {
+          standings[m.p1.id].pg++; standings[m.p1.id].pts += 2; standings[m.p2.id].pp++;
+        } else {
+          standings[m.p2.id].pg++; standings[m.p2.id].pts += 2; standings[m.p1.id].pp++;
+        }
+      }
+    }));
+    const ordered = Object.values(standings).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
+
+    const totalPlayed = catRounds.reduce((acc, r) => acc + r.filter(m => m.winner).length, 0);
+    const totalMatches = catRounds.reduce((acc, r) => acc + r.length, 0);
+    if (totalPlayed < totalMatches) {
+      alert(`La liguilla todavía tiene partidos sin resultado (${totalMatches - totalPlayed} pendientes). Resuélvelos antes de generar las eliminatorias.`);
+      return;
+    }
+
+    const qualifyN = parseInt(tConfig.liguillaQualifyPerGroup || 2, 10);
+    if (ordered.length < qualifyN) {
+      alert(`No hay suficientes parejas clasificadas (${ordered.length}) para generar las eliminatorias con top ${qualifyN}.`);
+      return;
+    }
+
+    // Top N → emparejamientos estándar: 1 vs N, 2 vs N-1, etc.
+    const top = ordered.slice(0, qualifyN);
+    const koRounds = [];
+    let pow = 1;
+    while (pow < qualifyN) pow *= 2;
+    const numRounds = Math.log2(pow);
+
+    // Slot 0 (top): seed1 vs lastSeed; slot 1: seed2 vs (last-1) etc.
+    const r0Matches = [];
+    for (let i = 0; i < pow / 2; i++) {
+      const a = top[i] ? top[i].pair : null;
+      const b = top[pow - 1 - i] ? top[pow - 1 - i].pair : null;
+      r0Matches.push({
+        id: `ko-${cat}-r0-m${i}`,
+        round: 0,
+        matchIndex: i,
+        p1: a || { id: `ko-bye-${cat}-${i}-a`, name: '---', isBye: true },
+        p2: b || { id: `ko-bye-${cat}-${i}-b`, name: '---', isBye: true },
+        winner: null, time: null, score: null,
+      });
+    }
+    koRounds.push(r0Matches);
+
+    for (let r = 1; r < numRounds; r++) {
+      const numMatchesInRound = pow / Math.pow(2, r + 1);
+      const matches = [];
+      for (let m = 0; m < numMatchesInRound; m++) {
+        matches.push({
+          id: `ko-${cat}-r${r}-m${m}`,
+          round: r, matchIndex: m,
+          p1: null, p2: null, winner: null, time: null, score: null,
+        });
+      }
+      koRounds.push(matches);
+    }
+
+    // Si hay opción de 3º y 4º puesto, lo añadimos como un match aparte en
+    // un campo extra del torneo: lo guardamos al final del array de la última
+    // ronda como una entrada con id especial.
+    if (tConfig.liguillaThirdPlace && qualifyN >= 4 && numRounds >= 2) {
+      koRounds[numRounds - 1].push({
+        id: `ko-${cat}-3rd`,
+        round: numRounds - 1, matchIndex: 1,
+        p1: null, p2: null, winner: null, time: null, score: null,
+        isThirdPlace: true,
+      });
+    }
+
+    setConsRounds(prev => ({ ...prev, [cat]: koRounds }));
+    alert(`✅ Eliminatorias finales generadas (top ${qualifyN}). Aparecerán como cuadro adicional debajo de la liguilla.`);
+  };
 
   const generateConsolation = (cat) => {
     const catRounds = rounds[cat];
@@ -1655,10 +1788,41 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     >
                       <option value="eliminatoria">Eliminatoria (cuadro)</option>
                       <option value="liguilla">Liguilla (todos contra todos)</option>
+                      <option value="liguilla_ko">Liguilla + eliminatorias finales</option>
                     </select>
                   </div>
                 ))}
               </div>
+
+              {/* Sub-config para liguilla_ko */}
+              {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).some(cat => tConfig.formatByCategory?.[cat] === 'liguilla_ko') && (
+                <div style={{ marginTop: '0.85rem', padding: '0.75rem', borderRadius: '0.625rem', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                  <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Eliminatorias finales</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: '#1E293B', fontWeight: 600 }}>
+                      Clasifican por categoría:
+                      <select
+                        value={tConfig.liguillaQualifyPerGroup ?? 2}
+                        onChange={e => setTConfig({ ...tConfig, liguillaQualifyPerGroup: parseInt(e.target.value) })}
+                        style={{ padding: '0.35rem 0.55rem', borderRadius: '0.4rem', border: '1.5px solid #FDE68A', fontSize: '0.78rem', backgroundColor: 'white', cursor: 'pointer' }}
+                      >
+                        <option value={2}>Top 2 (semifinales)</option>
+                        <option value={4}>Top 4 (cuartos)</option>
+                        <option value={8}>Top 8 (octavos)</option>
+                      </select>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: '#1E293B', fontWeight: 600, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!tConfig.liguillaThirdPlace}
+                        onChange={e => setTConfig({ ...tConfig, liguillaThirdPlace: e.target.checked })}
+                        style={{ width: '16px', height: '16px', accentColor: '#D97706' }}
+                      />
+                      Incluir partido por el 3º y 4º puesto
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ padding: '1rem', backgroundColor: '#FFF7ED', borderRadius: '0.75rem', border: '1px solid #FED7AA' }}>
@@ -2050,6 +2214,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.45rem', backgroundColor: '#FEF3C7', border: '1.5px solid #FDE68A', borderRadius: '0.4rem' }} title="Cabeza de serie (1 = 1º cabeza, 2 = 2º…). Vacío = sin seed.">
+                        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Seed</span>
+                        <input
+                          type="number" min="1" max="64"
+                          value={p.seed ?? ''}
+                          onChange={e => {
+                            const v = e.target.value;
+                            const seedNum = v === '' ? null : Math.max(1, parseInt(v, 10));
+                            setParticipants(prev => prev.map(x => x.id === p.id ? { ...x, seed: seedNum } : x));
+                          }}
+                          style={{ width: '40px', padding: '0.15rem 0.3rem', border: '1px solid #FDE68A', borderRadius: '0.3rem', fontSize: '0.78rem', fontWeight: 700, textAlign: 'center', backgroundColor: 'white', color: '#0F172A' }}
+                        />
+                      </div>
                       <button onClick={() => openEditGrid(p)} title="Editar horarios" style={{ background: 'none', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', color: '#475569', cursor: 'pointer', padding: '0.25rem 0.5rem', display: 'flex', alignItems: 'center' }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </button>
@@ -2417,6 +2594,75 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         );
       })()}
 
+      {/* ── Editor de pistas durante el torneo ── */}
+      {showCourtsEditor && (
+        <div onClick={() => setShowCourtsEditor(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🏟️ Pistas del torneo</h3>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
+                  Cambios efectivos al pulsar "🔄 Recalcular horarios". Los partidos ya jugados no se mueven.
+                </p>
+              </div>
+              <button onClick={() => setShowCourtsEditor(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+            </div>
+            <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#334155' }}>Número de pistas</label>
+                <input
+                  type="number" min="1" max="20"
+                  value={tConfig.courtsCount}
+                  onChange={e => {
+                    const n = Math.max(1, parseInt(e.target.value || '1', 10));
+                    // Limpiar courtStartHours fuera de rango
+                    const next = {};
+                    for (let c = 1; c <= n; c++) {
+                      if (tConfig.courtStartHours?.[c]) next[c] = tConfig.courtStartHours[c];
+                    }
+                    setTConfig({ ...tConfig, courtsCount: n, courtStartHours: next });
+                  }}
+                  style={{ width: '120px', padding: '0.65rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#0F172A', fontWeight: 700, fontSize: '1rem' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#334155' }}>Hora desde la que cada pista está disponible</label>
+                <p style={{ margin: '0 0 0.6rem', fontSize: '0.74rem', color: '#64748B', lineHeight: 1.4 }}>
+                  Por defecto coincide con el horario de inicio del torneo. Cambia solo las que abran más tarde (ej. una pista cubierta que solo se usa por la tarde).
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  {Array.from({ length: tConfig.courtsCount }, (_, i) => i + 1).map(courtNum => (
+                    <div key={courtNum} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.75rem', borderRadius: '0.5rem', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                      <span style={{ minWidth: '70px', fontWeight: 700, fontSize: '0.85rem', color: '#1E293B' }}>Pista {courtNum}</span>
+                      <select
+                        value={tConfig.courtStartHours?.[courtNum] || tConfig.startHour}
+                        onChange={e => setTConfig({ ...tConfig, courtStartHours: { ...tConfig.courtStartHours, [courtNum]: e.target.value } })}
+                        style={{ flex: 1, padding: '0.45rem 0.6rem', borderRadius: '0.4rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', cursor: 'pointer', fontSize: '0.85rem' }}
+                      >
+                        {HOURS.slice(HOURS.indexOf(tConfig.startHour), HOURS.indexOf(tConfig.endHour) + 1).map(h => (
+                          <option key={h} value={h}>Desde las {h}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <button onClick={() => setShowCourtsEditor(false)} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                  Cerrar
+                </button>
+                <button
+                  onClick={() => { setShowCourtsEditor(false); recomputeAllAutoTimes(); }}
+                  style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                >
+                  Aplicar y recalcular horarios
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Panel de inscripciones (talla, pago, CSV) ── */}
       {showRegistrations && (() => {
         const thCell = { textAlign: 'left', padding: '0.55rem 0.75rem', fontSize: '0.7rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' };
@@ -2575,6 +2821,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 🔄 Recalcular horarios
               </button>
               <button
+                onClick={() => setShowCourtsEditor(true)}
+                title="Añade o quita pistas del torneo y ajusta a partir de qué hora está disponible cada una."
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FED7AA', backgroundColor: '#FFF7ED', color: '#9A3412', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+              >
+                🏟️ Pistas
+              </button>
+              <button
                 onClick={() => {
                   if (window.confirm('¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro.')) {
                     const resetRounds = (allRounds) =>
@@ -2642,8 +2895,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const standings = Object.values(standingsMap).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
            return (
              <div key={cat} style={{ marginBottom: '4rem' }}>
-               <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', borderRadius: '1rem', marginBottom: '2rem' }}>
-                 <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'white' }}>Categoría: {cat} — Liguilla</h2>
+               <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', borderRadius: '1rem', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                 <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'white' }}>
+                   Categoría: {cat} — {tConfig.formatByCategory?.[cat] === 'liguilla_ko' ? 'Liguilla + KO' : 'Liguilla'}
+                 </h2>
+                 {!isExporting && tConfig.formatByCategory?.[cat] === 'liguilla_ko' && (!consRounds[cat] || consRounds[cat].length === 0) && (
+                   <button onClick={() => generateLiguillaKO(cat)} style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>
+                     🏆 Generar Eliminatorias Finales
+                   </button>
+                 )}
                </div>
                {/* Standings */}
                <div style={{ backgroundColor: 'white', borderRadius: '1rem', border: '1px solid #E2E8F0', overflow: 'hidden', marginBottom: '2rem' }}>
@@ -2702,16 +2962,21 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                            })}
                          </div>
                          {!isExporting && (
-                           <div style={{ padding: '0.35rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
+                           <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
                              {editingScoreId === match.id ? (
-                               <div style={{ display: 'flex', gap: '0.3rem' }}>
-                                 <input autoFocus type="text" placeholder="Ej: 6-4 3-6 7-5" value={scoreInput} onChange={e => setScoreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, false, cat); if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); } }} style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem' }} />
-                                 <button onClick={() => handleScoreSubmit(match, scoreInput, false, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✓</button>
-                                 <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✕</button>
-                               </div>
+                               <>
+                                 <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                   <input autoFocus type="text" placeholder="Ej: 6-4 3-6 7-5" value={scoreInput} onChange={e => setScoreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, false, cat); if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); } }} style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem' }} />
+                                   <button onClick={() => handleScoreSubmit(match, scoreInput, false, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✓</button>
+                                   <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✕</button>
+                                 </div>
+                                 <p style={{ margin: '0.3rem 0 0', fontSize: '0.62rem', color: '#16A34A', fontWeight: 600, textAlign: 'center' }}>
+                                   ✨ El ganador se detecta automáticamente al guardar
+                                 </p>
+                               </>
                              ) : (
-                               <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#64748B' : '#2563EB', fontSize: '0.7rem', fontWeight: 700, textAlign: 'center', padding: 0 }}>
-                                 {match.score ? '✎ Editar resultado' : '+ Añadir resultado'}
+                               <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, textAlign: 'center', padding: '0.35rem 0.5rem' }}>
+                                 {match.score ? `✎ ${match.score}` : '+ Introducir resultado (auto-detecta ganador)'}
                                </button>
                              )}
                            </div>
@@ -2721,6 +2986,67 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                    </div>
                  </div>
                ))}
+
+               {/* Eliminatorias Finales (cuando format === 'liguilla_ko') */}
+               {tConfig.formatByCategory?.[cat] === 'liguilla_ko' && consRounds[cat]?.length > 0 && (
+                 <div style={{ marginTop: '2rem', padding: '1.25rem', backgroundColor: '#FFFBEB', borderRadius: '1rem', border: '1.5px solid #FDE68A' }}>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                     <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#92400E' }}>🏆 Eliminatorias Finales</h3>
+                     {!isExporting && (
+                       <button onClick={() => setConsRounds(prev => ({ ...prev, [cat]: [] }))} style={{ background: 'none', border: 'none', color: '#DC2626', fontWeight: 700, cursor: 'pointer', fontSize: '0.78rem' }}>
+                         Borrar y regenerar
+                       </button>
+                     )}
+                   </div>
+                   {consRounds[cat].map((roundMatches, kIdx) => {
+                     const totalKoRounds = consRounds[cat].length;
+                     const left = totalKoRounds - kIdx;
+                     const roundLabel = left === 1 ? 'Final' : left === 2 ? 'Semifinales' : left === 3 ? 'Cuartos' : `Ronda ${kIdx + 1}`;
+                     return (
+                       <div key={kIdx} style={{ marginBottom: '1.25rem' }}>
+                         <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{roundLabel}</h4>
+                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                           {roundMatches.map(match => (
+                             <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #FDE68A', borderRadius: '0.625rem', overflow: 'hidden' }}>
+                               {match.isThirdPlace && (
+                                 <div style={{ padding: '0.2rem 0.6rem', backgroundColor: '#FEF3C7', fontSize: '0.65rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase' }}>3º y 4º puesto</div>
+                               )}
+                               <div style={{ display: 'flex', alignItems: 'center' }}>
+                                 {[{ player: match.p1, side: 'p1' }, { player: match.p2, side: 'p2' }].map(({ player, side }, sIdx) => {
+                                   const isWinner = match.winner?.id === player?.id;
+                                   return (
+                                     <div key={side} onClick={() => player && handleSetWinner(match, player, true, cat)} style={{ flex: 1, padding: '0.5rem 0.7rem', backgroundColor: isWinner ? '#DCFCE7' : 'transparent', cursor: player ? 'pointer' : 'default', borderRight: sIdx === 0 ? '1px solid #FDE68A' : 'none', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                       <span style={{ fontSize: '0.82rem', fontWeight: isWinner ? 800 : 600, color: isWinner ? '#16A34A' : (player ? '#334155' : '#CBD5E1'), flex: 1 }}>
+                                         {player ? player.name : 'Por definir'}
+                                       </span>
+                                       {isWinner && <span>🏆</span>}
+                                     </div>
+                                   );
+                                 })}
+                               </div>
+                               {!isExporting && match.p1 && match.p2 && (
+                                 <div style={{ padding: '0.3rem 0.5rem', borderTop: '1px solid #FEF3C7' }}>
+                                   {editingScoreId === match.id ? (
+                                     <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                       <input autoFocus type="text" placeholder="Ej: 6-4 6-3" value={scoreInput} onChange={e => setScoreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, true, cat); if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); } }} style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem' }} />
+                                       <button onClick={() => handleScoreSubmit(match, scoreInput, true, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✓</button>
+                                       <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✕</button>
+                                     </div>
+                                   ) : (
+                                     <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, textAlign: 'center', padding: '0.3rem 0.5rem' }}>
+                                       {match.score ? `✎ ${match.score}` : '+ Introducir resultado'}
+                                     </button>
+                                   )}
+                                 </div>
+                               )}
+                             </div>
+                           ))}
+                         </div>
+                       </div>
+                     );
+                   })}
+                 </div>
+               )}
              </div>
            );
          }
@@ -2835,25 +3161,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       {(!match.p1?.isBye && !match.p2?.isBye) && !isExporting && (
                         <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
                           {editingScoreId === match.id ? (
-                            <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                              <input
-                                autoFocus
-                                type="text"
-                                placeholder="Ej: 6-4 3-6 7-5"
-                                value={scoreInput}
-                                onChange={e => setScoreInput(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, bracket.isCons, cat);
-                                  if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); }
-                                }}
-                                style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 }}
-                              />
-                              <button onClick={() => handleScoreSubmit(match, scoreInput, bracket.isCons, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✓</button>
-                              <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✕</button>
-                            </div>
+                            <>
+                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                <input
+                                  autoFocus
+                                  type="text"
+                                  placeholder="Ej: 6-4 3-6 7-5"
+                                  value={scoreInput}
+                                  onChange={e => setScoreInput(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, bracket.isCons, cat);
+                                    if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); }
+                                  }}
+                                  style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 }}
+                                />
+                                <button onClick={() => handleScoreSubmit(match, scoreInput, bracket.isCons, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✓</button>
+                                <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✕</button>
+                              </div>
+                              <p style={{ margin: '0.3rem 0 0', fontSize: '0.62rem', color: '#16A34A', fontWeight: 600, textAlign: 'center' }}>
+                                ✨ El ganador se detecta automáticamente al guardar
+                              </p>
+                            </>
                           ) : (
-                            <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: match.score ? '#64748B' : '#2563EB', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: 0 }}>
-                              {match.score ? '✎ Editar resultado' : '+ Añadir resultado'}
+                            <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: '0.35rem 0.5rem' }}>
+                              {match.score ? `✎ ${match.score}` : '+ Introducir resultado (auto-detecta ganador)'}
                             </button>
                           )}
                         </div>

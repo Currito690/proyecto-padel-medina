@@ -56,6 +56,9 @@ export default function TournamentRegistration() {
   const [cat2, setCat2] = useState('');
   const [dualCategory, setDualCategory] = useState(false);
 
+  // Método de pago elegido por el jugador (solo si feeEnabled): 'card' | 'club'
+  const [paymentChoice, setPaymentChoice] = useState('card');
+
   // Grid unavailability state
   const [gridBlockedSlots, setGridBlockedSlots] = useState(new Set());
   const [gridDragging, setGridDragging] = useState(false);
@@ -197,6 +200,8 @@ export default function TournamentRegistration() {
 
     const paymentStatus = feeEnabled && feeAmount > 0 ? 'pending' : 'not_required';
     const totalFee = feeEnabled && feeAmount > 0 ? feeAmount * 2 : 0; // por pareja = 2 jugadores
+    // Método elegido por el jugador (solo si hay fee): 'card' o 'club'.
+    const chosenMethod = (feeEnabled && feeAmount > 0) ? paymentChoice : null;
 
     // Generamos el UUID en el cliente para no necesitar SELECT después del
     // INSERT (los clientes no-admin no tienen policy SELECT sobre la tabla).
@@ -219,6 +224,7 @@ export default function TournamentRegistration() {
         player1_shirt_size: giftIsShirt ? (p1Size || null) : null,
         player2_shirt_size: giftIsShirt ? (p2Size || null) : null,
         payment_status: paymentStatus,
+        payment_method: chosenMethod, // 'card' | 'club' | null
         amount_paid: null,
       });
 
@@ -229,9 +235,10 @@ export default function TournamentRegistration() {
       return;
     }
 
-    // Si hay cuota online y es obligatoria, redirigir a Redsys.
-    // Si es opcional, mostrar success con un botón "Pagar ahora" más adelante.
-    if (totalFee > 0 && feeRequired) {
+    // Solo se redirige al TPV si el jugador eligió pagar con tarjeta.
+    // Si eligió "Pago en el club" (chosenMethod === 'club') la inscripción
+    // queda como 'pending' y será el admin quien marque el pago como recibido.
+    if (totalFee > 0 && feeRequired && chosenMethod === 'card') {
       try {
         await redirectToRedsys(registrationId, totalFee);
         return; // el navegador navegará al TPV
@@ -454,13 +461,28 @@ export default function TournamentRegistration() {
                 <p style={{ margin: 0, fontSize: '0.85rem', color: '#15803D', fontWeight: 800 }}>
                   💳 Cuota de inscripción
                 </p>
-                <p style={{ margin: '0.3rem 0 0', fontSize: '0.78rem', color: '#166534', lineHeight: 1.5 }}>
+                <p style={{ margin: '0.3rem 0 0 0', fontSize: '0.78rem', color: '#166534', lineHeight: 1.5 }}>
                   {feeAmount.toFixed(2).replace('.', ',')} € por jugador · <strong>{(feeAmount * 2).toFixed(2).replace('.', ',')} € por pareja</strong>
                 </p>
-                <p style={{ margin: '0.35rem 0 0', fontSize: '0.74rem', color: '#166534', lineHeight: 1.4 }}>
-                  {feeRequired
-                    ? 'Al pulsar "Inscribirse" se abrirá la pasarela de pago segura para abonar la cuota. Si el pago falla, podrás reintentar desde el listado del club.'
-                    : 'El pago es opcional. Tu inscripción quedará como pendiente y podrás pagar en el club.'}
+
+                {/* Selector de método de pago */}
+                <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.65rem 0.8rem', borderRadius: '0.625rem', border: `1.5px solid ${paymentChoice === 'card' ? '#15803D' : '#BBF7D0'}`, backgroundColor: paymentChoice === 'card' ? 'white' : '#F7FEE7', cursor: 'pointer', fontWeight: 700, color: '#0F172A', fontSize: '0.85rem' }}>
+                    <input type="radio" name="paymentChoice" value="card" checked={paymentChoice === 'card'} onChange={() => setPaymentChoice('card')} style={{ accentColor: '#15803D' }} />
+                    💳 Pagar ahora con tarjeta
+                    <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#64748B', fontWeight: 600 }}>Pasarela segura</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.65rem 0.8rem', borderRadius: '0.625rem', border: `1.5px solid ${paymentChoice === 'club' ? '#15803D' : '#BBF7D0'}`, backgroundColor: paymentChoice === 'club' ? 'white' : '#F7FEE7', cursor: 'pointer', fontWeight: 700, color: '#0F172A', fontSize: '0.85rem' }}>
+                    <input type="radio" name="paymentChoice" value="club" checked={paymentChoice === 'club'} onChange={() => setPaymentChoice('club')} style={{ accentColor: '#15803D' }} />
+                    🏪 Pagar en el club
+                    <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#64748B', fontWeight: 600 }}>Pendiente</span>
+                  </label>
+                </div>
+
+                <p style={{ margin: '0.55rem 0 0', fontSize: '0.74rem', color: '#166534', lineHeight: 1.4 }}>
+                  {paymentChoice === 'card'
+                    ? 'Al pulsar "Inscribirse" se abrirá la pasarela de pago segura. Si falla, tu inscripción quedará como pendiente y el club te indicará cómo pagar.'
+                    : 'Tu inscripción quedará como pendiente. Pasa por el club a abonar la cuota; el organizador la marcará como pagada al recibirla.'}
                 </p>
               </div>
             )}
