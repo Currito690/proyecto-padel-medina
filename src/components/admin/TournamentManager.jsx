@@ -870,22 +870,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     clearAuto(nextMain);
     clearAuto(nextCons);
 
-    // Helper: slotUsage con los times ya asignados (manuales + los que vayamos fijando)
-    const buildUsageNow = () => buildSlotUsage(globalSlots, nextMain, nextCons);
-
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
 
     // Scheduler: procesar ronda a ronda para que los predecesores estén listos.
-    const scheduleCatRounds = (catRoundsObj) => {
+    const scheduleCatRounds = (catRoundsObj, isCons) => {
       Object.entries(catRoundsObj).forEach(([cat, catRounds]) => {
         const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
         const gapSlots = Math.ceil((durationMin + restMin) / 60);
+        const allowedCourts = getAllowedCourts(cat, isCons);
         for (let r = 0; r < catRounds.length; r++) {
           catRounds[r].forEach((m, mIdx) => {
             if (m.timeManual && m.time) return; // respeta lo puesto por admin
             if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye) return;
 
-            // earliestIdx: después del máximo de los predecesores + cansancio
             let earliestIdx = 0;
             if (r > 0) {
               const predA = catRounds[r - 1][mIdx * 2];
@@ -895,29 +892,21 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               earliestIdx = Math.max(aIdx, bIdx) + gapSlots;
             }
 
-            const usage = buildUsageNow();
+            const occupied = buildOccupiedCourts(nextMain, nextCons);
             const p1Slots = expandPlayerSlots(m.p1, globalSlots);
             const p2Slots = expandPlayerSlots(m.p2, globalSlots);
             let common = p1Slots.filter(s => p2Slots.includes(s));
             if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
 
-            const afterPrev = (s) => slotIdx(s) >= earliestIdx;
-            let assigned = common.filter(afterPrev).find(s => (usage[s] ?? 0) < tConfig.courtsCount);
-            if (!assigned) assigned = globalSlots.filter(afterPrev).find(s => (usage[s] ?? 0) < tConfig.courtsCount);
-            if (!assigned) assigned = globalSlots.filter(afterPrev)[0];
-            if (!assigned) assigned = common.find(s => (usage[s] ?? 0) < tConfig.courtsCount) || globalSlots[earliestIdx] || globalSlots[0];
-
-            if (assigned) {
-              const pistaN = Math.min((usage[assigned] ?? 0) + 1, tConfig.courtsCount);
-              m.time = `${assigned} - Pista ${pistaN}`;
-            }
+            const picked = pickSlotAndCourt(common, occupied, allowedCourts, globalSlots, earliestIdx);
+            if (picked) m.time = `${picked.slot} - Pista ${picked.court}`;
           });
         }
       });
     };
 
-    scheduleCatRounds(nextMain);
-    scheduleCatRounds(nextCons);
+    scheduleCatRounds(nextMain, false);
+    scheduleCatRounds(nextCons, true);
 
     setRounds(nextMain);
     setConsRounds(nextCons);
@@ -1028,6 +1017,70 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     countRounds(mainRounds);
     countRounds(consRoundsSnap);
     return usage;
+  };
+
+  // Pistas permitidas para una categoría/cuadro. Si el admin no ha marcado
+  // ninguna en config, devuelve TODAS las pistas (comportamiento previo).
+  const getAllowedCourts = (cat, isCons) => {
+    const cfg = tConfig.courtsByCategory?.[cat]?.[isCons ? 'cons' : 'main'];
+    if (Array.isArray(cfg) && cfg.length > 0) return cfg.slice();
+    return Array.from({ length: tConfig.courtsCount || 1 }, (_, i) => i + 1);
+  };
+
+  // occupiedCourts[slot] = Set(court) — qué pistas están YA ocupadas en cada
+  // slot a partir de los matches programados (rounds + consRounds).
+  const buildOccupiedCourts = (mainRounds, consRoundsSnap) => {
+    const map = {};
+    const add = (roundsObj) => {
+      Object.values(roundsObj).forEach(catR => {
+        catR.forEach(round => round.forEach(m => {
+          if (!m.time || m.time === 'A convenir') return;
+          const parts = m.time.split(' - Pista');
+          const slot = parts[0].trim();
+          const court = parseInt(parts[1], 10);
+          if (!Number.isFinite(court)) return;
+          if (!map[slot]) map[slot] = new Set();
+          map[slot].add(court);
+        }));
+      });
+    };
+    add(mainRounds);
+    add(consRoundsSnap);
+    return map;
+  };
+
+  // Encuentra (slot, court) libre para un match de una categoría dada.
+  //   candidates: slots preferidos (afinidad horaria de los jugadores).
+  //   occupied:   buildOccupiedCourts() snapshot.
+  //   allowedCourts: pistas que la categoría puede usar (de getAllowedCourts).
+  //   globalSlots: lista completa para fallback.
+  // Devuelve { slot, court } o null si no encuentra ninguna.
+  const pickSlotAndCourt = (candidates, occupied, allowedCourts, globalSlots, earliestIdx = 0) => {
+    if (!globalSlots.length) return null;
+    const idxOf = (s) => globalSlots.indexOf(s);
+    const findFree = (slot) => {
+      const hourPart = slot.split(' ')[1];
+      const taken = occupied[slot] || new Set();
+      // Solo pistas allowed para esta cat, libres en este slot Y abiertas
+      // a esa hora (respetando courtStartHours).
+      for (const c of allowedCourts) {
+        if (taken.has(c)) continue;
+        const startsAt = tConfig.courtStartHours?.[c];
+        if (startsAt && hourPart < startsAt) continue;
+        return c;
+      }
+      return null;
+    };
+    const tryList = (list) => {
+      for (const s of list) {
+        if (idxOf(s) < earliestIdx) continue;
+        const c = findFree(s);
+        if (c != null) return { slot: s, court: c };
+      }
+      return null;
+    };
+    return tryList(candidates && candidates.length ? candidates : globalSlots)
+        || tryList(globalSlots);
   };
 
   // Helper: compute globalSlots from tConfig
@@ -1186,27 +1239,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const shouldSchedule = !nextMatch.time || (!nextMatch.timeManual && violatesOrder);
 
         if (shouldSchedule) {
-          // Construir snapshot con el borrado del time si hay que re-asignar, para
-          // que slotUsage no cuente la asignación antigua.
           if (violatesOrder && !nextMatch.timeManual) nextMatch.time = null;
 
           const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
           const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
-          const slotUsage = buildSlotUsage(globalSlots, updatedMain, updatedCons);
+          const occupied = buildOccupiedCourts(updatedMain, updatedCons);
+          const allowedCourts = getAllowedCourts(cat, isCons);
 
           const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
           const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
           let common = p1Slots.filter(s => p2Slots.includes(s));
           if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
 
-          const afterPrev = (s) => slotIdx(s) >= earliestIdx;
-
-          let assigned = common.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
-          if (!assigned) assigned = globalSlots.filter(afterPrev).find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
-          if (!assigned) assigned = globalSlots.filter(afterPrev)[0];
-          if (!assigned) assigned = common.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount)
-            || common.reduce((min, s) => (slotUsage[s] ?? 0) < (slotUsage[min] ?? 0) ? s : min, common[0] || globalSlots[0]);
-          nextMatch.time = assigned ? `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}` : '';
+          const picked = pickSlotAndCourt(common, occupied, allowedCourts, globalSlots, earliestIdx);
+          nextMatch.time = picked ? `${picked.slot} - Pista ${picked.court}` : '';
         }
       }
     }
@@ -1909,6 +1955,63 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* ── Pistas asignadas por categoría ── */}
+            <div style={{ padding: '1rem', backgroundColor: '#F0F9FF', borderRadius: '0.75rem', border: '1px solid #BAE6FD' }}>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: '#075985' }}>
+                🏟️ Pistas asignadas por categoría
+              </label>
+              <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#0369A1', lineHeight: 1.5 }}>
+                Marca en qué pistas se podrá programar cada categoría (cuadro principal y consolación). Si no marcas ninguna, el auto-programador podrá usar cualquier pista del torneo.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(cat => {
+                  const courtsAvailable = Array.from({ length: tConfig.courtsCount || 1 }, (_, i) => i + 1);
+                  const mainAllowed = tConfig.courtsByCategory?.[cat]?.main || [];
+                  const consAllowed = tConfig.courtsByCategory?.[cat]?.cons || [];
+                  const toggleCourt = (kind, courtN) => {
+                    const current = tConfig.courtsByCategory?.[cat]?.[kind] || [];
+                    const next = current.includes(courtN) ? current.filter(c => c !== courtN) : [...current, courtN].sort((a, b) => a - b);
+                    setTConfig({
+                      ...tConfig,
+                      courtsByCategory: {
+                        ...tConfig.courtsByCategory,
+                        [cat]: { ...(tConfig.courtsByCategory?.[cat] || {}), [kind]: next },
+                      },
+                    });
+                  };
+                  const renderRow = (kind, label, allowed) => (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ minWidth: '90px', fontSize: '0.78rem', color: '#0F172A', fontWeight: 700 }}>{label}</span>
+                      {courtsAvailable.map(c => {
+                        const checked = allowed.includes(c);
+                        return (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => toggleCourt(kind, c)}
+                            style={{ padding: '0.3rem 0.55rem', borderRadius: '0.4rem', border: `1.5px solid ${checked ? '#0EA5E9' : '#CBD5E1'}`, background: checked ? '#0EA5E9' : 'white', color: checked ? 'white' : '#475569', fontWeight: 700, fontSize: '0.74rem', cursor: 'pointer' }}
+                            title={getCourtName(c)}
+                          >
+                            {getCourtName(c)}
+                          </button>
+                        );
+                      })}
+                      {allowed.length === 0 && (
+                        <span style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic' }}>(todas)</span>
+                      )}
+                    </div>
+                  );
+                  return (
+                    <div key={cat} style={{ padding: '0.6rem 0.75rem', borderRadius: '0.5rem', background: 'white', border: '1px solid #BAE6FD', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                      <span style={{ fontWeight: 800, fontSize: '0.82rem', color: '#075985' }}>{cat}</span>
+                      {renderRow('main', 'Principal', mainAllowed)}
+                      {renderRow('cons', 'Consolación', consAllowed)}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div style={{ padding: '1rem', backgroundColor: '#FFF7ED', borderRadius: '0.75rem', border: '1px solid #FED7AA' }}>
