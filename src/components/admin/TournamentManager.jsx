@@ -998,7 +998,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       }
     }
     if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
-    else setRounds({ ...rounds, [cat]: nextRounds });
+    else {
+      setRounds({ ...rounds, [cat]: nextRounds });
+      // Si el score cambió/decidió un winner del cuadro principal, sincronizar
+      // la consolación: si ya había un loser viejo (admin corrige resultado),
+      // se sustituye por el nuevo en lugar de añadir uno duplicado.
+      if (winner && !match.isRR) {
+        syncConsOnMainWinner(cat, match, match.winner, winner);
+      }
+    }
   };
 
   // Helper: reconstruct slotUsage from ALL matches that already have a time
@@ -1040,24 +1048,100 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Inyecta un perdedor del cuadro principal en el cuadro de consolación.
   // Reemplaza el primer placeholder disponible en R0 (cons-placeholder-*).
   // Si no hay consolación generada o no quedan placeholders, no hace nada.
-  const pushLoserToConsolation = (cat, loser) => {
-    const catCons = consRounds[cat];
-    if (!catCons || catCons.length === 0 || !loser || loser.isBye) return null;
-    // Evitar duplicar si ya está en el cuadro
-    const alreadyIn = catCons.some(r => r.some(m => m.p1?.id === loser.id || m.p2?.id === loser.id));
-    if (alreadyIn) return null;
+  // Helpers PUROS (no leen de state, reciben catConsRounds como input).
+  // Devuelven el nuevo array o null si no hubo cambios.
 
-    const nextCons = catCons.map(r => r.map(m => ({ ...m })));
-    const r0 = nextCons[0];
+  const pushLoserToConsPure = (catConsRounds, loser) => {
+    if (!catConsRounds || catConsRounds.length === 0 || !loser || loser.isBye) return null;
+    const alreadyIn = catConsRounds.some(r => r.some(m => m.p1?.id === loser.id || m.p2?.id === loser.id));
+    if (alreadyIn) return null;
+    const next = catConsRounds.map(r => r.map(m => ({ ...m })));
+    const r0 = next[0];
     for (const m of r0) {
-      if (m.p1?.isPlaceholder) { m.p1 = { ...loser }; return nextCons; }
-      if (m.p2?.isPlaceholder) { m.p2 = { ...loser }; return nextCons; }
+      if (m.p1?.isPlaceholder) { m.p1 = { ...loser }; return next; }
+      if (m.p2?.isPlaceholder) { m.p2 = { ...loser }; return next; }
     }
-    // Sin placeholders libres: reemplaza un BYE vs BYE vacío si existe
     for (const m of r0) {
-      if (m.p1?.isBye && m.p2?.isBye) { m.p1 = { ...loser }; return nextCons; }
+      if (m.p1?.isBye && m.p2?.isBye) { m.p1 = { ...loser }; return next; }
     }
     return null;
+  };
+
+  // Reemplaza al perdedor "viejo" por uno "nuevo" en TODAS sus apariciones del
+  // cuadro de consolación: en R0 cambia el slot, en R1+ también, y limpia
+  // winner/score y time no-manual de los matches afectados (ya que el rastro
+  // anterior ya no aplica). Devuelve null si oldLoser no estaba en cons.
+  const swapLoserInConsPure = (catConsRounds, oldLoser, newLoser) => {
+    if (!catConsRounds || catConsRounds.length === 0 || !oldLoser) return null;
+    const next = catConsRounds.map(r => r.map(m => ({ ...m })));
+    let changed = false;
+    const replaceWith = (newLoser && !newLoser.isBye)
+      ? { ...newLoser }
+      : { id: `cons-placeholder-replaced-${Date.now()}`, name: 'Perdedor por definir', isPlaceholder: true };
+    for (let r = 0; r < next.length; r++) {
+      for (const m of next[r]) {
+        if (m.p1?.id === oldLoser.id) {
+          m.p1 = { ...replaceWith };
+          m.winner = null; m.score = null;
+          if (!m.timeManual) m.time = null;
+          changed = true;
+        }
+        if (m.p2?.id === oldLoser.id) {
+          m.p2 = { ...replaceWith };
+          m.winner = null; m.score = null;
+          if (!m.timeManual) m.time = null;
+          changed = true;
+        }
+        if (m.winner?.id === oldLoser.id) {
+          m.winner = null;
+          changed = true;
+        }
+      }
+    }
+    return changed ? next : null;
+  };
+
+  // Compat: alias del helper anterior basado en state actual (pocas llamadas
+  // externas). Mantiene la firma original.
+  const pushLoserToConsolation = (cat, loser) => pushLoserToConsPure(consRounds[cat], loser);
+
+  // Sincroniza la consolación tras asignar/cambiar el winner de un match del
+  // cuadro principal. Maneja:
+  //   · Primera asignación → inyecta newLoser en consolación.
+  //   · Cambio de winner   → swap oldLoser por newLoser en consolación.
+  //   · Sin cambio         → no toca nada.
+  // Aplica solo a matches R0 (siempre) o R1 cuyo perdedor tuvo BYE en R0.
+  const syncConsOnMainWinner = (cat, match, oldWinner, newWinner) => {
+    if (!match.p1 || !match.p2 || match.p1.isBye || match.p2.isBye) return;
+    if (!newWinner) return;
+
+    const newLoser = newWinner.id === match.p1.id ? match.p2 : match.p1;
+    if (!newLoser || newLoser.isBye) return;
+
+    let sendToCons = false;
+    if (match.round === 0) {
+      sendToCons = true;
+    } else if (match.round === 1) {
+      const r0 = (rounds[cat] || [])[0] || [];
+      const r0Match = r0.find(r0m => r0m.p1?.id === newLoser.id || r0m.p2?.id === newLoser.id);
+      if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) sendToCons = true;
+    }
+    if (!sendToCons) return;
+
+    const oldLoser = oldWinner ? (oldWinner.id === match.p1.id ? match.p2 : match.p1) : null;
+    if (oldLoser && oldLoser.id === newLoser.id) return;
+
+    setConsRounds(prev => {
+      const catCons = prev[cat];
+      if (!catCons || catCons.length === 0) return prev;
+      let updated = null;
+      if (oldLoser && oldLoser.id !== newLoser.id) {
+        updated = swapLoserInConsPure(catCons, oldLoser, newLoser);
+      } else {
+        updated = pushLoserToConsPure(catCons, newLoser);
+      }
+      return updated ? { ...prev, [cat]: updated } : prev;
+    });
   };
 
   const handleSetWinner = (match, participant, isCons = false, cat) => {
@@ -1136,24 +1220,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       // Reglas:
       //   · Perdedor de R0  → siempre va a consolación.
       //   · Perdedor de R1  → solo si su oponente de R0 era BYE (él no jugó R0).
-      if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
-        const loser = participant.id === match.p1.id ? match.p2 : match.p1;
-        if (loser && !loser.isBye) {
-          let sendToCons = false;
-          if (match.round === 0) {
-            sendToCons = true;
-          } else if (match.round === 1) {
-            // ¿tuvo el perdedor un BYE en R0?
-            const r0 = rounds[cat] || [];
-            const r0Match = (r0[0] || []).find(r0m => r0m.p1?.id === loser.id || r0m.p2?.id === loser.id);
-            if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) sendToCons = true;
-          }
-          if (sendToCons) {
-            const updatedCons = pushLoserToConsolation(cat, loser);
-            if (updatedCons) setConsRounds({ ...consRounds, [cat]: updatedCons });
-          }
-        }
-      }
+      // Si el admin corrige el resultado, el helper también swap el loser
+      // viejo por el nuevo en la consolación, en lugar de añadir uno nuevo.
+      syncConsOnMainWinner(cat, match, match.winner, participant);
     }
   };
 
