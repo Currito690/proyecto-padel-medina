@@ -3046,7 +3046,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                            {[{ player: match.p1, side: 'p1' }, { player: match.p2, side: 'p2' }].map(({ player, side }, sIdx) => {
                              const isWinner = match.winner?.id === player?.id;
                              return (
-                               <div key={side} onClick={() => handleSetWinner(match, player, false, cat)} style={{ flex: 1, padding: '0.6rem 0.75rem', backgroundColor: isWinner ? '#DCFCE7' : 'transparent', cursor: 'pointer', borderRight: sIdx === 0 ? '1px solid #E2E8F0' : 'none', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                               <div key={side} style={{ flex: 1, padding: '0.6rem 0.75rem', backgroundColor: isWinner ? '#DCFCE7' : 'transparent', borderRight: sIdx === 0 ? '1px solid #E2E8F0' : 'none', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                  <span style={{ fontSize: '0.85rem', fontWeight: isWinner ? 800 : 600, color: isWinner ? '#16A34A' : '#334155', flex: 1 }}>{player?.name}</span>
                                  {match.score && <div style={{ display: 'flex', gap: '0.15rem' }}>{parseScore(match.score, sIdx).map((s, i) => <span key={i} style={{ fontSize: '0.72rem', fontWeight: 800, background: isWinner ? '#16A34A' : '#E2E8F0', color: isWinner ? 'white' : '#475569', borderRadius: '3px', padding: '0.05rem 0.25rem' }}>{s}</span>)}</div>}
                                  {isWinner && <span style={{ fontSize: '0.85rem' }}>🏆</span>}
@@ -3108,7 +3108,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                  {[{ player: match.p1, side: 'p1' }, { player: match.p2, side: 'p2' }].map(({ player, side }, sIdx) => {
                                    const isWinner = match.winner?.id === player?.id;
                                    return (
-                                     <div key={side} onClick={() => player && handleSetWinner(match, player, true, cat)} style={{ flex: 1, padding: '0.5rem 0.7rem', backgroundColor: isWinner ? '#DCFCE7' : 'transparent', cursor: player ? 'pointer' : 'default', borderRight: sIdx === 0 ? '1px solid #FDE68A' : 'none', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                     <div key={side} style={{ flex: 1, padding: '0.5rem 0.7rem', backgroundColor: isWinner ? '#DCFCE7' : 'transparent', borderRight: sIdx === 0 ? '1px solid #FDE68A' : 'none', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                                        <span style={{ fontSize: '0.82rem', fontWeight: isWinner ? 800 : 600, color: isWinner ? '#16A34A' : (player ? '#334155' : '#CBD5E1'), flex: 1 }}>
                                          {player ? player.name : 'Por definir'}
                                        </span>
@@ -3232,8 +3232,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         return (
                           <div
                             key={side}
-                            onClick={() => swappable ? handleSwapPlayers(cat, bracket.isCons, match.matchIndex, side) : handleSetWinner(match, player, bracket.isCons, cat)}
-                            style={{ padding: '0.6rem 0.75rem', backgroundColor: bg, borderBottom: sIdx === 0 ? '1.5px solid #F1F5F9' : 'none', cursor: (player?.isBye && !swappable) ? 'default' : 'pointer', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem', outline: isSelected ? '2px solid #7C3AED' : 'none' }}
+                            onClick={swappable ? () => handleSwapPlayers(cat, bracket.isCons, match.matchIndex, side) : undefined}
+                            style={{ padding: '0.6rem 0.75rem', backgroundColor: bg, borderBottom: sIdx === 0 ? '1.5px solid #F1F5F9' : 'none', cursor: swappable ? 'pointer' : 'default', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem', outline: isSelected ? '2px solid #7C3AED' : 'none' }}
                           >
                             {swappable && <span style={{ fontSize: '0.7rem', color: isSelected ? '#7C3AED' : '#A78BFA', flexShrink: 0 }}>⇄</span>}
                             <span style={{ fontSize: '0.82rem', fontWeight: isWinner ? 800 : 600, color: isSelected ? '#7C3AED' : (isWinner ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155'), flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
