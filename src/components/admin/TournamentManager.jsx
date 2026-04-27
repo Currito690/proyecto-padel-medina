@@ -2271,10 +2271,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </p>
 
           <div style={{ marginBottom: '1.5rem', maxHeight: '300px', overflowY: 'auto' }}>
-            <h4 style={{ margin: '0 0 0.5rem', color: '#64748B', fontSize: '0.85rem' }}>
-              Elenco "{newCoupleCategory || 'Todas'}": {participants.filter(p => !newCoupleCategory || p.category === newCoupleCategory).length} parejas
-              <span style={{ color: '#94A3B8', fontWeight: 400, marginLeft: '0.5rem' }}>(total: {participants.length})</span>
-            </h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.6rem' }}>
+              <h4 style={{ margin: 0, color: '#64748B', fontSize: '0.85rem' }}>
+                Elenco "{newCoupleCategory || 'Todas'}": {participants.filter(p => !newCoupleCategory || p.category === newCoupleCategory).length} parejas
+                <span style={{ color: '#94A3B8', fontWeight: 400, marginLeft: '0.5rem' }}>(total: {participants.length})</span>
+              </h4>
+              <button
+                onClick={generateBracket}
+                disabled={participants.length < 2}
+                title={participants.length < 2 ? 'Añade al menos 2 parejas para generar el cuadro' : 'Genera el cuadro de eliminatoria/liguilla con las parejas inscritas'}
+                style={{ padding: '0.5rem 0.95rem', borderRadius: '0.5rem', border: 'none', backgroundColor: participants.length < 2 ? '#CBD5E1' : '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.78rem', cursor: participants.length < 2 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}
+              >
+                🎲 Generar Cuadro
+              </button>
+            </div>
             {participants.filter(p => !newCoupleCategory || p.category === newCoupleCategory).length === 0 ? (
               <p style={{ fontSize: '0.875rem', color: '#94A3B8', fontStyle: 'italic' }}>No hay parejas en esta categoría todavía.</p>
             ) : (
