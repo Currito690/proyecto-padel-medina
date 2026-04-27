@@ -180,6 +180,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   }, [dbLoaded, tournamentKey, tConfig, rounds, consRounds, participants, phase]);
 
   // Helper: get available courts count for a given slot hour
+  // Devuelve el nombre legible de una pista. Si tConfig.courtNames[N] está
+  // definido y no vacío, lo usa; si no, "Pista N" (comportamiento previo).
+  const getCourtName = (n) => {
+    const custom = tConfig.courtNames?.[n];
+    if (custom && String(custom).trim().length > 0) return String(custom).trim();
+    return `Pista ${n}`;
+  };
+
+  // Convierte un match.time almacenado ("dd/mm HH:00 - Pista 3") al texto
+  // que se muestra al usuario, reemplazando "Pista N" por el nombre custom.
+  const displayTime = (timeStr) => {
+    if (!timeStr) return '';
+    const m = timeStr.match(/^(.*) - Pista (\d+)$/);
+    if (!m) return timeStr;
+    return `${m[1]} - ${getCourtName(parseInt(m[2], 10))}`;
+  };
+
   const getAvailableCourtsForHour = (hourStr, courtsCount, courtStartHours) => {
     if (!courtStartHours || Object.keys(courtStartHours).length === 0) return courtsCount;
     let count = 0;
@@ -2543,7 +2560,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         <th style={{ textAlign: 'right', padding: '0.5rem 0.75rem', fontWeight: 700, color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0' }}>Hora</th>
                         {courts.map(c => (
                           <th key={c} style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 700, color: '#0F172A', fontSize: '0.78rem', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', minWidth: '140px' }}>
-                            Pista {c}
+                            {getCourtName(c)}
                           </th>
                         ))}
                       </tr>
@@ -2626,21 +2643,28 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 />
               </div>
               <div>
-                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#334155' }}>Hora desde la que cada pista está disponible</label>
+                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#334155' }}>Nombre y hora de apertura por pista</label>
                 <p style={{ margin: '0 0 0.6rem', fontSize: '0.74rem', color: '#64748B', lineHeight: 1.4 }}>
-                  Por defecto coincide con el horario de inicio del torneo. Cambia solo las que abran más tarde (ej. una pista cubierta que solo se usa por la tarde).
+                  Pon un nombre personalizado si quieres que aparezca en lugar de "Pista N" (ej. "Pista Municipal"). La hora controla a partir de cuándo está disponible esa pista (deja la del torneo si no abre más tarde).
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                   {Array.from({ length: tConfig.courtsCount }, (_, i) => i + 1).map(courtNum => (
-                    <div key={courtNum} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.75rem', borderRadius: '0.5rem', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-                      <span style={{ minWidth: '70px', fontWeight: 700, fontSize: '0.85rem', color: '#1E293B' }}>Pista {courtNum}</span>
+                    <div key={courtNum} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.6rem', borderRadius: '0.5rem', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', flexWrap: 'wrap' }}>
+                      <span style={{ minWidth: '60px', fontWeight: 700, fontSize: '0.78rem', color: '#94A3B8' }}>#{courtNum}</span>
+                      <input
+                        type="text"
+                        placeholder={`Pista ${courtNum}`}
+                        value={tConfig.courtNames?.[courtNum] || ''}
+                        onChange={e => setTConfig({ ...tConfig, courtNames: { ...tConfig.courtNames, [courtNum]: e.target.value } })}
+                        style={{ flex: '2 1 140px', minWidth: 0, padding: '0.45rem 0.6rem', borderRadius: '0.4rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', fontSize: '0.85rem', color: '#0F172A', fontWeight: 600 }}
+                      />
                       <select
                         value={tConfig.courtStartHours?.[courtNum] || tConfig.startHour}
                         onChange={e => setTConfig({ ...tConfig, courtStartHours: { ...tConfig.courtStartHours, [courtNum]: e.target.value } })}
-                        style={{ flex: 1, padding: '0.45rem 0.6rem', borderRadius: '0.4rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', cursor: 'pointer', fontSize: '0.85rem' }}
+                        style={{ flex: '1 1 120px', minWidth: 0, padding: '0.45rem 0.6rem', borderRadius: '0.4rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', cursor: 'pointer', fontSize: '0.85rem' }}
                       >
                         {HOURS.slice(HOURS.indexOf(tConfig.startHour), HOURS.indexOf(tConfig.endHour) + 1).map(h => (
-                          <option key={h} value={h}>Desde las {h}</option>
+                          <option key={h} value={h}>Desde {h}</option>
                         ))}
                       </select>
                     </div>
@@ -2943,7 +2967,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                              const show = isReady || match.timeManual;
                              return (
                                <span style={{ fontSize: '0.65rem', fontWeight: 700, color: show ? '#64748B' : '#CBD5E1' }}>
-                                 {show ? (match.time || 'Horario por definir') : 'Esperando rondas previas'}
+                                 {show ? (match.time ? displayTime(match.time) : 'Horario por definir') : 'Esperando rondas previas'}
                                </span>
                              );
                            })()}
@@ -3117,7 +3141,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             const show = isReady || match.timeManual;
                             return (
                               <span style={{ fontSize: '0.65rem', fontWeight: 700, color: show ? '#64748B' : '#CBD5E1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                {show ? (match.time || 'Horario por definir') : 'Esperando rondas previas'}
+                                {show ? (match.time ? displayTime(match.time) : 'Horario por definir') : 'Esperando rondas previas'}
                               </span>
                             );
                           })()}

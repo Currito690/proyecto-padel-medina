@@ -26,7 +26,18 @@ const parseScore = (scoreStr, pIdx) => {
   }).filter(n => n !== null);
 };
 
-function MatchCard({ match, isCons, compact = false }) {
+// Reemplaza "Pista N" por su nombre custom (config.courtNames[N]) si existe.
+const displayTimeWithCourtNames = (timeStr, courtNames) => {
+  if (!timeStr) return '';
+  const m = timeStr.match(/^(.*) - Pista (\d+)$/);
+  if (!m) return timeStr;
+  const n = parseInt(m[2], 10);
+  const custom = courtNames?.[n];
+  const name = (custom && String(custom).trim()) ? String(custom).trim() : `Pista ${n}`;
+  return `${m[1]} - ${name}`;
+};
+
+function MatchCard({ match, isCons, compact = false, courtNames }) {
   if (!match.p1 && !match.p2) {
     return (
       <div style={{ backgroundColor: '#F8FAFC', border: '1.5px dashed #E2E8F0', borderRadius: '0.75rem', padding: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '64px' }}>
@@ -44,7 +55,7 @@ function MatchCard({ match, isCons, compact = false }) {
       {match.time && !match.p1?.isBye && !match.p2?.isBye && (
         <div style={{ padding: '0.3rem 0.65rem', backgroundColor: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
           <span style={{ fontSize: '0.62rem', fontWeight: 700, color: '#64748B', letterSpacing: '0.02em' }}>
-            {match.time}
+            {displayTimeWithCourtNames(match.time, courtNames)}
           </span>
         </div>
       )}
@@ -305,7 +316,7 @@ export default function TournamentBracket() {
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                           {roundMatches.map(match => (
-                            <MatchCard key={match.id} match={match} isCons={false} />
+                            <MatchCard key={match.id} match={match} isCons={false} courtNames={cfg.courtNames} />
                           ))}
                         </div>
                       </div>
@@ -357,7 +368,7 @@ export default function TournamentBracket() {
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                   {visibleMatches.map(match => (
-                                    <MatchCard key={match.id} match={match} isCons={bracket.isCons} />
+                                    <MatchCard key={match.id} match={match} isCons={bracket.isCons} courtNames={cfg.courtNames} />
                                   ))}
                                 </div>
                               </div>
@@ -378,7 +389,7 @@ export default function TournamentBracket() {
                                   </div>
                                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', gap: '0.75rem' }}>
                                     {roundMatches.map(match => (
-                                      <MatchCard key={match.id} match={match} isCons={bracket.isCons} compact />
+                                      <MatchCard key={match.id} match={match} isCons={bracket.isCons} compact courtNames={cfg.courtNames} />
                                     ))}
                                   </div>
                                 </div>
