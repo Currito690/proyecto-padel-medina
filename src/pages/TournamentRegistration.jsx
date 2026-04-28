@@ -182,6 +182,17 @@ export default function TournamentRegistration() {
       alert('El teléfono de ambos jugadores es obligatorio.');
       return;
     }
+    // Mínimo un correo válido en la pareja para poder enviar la confirmación
+    // del admin. Da igual si es del J1 o del J2; si están los dos, mejor.
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const e1 = (p1Email || '').trim();
+    const e2 = (p2Email || '').trim();
+    if (!e1 && !e2) {
+      alert('Indica al menos un correo (de J1 o J2). Lo necesitamos para avisaros cuando el club confirme la pareja.');
+      return;
+    }
+    if (e1 && !emailRe.test(e1)) { alert('El correo del Jugador 1 no es válido.'); return; }
+    if (e2 && !emailRe.test(e2)) { alert('El correo del Jugador 2 no es válido.'); return; }
     if (giftIsShirt && (!p1Size || !p2Size)) {
       alert('Indica la talla de camiseta de cada jugador.');
       return;
@@ -326,14 +337,17 @@ export default function TournamentRegistration() {
 
   if (success) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4' }}>
-        <div style={{ backgroundColor: 'white', padding: '3rem', borderRadius: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxWidth: '400px' }}>
-          <div style={{ width: '64px', height: '64px', backgroundColor: '#DCFCE7', color: '#16A34A', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', fontSize: '2rem' }}>✓</div>
-          <h1 style={{ margin: '0 0 0.5rem', fontSize: '1.5rem', fontWeight: 900, color: '#0F172A' }}>¡Inscripción Confirmada!</h1>
-          <p style={{ color: '#475569', marginBottom: '2rem', lineHeight: '1.5' }}>
-            Nos vemos en la pista. El club se pondrá en contacto contigo para los horarios del cuadro.
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFBEB' }}>
+        <div style={{ backgroundColor: 'white', padding: '3rem', borderRadius: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxWidth: '440px' }}>
+          <div style={{ width: '64px', height: '64px', backgroundColor: '#FEF3C7', color: '#B45309', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', fontSize: '2rem' }}>⏳</div>
+          <h1 style={{ margin: '0 0 0.5rem', fontSize: '1.5rem', fontWeight: 900, color: '#0F172A' }}>Inscripción recibida</h1>
+          <p style={{ color: '#475569', marginBottom: '1rem', lineHeight: '1.5' }}>
+            Tu inscripción está <strong>pendiente de confirmación</strong> por parte del club.
           </p>
-          <button onClick={() => navigate('/')} style={{ width: '100%', padding: '0.875rem', backgroundColor: '#16A34A', color: 'white', border: 'none', borderRadius: '0.75rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem' }}>
+          <p style={{ color: '#64748B', fontSize: '0.9rem', marginBottom: '2rem', lineHeight: '1.5' }}>
+            Recibiréis un correo cuando validemos que la pareja encaja en la categoría seleccionada.
+          </p>
+          <button onClick={() => navigate('/')} style={{ width: '100%', padding: '0.875rem', backgroundColor: '#0F172A', color: 'white', border: 'none', borderRadius: '0.75rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem' }}>
             Ir a Padel Medina
           </button>
         </div>
@@ -431,7 +445,7 @@ export default function TournamentRegistration() {
               <div style={{ border: '1.5px solid #E2E8F0', borderRadius: '1rem', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                 <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Jugador 1</p>
                 <input type="text" required placeholder="Nombre completo" value={p1Name} onChange={e => setP1Name(e.target.value)} style={inputStyle} />
-                <input type="email" placeholder="Correo (opcional)" value={p1Email} onChange={e => setP1Email(e.target.value)} style={inputStyle} />
+                <input type="email" placeholder="Correo" value={p1Email} onChange={e => setP1Email(e.target.value)} style={inputStyle} />
                 <input type="tel" required placeholder="Teléfono *" value={p1Phone} onChange={e => setP1Phone(e.target.value)} style={inputStyle} />
                 {giftIsShirt && (
                   <select required value={p1Size} onChange={e => setP1Size(e.target.value)} style={{ ...inputStyle, cursor: 'pointer', backgroundColor: '#F0F9FF' }}>
@@ -444,7 +458,7 @@ export default function TournamentRegistration() {
               <div style={{ border: '1.5px solid #E2E8F0', borderRadius: '1rem', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                 <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Jugador 2</p>
                 <input type="text" required placeholder="Nombre completo" value={p2Name} onChange={e => setP2Name(e.target.value)} style={inputStyle} />
-                <input type="email" placeholder="Correo (opcional)" value={p2Email} onChange={e => setP2Email(e.target.value)} style={inputStyle} />
+                <input type="email" placeholder="Correo" value={p2Email} onChange={e => setP2Email(e.target.value)} style={inputStyle} />
                 <input type="tel" required placeholder="Teléfono *" value={p2Phone} onChange={e => setP2Phone(e.target.value)} style={inputStyle} />
                 {giftIsShirt && (
                   <select required value={p2Size} onChange={e => setP2Size(e.target.value)} style={{ ...inputStyle, cursor: 'pointer', backgroundColor: '#F0F9FF' }}>
@@ -454,8 +468,11 @@ export default function TournamentRegistration() {
                 )}
               </div>
             </div>
+            <p style={{ margin: '0.6rem 0 0', fontSize: '0.78rem', color: '#475569', fontWeight: 600 }}>
+              📧 Indica al menos un correo (J1 o J2). Lo usaremos para avisaros cuando el club valide la inscripción.
+            </p>
             {giftIsShirt && (
-              <p style={{ margin: '0.6rem 0 0', fontSize: '0.78rem', color: '#0369A1', fontWeight: 600 }}>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.78rem', color: '#0369A1', fontWeight: 600 }}>
                 🎁 Este torneo regala camiseta a los inscritos. Indica la talla de cada jugador.
               </p>
             )}

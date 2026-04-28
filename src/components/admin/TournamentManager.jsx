@@ -207,9 +207,28 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return Math.max(count, 0);
   };
 
-  // Supabase Realtime: auto-sync inscriptions when panel is open
+  // Supabase Realtime: auto-sync de inscripciones al panel cuando está abierto.
+  // Solo añadimos a participants las parejas con confirmation_status='confirmed'.
+  // Las nuevas inscripciones nacen como 'pending' (no entran), y entran cuando
+  // el admin las confirma (UPDATE).
   useEffect(() => {
     if (!publishedId || !showAvailability) return;
+    const addIfConfirmed = (reg) => {
+      if (!reg || reg.confirmation_status !== 'confirmed') return;
+      const prefRules = reg.unavailable_times || [];
+      const prefNames = prefRules.map(p => p.label);
+      const newP = {
+        id: reg.id,
+        name: `${reg.player1_name} y ${reg.player2_name}`,
+        category: reg.category,
+        prefRules,
+        prefNames
+      };
+      setParticipants(prev => {
+        if (prev.some(p => p.id === reg.id || p.name === newP.name)) return prev;
+        return [...prev, newP];
+      });
+    };
     const channel = supabase
       .channel(`tournament-avail-${publishedId}`)
       .on('postgres_changes', {
@@ -217,23 +236,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         schema: 'public',
         table: 'tournament_registrations',
         filter: `tournament_id=eq.${publishedId}`
-      }, (payload) => {
-        const reg = payload.new;
-        if (!reg) return;
-        const prefRules = reg.unavailable_times || [];
-        const prefNames = prefRules.map(p => p.label);
-        const newP = {
-          id: reg.id,
-          name: `${reg.player1_name} y ${reg.player2_name}`,
-          category: reg.category,
-          prefRules,
-          prefNames
-        };
-        setParticipants(prev => {
-          if (prev.some(p => p.id === reg.id || p.name === newP.name)) return prev;
-          return [...prev, newP];
-        });
-      })
+      }, (payload) => addIfConfirmed(payload.new))
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'tournament_registrations',
+        filter: `tournament_id=eq.${publishedId}`
+      }, (payload) => addIfConfirmed(payload.new))
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [publishedId, showAvailability]);
@@ -289,6 +298,53 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const openRegistrationsPanel = async () => {
     setShowRegistrations(true);
     await loadRegistrations();
+  };
+
+  // Confirma o rechaza una inscripción y dispara el correo a la pareja.
+  // action: 'confirm' | 'reject'.
+  const setRegistrationConfirmation = async (reg, action) => {
+    if (!reg) return;
+    const verb = action === 'confirm' ? 'CONFIRMAR' : 'RECHAZAR';
+    if (!window.confirm(`¿${verb} la pareja "${reg.player1_name} y ${reg.player2_name}" (${reg.category})?\n\nSe enviará un correo a la pareja.`)) return;
+
+    const newStatus = action === 'confirm' ? 'confirmed' : 'rejected';
+    const updates = { confirmation_status: newStatus, confirmed_at: new Date().toISOString() };
+
+    const { error: updErr } = await supabase
+      .from('tournament_registrations')
+      .update(updates)
+      .eq('id', reg.id);
+    if (updErr) { alert('Error al actualizar la inscripción: ' + updErr.message); return; }
+
+    // Optimistic update local
+    setRegsList(prev => prev.map(r => r.id === reg.id ? { ...r, ...updates } : r));
+
+    // Disparamos el correo. Si falla solo avisamos: el cambio de estado ya está guardado.
+    const emails = [reg.player1_email, reg.player2_email]
+      .map(e => (e || '').trim())
+      .filter(Boolean);
+    if (emails.length === 0) {
+      alert(`Pareja ${action === 'confirm' ? 'confirmada' : 'rechazada'} en BBDD, pero no había ningún correo guardado y no se ha podido avisar.`);
+      return;
+    }
+    try {
+      const { error: fnErr, data } = await supabase.functions.invoke('send-tournament-confirmation', {
+        body: {
+          action,
+          emails,
+          coupleName: `${reg.player1_name} y ${reg.player2_name}`,
+          tournamentName: tConfig.name,
+          category: reg.category,
+        },
+      });
+      if (fnErr || (data && data.error)) {
+        console.error('send-tournament-confirmation error', fnErr || data?.error);
+        alert(`Estado guardado, pero el correo no se pudo enviar: ${fnErr?.message || data?.error || 'desconocido'}`);
+      }
+    } catch (e) {
+      console.error('invoke error', e);
+      alert(`Estado guardado, pero el correo no se pudo enviar: ${e?.message || e}`);
+    }
   };
 
   const markRegistrationPaid = async (regId, currentStatus) => {
@@ -351,15 +407,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const { data, error } = await supabase.from('tournament_registrations')
         .select('*')
         .eq('tournament_id', publishedId);
-      
+
       if (error) throw error;
-      
+
+      // Solo entran al cuadro las parejas confirmadas por el admin.
+      // Las pendientes y rechazadas se quedan fuera hasta que se confirmen.
+      const confirmed = (data || []).filter(r => r.confirmation_status === 'confirmed');
+      const pendingCount = (data || []).filter(r => (r.confirmation_status || 'pending') === 'pending').length;
+
       const newParticipants = [];
-      data.forEach(reg => {
+      confirmed.forEach(reg => {
         const prefRules = reg.unavailable_times || [];
         const prefNames = prefRules.map(p => p.label);
         const exists = participants.some(p => p.name === `${reg.player1_name} y ${reg.player2_name}` || p.id === reg.id);
-        
+
         if (!exists) {
           newParticipants.push({
             id: reg.id,
@@ -370,12 +431,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           });
         }
       });
-      
+
       if (newParticipants.length > 0) {
         setParticipants([...participants, ...newParticipants]);
-        alert(`Se han añadido ${newParticipants.length} nuevas parejas desde la web.`);
+        alert(
+          `Se han añadido ${newParticipants.length} pareja(s) confirmada(s) desde la web.` +
+          (pendingCount > 0 ? `\n\n⚠️ Hay ${pendingCount} pareja(s) pendiente(s) de validar — no entran al cuadro hasta que las confirmes.` : '')
+        );
       } else {
-        alert('No hay inscripciones nuevas online.');
+        alert(
+          'No hay inscripciones confirmadas nuevas.' +
+          (pendingCount > 0 ? `\n\n⚠️ Hay ${pendingCount} pareja(s) pendiente(s) de validar.` : '')
+        );
       }
     } catch (e) {
       console.error(e);
@@ -2931,7 +2998,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         <th style={thCell}>Contacto</th>
                         {tConfig.gift === 'shirt' && <th style={thCell}>Talla</th>}
                         {tConfig.registrationFeeEnabled && <th style={thCell}>Pago</th>}
-                        {tConfig.registrationFeeEnabled && <th style={thCell}>Acción</th>}
+                        {tConfig.registrationFeeEnabled && <th style={thCell}>Acción pago</th>}
+                        <th style={thCell}>Validación</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2945,6 +3013,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           <td style={tdCell}>
                             <div style={{ fontSize: '0.75rem', color: '#475569' }}>{r.player1_phone}</div>
                             <div style={{ fontSize: '0.75rem', color: '#475569' }}>{r.player2_phone}</div>
+                            {(r.player1_email || r.player2_email) && (
+                              <div style={{ fontSize: '0.7rem', color: '#94A3B8', marginTop: '0.25rem' }}>
+                                {[r.player1_email, r.player2_email].filter(Boolean).join(' · ')}
+                              </div>
+                            )}
                           </td>
                           {tConfig.gift === 'shirt' && (
                             <td style={{ ...tdCell, fontWeight: 700, color: '#0369A1' }}>
@@ -2983,6 +3056,48 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                               )}
                             </td>
                           )}
+                          <td style={tdCell}>
+                            {(() => {
+                              const cs = r.confirmation_status || 'pending';
+                              const palette = {
+                                pending:   { bg: '#FEF3C7', color: '#92400E', label: '⏳ Pendiente' },
+                                confirmed: { bg: '#DCFCE7', color: '#15803D', label: '✓ Confirmada' },
+                                rejected:  { bg: '#FEE2E2', color: '#B91C1C', label: '✗ Rechazada' },
+                              };
+                              const c = palette[cs] || palette.pending;
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-start' }}>
+                                  <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 800, background: c.bg, color: c.color }}>
+                                    {c.label}
+                                  </span>
+                                  {cs === 'pending' && (
+                                    <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                      <button
+                                        onClick={() => setRegistrationConfirmation(r, 'confirm')}
+                                        style={{ padding: '0.3rem 0.6rem', borderRadius: '0.4rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                                      >
+                                        Confirmar
+                                      </button>
+                                      <button
+                                        onClick={() => setRegistrationConfirmation(r, 'reject')}
+                                        style={{ padding: '0.3rem 0.6rem', borderRadius: '0.4rem', border: 'none', background: '#DC2626', color: 'white', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                                      >
+                                        Rechazar
+                                      </button>
+                                    </div>
+                                  )}
+                                  {cs !== 'pending' && (
+                                    <button
+                                      onClick={() => setRegistrationConfirmation(r, cs === 'confirmed' ? 'reject' : 'confirm')}
+                                      style={{ padding: '0.25rem 0.55rem', borderRadius: '0.4rem', border: '1px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.68rem', cursor: 'pointer' }}
+                                    >
+                                      {cs === 'confirmed' ? 'Cambiar a rechazada' : 'Cambiar a confirmada'}
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
