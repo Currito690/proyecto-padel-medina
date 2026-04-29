@@ -118,6 +118,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [loadingRegs, setLoadingRegs] = useState(false);
   // QR del enlace público de inscripción (data URL para mostrar y descargar)
   const [qrDataUrl, setQrDataUrl] = useState('');
+  // Panel de cabezas de serie (selector por categoría)
+  const [showSeedsPanel, setShowSeedsPanel] = useState(false);
   // Editor de pistas durante el torneo (panel modal)
   const [showCourtsEditor, setShowCourtsEditor] = useState(false);
 
@@ -745,15 +747,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const idx = positions.indexOf(p.seed);
            if (idx >= 0 && idx < pow) slot[idx] = p;
          });
-         // Resto de parejas (sin seed o con seed > pow) en orden ya barajado
+         // Resto de parejas (sin seed o con seed > pow): los rellenamos en
+         // orden de "peor seed opuesto primero". Esto garantiza que los BYEs
+         // (slots que se quedan vacíos) caigan opuestos a los MEJORES seeds,
+         // por lo que el #1, #2... son los que tienen bye en R1.
          const unseeded = catParts.filter(p => !slot.some(s => s?.id === p.id));
+         const emptyIdxs = [];
+         for (let i = 0; i < pow; i++) if (!slot[i]) emptyIdxs.push(i);
+         // Para cada slot vacío, miramos el seed del oponente directo (i^1)
+         // y ordenamos: peor seed (más alto numéricamente) primero, luego sin seed.
+         emptyIdxs.sort((a, b) => {
+           const sa = slot[a ^ 1]?.seed;
+           const sb = slot[b ^ 1]?.seed;
+           // Sin seed → ∞ (van al final, sus slots quedarán para byes si sobran)
+           const va = Number.isFinite(sa) ? sa : Infinity;
+           const vb = Number.isFinite(sb) ? sb : Infinity;
+           return vb - va; // mayor (peor seed) primero
+         });
          let ui = 0;
-         for (let i = 0; i < pow; i++) {
-           if (slot[i]) continue;
+         for (const idx of emptyIdxs) {
            if (ui < unseeded.length) {
-             slot[i] = unseeded[ui++];
+             slot[idx] = unseeded[ui++];
            } else {
-             slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
+             slot[idx] = { id: `bye-${cat}-${idx}`, name: '---', isBye: true };
            }
          }
          catParts = slot;
@@ -1773,6 +1789,151 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
   };
 
+  // ── Página inline de Cabezas de Serie ────────────────────────────────
+  // Selector por categoría: el admin asigna las parejas que ocuparán los
+  // byes de R1. Las plazas de seed = nº de byes de la categoría.
+  if (showSeedsPanel) {
+    // Categorías: las del torneo o, si no hay, las de las parejas
+    const cfgCats = (tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean);
+    const partCats = Array.from(new Set(participants.map(p => p.category).filter(Boolean)));
+    const allCats = cfgCats.length > 0 ? cfgCats : partCats;
+
+    const setSeed = (participantId, seedValue) => {
+      // seedValue: número o null (sin seed)
+      setParticipants(prev => prev.map(p => {
+        if (p.id !== participantId) return p;
+        const next = { ...p };
+        if (seedValue == null) delete next.seed;
+        else next.seed = Number(seedValue);
+        return next;
+      }));
+    };
+
+    return (
+      <div style={{ maxWidth: '900px', margin: '0 auto', padding: '1rem' }}>
+        <button onClick={() => setShowSeedsPanel(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0, marginBottom: '1rem' }}>
+          ← Volver al torneo
+        </button>
+
+        <div style={{ background: 'white', borderRadius: '1.25rem', boxShadow: '0 8px 30px rgba(0,0,0,0.06)', overflow: 'hidden', border: '1px solid #E2E8F0', marginBottom: '1rem' }}>
+          <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
+            <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>🏆 Cabezas de Serie · {tConfig.name}</h2>
+            <p style={{ margin: '0.4rem 0 0', fontSize: '0.85rem', color: '#64748B', lineHeight: 1.5 }}>
+              Selecciona las parejas que ocuparán los <strong>byes de la primera ronda</strong>. El nº de plazas equivale al nº de byes de cada categoría — se calcula automáticamente según las parejas inscritas. El #1 y el #2 quedan en lados opuestos del cuadro.
+            </p>
+          </div>
+        </div>
+
+        {allCats.length === 0 && (
+          <div style={{ background: 'white', borderRadius: '1rem', padding: '2rem', textAlign: 'center', color: '#94A3B8', border: '1px solid #E2E8F0' }}>
+            Configura las categorías del torneo (o añade parejas) antes de asignar cabezas de serie.
+          </div>
+        )}
+
+        {allCats.map(cat => {
+          // Parejas de esa categoría (solo cuentan si están en participants)
+          const catParts = participants.filter(p => (p.category || '').split(' + ').includes(cat) || p.category === cat);
+          const n = catParts.length;
+          if (n < 2) {
+            return (
+              <div key={cat} style={{ background: 'white', borderRadius: '1rem', padding: '1.25rem 1.5rem', marginBottom: '0.75rem', border: '1px solid #E2E8F0' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#0F172A' }}>{cat}</h3>
+                <p style={{ margin: '0.3rem 0 0', color: '#94A3B8', fontSize: '0.85rem' }}>
+                  Solo {n} pareja{n === 1 ? '' : 's'} en esta categoría — añade más para que tenga sentido asignar cabezas.
+                </p>
+              </div>
+            );
+          }
+          // pow = potencia de 2 más cercana, byes = pow - n
+          let pow = 2; while (pow < n) pow *= 2;
+          const byesCount = pow - n;
+          // Slots de seed: tantos como byes (si no hay byes, no hay cabezas con bye)
+          const seedSlots = Math.max(byesCount, 0);
+
+          // Mapa actual seed → participantId, para saber qué hay y bloquear duplicados
+          const seedMap = {};
+          catParts.forEach(p => {
+            if (Number.isFinite(p.seed) && p.seed > 0 && p.seed <= seedSlots) seedMap[p.seed] = p.id;
+          });
+
+          return (
+            <div key={cat} style={{ background: 'white', borderRadius: '1rem', padding: '1.25rem 1.5rem', marginBottom: '0.75rem', border: '1px solid #E2E8F0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>{cat}</h3>
+                <span style={{ fontSize: '0.78rem', color: '#475569', fontWeight: 600 }}>
+                  {n} parejas · cuadro de {pow} · <strong style={{ color: byesCount > 0 ? '#16A34A' : '#94A3B8' }}>{byesCount} bye{byesCount === 1 ? '' : 's'}</strong>
+                </span>
+              </div>
+
+              {seedSlots === 0 ? (
+                <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '0.7rem 0.9rem', borderRadius: '0.5rem' }}>
+                  No hay byes en esta categoría (el nº de parejas es potencia de 2). Todas juegan la primera ronda — no hace falta asignar cabezas de serie aquí.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {Array.from({ length: seedSlots }, (_, i) => i + 1).map(seedNum => {
+                    const currentId = seedMap[seedNum] || '';
+                    return (
+                      <div key={seedNum} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', backgroundColor: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '0.5rem' }}>
+                        <span style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: seedNum === 1 ? '#FBBF24' : seedNum === 2 ? '#94A3B8' : '#CBD5E1', color: 'white', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', flexShrink: 0 }}>
+                          {seedNum}
+                        </span>
+                        <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.85rem', flexShrink: 0 }}>Cabeza de serie</span>
+                        <select
+                          value={currentId}
+                          onChange={e => {
+                            const newId = e.target.value;
+                            // Si la pareja seleccionada ya tenía OTRO seed, lo limpia.
+                            // Si el slot tenía OTRA pareja, le quita el seed a esa pareja.
+                            setParticipants(prev => {
+                              let next = prev.map(p => {
+                                // Quitar seed si esta pareja ya estaba en otro slot
+                                if (newId && p.id === newId && p.seed && p.seed !== seedNum) {
+                                  const cp = { ...p }; delete cp.seed; return cp;
+                                }
+                                // Quitar seed a la pareja anterior de este slot (si la había)
+                                if (currentId && p.id === currentId) {
+                                  const cp = { ...p }; delete cp.seed; return cp;
+                                }
+                                return p;
+                              });
+                              // Asignar el nuevo seed (si no es vacío)
+                              if (newId) {
+                                next = next.map(p => p.id === newId ? { ...p, seed: seedNum } : p);
+                              }
+                              return next;
+                            });
+                          }}
+                          style={{ flex: 1, padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', fontSize: '0.88rem', fontWeight: 600, color: '#0F172A', cursor: 'pointer' }}
+                        >
+                          <option value="">— Sin asignar —</option>
+                          {catParts.map(p => (
+                            <option key={p.id} value={p.id} disabled={Number.isFinite(p.seed) && p.seed !== seedNum && p.seed <= seedSlots}>
+                              {p.name}{Number.isFinite(p.seed) && p.seed !== seedNum && p.seed <= seedSlots ? ` (ya es #${p.seed})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {currentId && (
+                          <button onClick={() => setSeed(currentId, null)} title="Quitar de cabezas de serie" style={{ background: 'none', border: '1px solid #CBD5E1', color: '#94A3B8', borderRadius: '0.4rem', cursor: 'pointer', padding: '0.3rem 0.55rem', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>✕</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.75rem', padding: '0.85rem 1rem', marginTop: '0.5rem' }}>
+          <p style={{ margin: 0, fontSize: '0.82rem', color: '#92400E', lineHeight: 1.5 }}>
+            💡 Al pulsar <strong>Generar Cuadro</strong>, los cabezas de serie se colocarán en posiciones estándar (#1 y #2 en lados opuestos) y serán los que tengan <strong>bye en la primera ronda</strong>.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // ── Página inline de Inscripciones ──────────────────────────────────────
   // Va ANTES de los if(phase===...) para que tenga prioridad sobre cualquier
   // fase. Cuando el admin pulsa "📋 Inscripciones" entramos en una vista
@@ -2525,6 +2686,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 📋 Inscripciones
               </button>
             )}
+            <button
+              onClick={() => setShowSeedsPanel(true)}
+              disabled={participants.length < 2}
+              title={participants.length < 2 ? 'Añade al menos 2 parejas' : 'Selecciona los cabezas de serie por categoría'}
+              style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: participants.length < 2 ? '#CBD5E1' : '#F59E0B', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: participants.length < 2 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              🏆 Cabezas de Serie
+            </button>
           </div>
         </div>
 
