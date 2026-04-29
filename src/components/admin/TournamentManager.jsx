@@ -481,6 +481,31 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
+  // Cierre/reapertura manual de inscripciones por parte del admin.
+  // Independiente de la fecha límite — si está cerrado, la web pública
+  // bloquea el formulario aunque el plazo aún no haya pasado.
+  const toggleRegistrationClosed = async () => {
+    if (!publishedId) { alert('Publica primero el torneo.'); return; }
+    const closing = !tConfig.registrationClosed;
+    if (closing) {
+      const ok = window.confirm('¿Cerrar las inscripciones ahora? Los jugadores no podrán apuntarse hasta que vuelvas a abrirlas.');
+      if (!ok) return;
+    }
+    try {
+      const newConfig = { ...tConfig, registrationClosed: closing };
+      const config = { ...newConfig, rounds, consRounds, participants, phase };
+      const { error } = await supabase.from('tournaments')
+        .update({ config })
+        .eq('id', publishedId);
+      if (error) throw error;
+      setTConfig(newConfig);
+      alert(closing ? '🔒 Inscripciones cerradas.' : '🔓 Inscripciones reabiertas.');
+    } catch (e) {
+      console.error(e);
+      alert('Error al actualizar el estado de las inscripciones.');
+    }
+  };
+
   const handlePublishBracket = async () => {
     if (!publishedId) {
       alert('Primero debes publicar el torneo (Fase 2).');
@@ -2779,7 +2804,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             ) : (
               <span style={{ fontSize: '0.75rem', color: '#92400E', fontWeight: 600 }}>Se guardará al publicar</span>
             )}
+            {publishedId && (
+              <button
+                onClick={toggleRegistrationClosed}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', backgroundColor: tConfig.registrationClosed ? '#16A34A' : '#DC2626', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                {tConfig.registrationClosed ? '🔓 Reabrir inscripción' : '🔒 Cerrar inscripción'}
+              </button>
+            )}
           </div>
+          {tConfig.registrationClosed && (
+            <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: '#B91C1C', fontWeight: 700 }}>
+              🔒 Las inscripciones están <strong>cerradas manualmente</strong>. Los jugadores no podrán apuntarse aunque el plazo aún no haya pasado.
+            </p>
+          )}
         </div>
 
         <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
@@ -3342,6 +3380,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             {publishedId && (
               <button onClick={handleUpdateDeadline} style={{ padding: '0.3rem 0.75rem', borderRadius: '0.4rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Guardar
+              </button>
+            )}
+            {publishedId && (
+              <button onClick={toggleRegistrationClosed} style={{ padding: '0.3rem 0.75rem', borderRadius: '0.4rem', backgroundColor: tConfig.registrationClosed ? '#16A34A' : '#DC2626', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                {tConfig.registrationClosed ? '🔓 Reabrir' : '🔒 Cerrar inscripción'}
               </button>
             )}
           </div>

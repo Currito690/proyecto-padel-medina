@@ -102,6 +102,8 @@ export default function TournamentRegistration() {
     : [];
 
   const deadlinePassed = (() => {
+    // Si el admin cerró las inscripciones manualmente, ignoramos la fecha.
+    if (tournament?.config?.registrationClosed) return true;
     if (!tournament?.config?.registrationDeadline) return false;
     return new Date() > new Date(tournament.config.registrationDeadline + 'T23:59:59');
   })();

@@ -86,6 +86,8 @@ const BookingDashboard = () => {
           if (t.status === 'draft') return false;
           // Cuadro publicado por el admin → ya no aparece como "abierto"
           if (t.config?.bracketPublished === true) return false;
+          // Cierre manual del admin tiene prioridad sobre la fecha
+          if (t.config?.registrationClosed === true) return false;
           if (t.config?.registrationDeadline) {
             const ms = new Date(t.config.registrationDeadline + 'T23:59:59').getTime();
             if (now > ms) return false;
