@@ -621,8 +621,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const advanceWinnerMut = (rArray, rIdx, mIdx, winner) => {
     rArray[rIdx][mIdx].winner = winner;
     if (rIdx < rArray.length - 1) {
-      const nextMatchIdx = Math.floor(mIdx / 2);
-      const isTop = mIdx % 2 === 0;
+      const currentMatch = rArray[rIdx][mIdx];
+      // nextSlot: routing personalizado, usado en partidos de la ronda PREVIA
+      // — el ganador va a un slot concreto del cuadro principal en lugar de
+      // seguir la regla estándar (matchIdx/2). En partidos normales no existe
+      // y caemos al cálculo clásico.
+      let nextMatchIdx, isTop;
+      if (Number.isFinite(currentMatch.nextSlot)) {
+        const targetSlot = currentMatch.nextSlot;
+        nextMatchIdx = Math.floor(targetSlot / 2);
+        isTop = targetSlot % 2 === 0;
+      } else {
+        nextMatchIdx = Math.floor(mIdx / 2);
+        isTop = mIdx % 2 === 0;
+      }
       const nextMatch = rArray[rIdx + 1][nextMatchIdx];
       const prevPlayer = isTop ? nextMatch.p1 : nextMatch.p2;
       const changed = prevPlayer?.id !== winner.id;
@@ -792,128 +804,150 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          return;
        }
 
-       // Calcular potencia de 2 más cercana (eliminatoria)
-       let pow = 2;
-       while (pow < catParts.length) pow *= 2;
+       // ── Cuadro eliminatoria con RONDA PREVIA ──────────────────────────
+       // Estrategia: se usa la mayor potencia de 2 ≤ totalParejas como
+       // tamaño del cuadro principal. El sobrante de parejas juega una
+       // ronda PREVIA (corta) y los ganadores entran al cuadro principal
+       // sustituyendo a los placeholders. Así se evitan brackets inflados
+       // a la siguiente potencia de 2 con muchísimos byes (problema típico
+       // cuando hay 17, 18, 20… parejas).
+       let floorPow = 1;
+       while (floorPow * 2 <= catParts.length) floorPow *= 2;
+       const prelimMatchCount = catParts.length - floorPow;
+       const directCount = floorPow - prelimMatchCount; // plazas directas en main
 
-       const byesCount = pow - catParts.length;
+       const seedPositions = (n) => {
+         if (n === 1) return [1];
+         const half = seedPositions(n / 2);
+         const out = [];
+         for (const s of half) { out.push(s); out.push(n + 1 - s); }
+         return out;
+       };
+       const positions = seedPositions(floorPow);
 
-       // ── Cabezas de serie ───────────────────────────────────────────────
-       // Si alguna pareja tiene un campo `seed` numérico, las colocamos en
-       // las posiciones estándar del cuadro para que el #1 y #2 solo se
-       // crucen en la final. El resto se reparte en las posiciones libres.
-       const seededHere = catParts.filter(p => Number.isFinite(p.seed) && p.seed > 0)
+       const seededHere = catParts
+         .filter(p => Number.isFinite(p.seed) && p.seed > 0)
          .sort((a, b) => a.seed - b.seed);
-       const hasSeeds = seededHere.length > 0;
+       const unseededAll = catParts.filter(p => !seededHere.some(s => s.id === p.id));
+       // Mezcla aleatoria del unseeded para evitar sesgo de orden de inscripción
+       for (let i = unseededAll.length - 1; i > 0; i--) {
+         const j = Math.floor(Math.random() * (i + 1));
+         [unseededAll[i], unseededAll[j]] = [unseededAll[j], unseededAll[i]];
+       }
 
-       if (hasSeeds) {
-         // seedPositions(n) → array de tamaño n con los rankings de seed que
-         // deben ir en cada posición del cuadro (estándar).
-         const seedPositions = (n) => {
-           if (n === 1) return [1];
-           const half = seedPositions(n / 2);
-           const out = [];
-           for (const s of half) { out.push(s); out.push(n + 1 - s); }
-           return out;
-         };
-         const positions = seedPositions(pow); // ej. pow=8 → [1,8,4,5,2,7,3,6]
+       const slot = new Array(floorPow).fill(null);
+       // 1) Coloca los seeds en sus posiciones estándar (#1 y #2 en lados
+       //    opuestos del cuadro, etc.)
+       seededHere.forEach(p => {
+         const idx = positions.indexOf(p.seed);
+         if (idx >= 0 && idx < floorPow) slot[idx] = p;
+       });
 
-         const slot = new Array(pow).fill(null);
-         // Coloca cada seed en su slot según su ranking
-         seededHere.forEach(p => {
-           const idx = positions.indexOf(p.seed);
-           if (idx >= 0 && idx < pow) slot[idx] = p;
-         });
+       let catRounds;
 
-         // ── Distribución de BYEs ───────────────────────────────────────────
-         // Regla clave: como mucho 1 BYE por partido de R1. Si en un mismo
-         // R1 ponemos 2 byes, ese match no produce ganador → el cuarto
-         // resultante quedaría con un seed sin rival (dos rondas sin jugar).
-         //
-         // 1) Los seeds reciben bye en SU partido de R1 (top seeds primero).
-         // 2) Los byes restantes se reparten por otros R1 sueltos, uno por
-         //    partido. Así garantizamos que cada cuarto tenga al menos un
-         //    ganador real al que enfrentar al seed.
-         const byesNeeded = pow - catParts.length;
-         const byeSlots = new Set(); // slots que serán BYE
-         const matchesWithBye = new Set(); // matchIdx ya con bye
-         let byesAllocated = 0;
-
-         // 1) Seeds → bye en su mismo R1
-         const seedSlotsSorted = seededHere
-           .map(p => positions.indexOf(p.seed))
-           .filter(i => i >= 0 && i < pow)
-           .sort((a, b) => slot[a].seed - slot[b].seed);
-         for (const sIdx of seedSlotsSorted) {
-           if (byesAllocated >= byesNeeded) break;
-           const matchIdx = Math.floor(sIdx / 2);
-           if (matchesWithBye.has(matchIdx)) continue;
-           byeSlots.add(sIdx ^ 1);
-           matchesWithBye.add(matchIdx);
-           byesAllocated++;
-         }
-
-         // 2) Byes restantes → uno por partido de R1 sin bye todavía
-         for (let m = 0; m < pow / 2 && byesAllocated < byesNeeded; m++) {
-           if (matchesWithBye.has(m)) continue;
-           const s1 = m * 2, s2 = m * 2 + 1;
-           // Si por algún motivo ya hay un seed en uno de los slots, ponemos el
-           // bye en el otro. Si ambos están vacíos, el bye va al segundo.
-           const target = slot[s1] ? s2 : (slot[s2] ? s1 : s2);
-           byeSlots.add(target);
-           matchesWithBye.add(m);
-           byesAllocated++;
-         }
-
-         // 3) Rellenar el resto con unseeded (parejas sin seed)
-         const unseeded = catParts.filter(p => !slot.some(s => s?.id === p.id));
+       if (prelimMatchCount === 0) {
+         // El nº de parejas es ya potencia de 2 → cuadro estándar sin previa
+         // ni byes. Rellenamos slots libres con unseeded en el orden mezclado.
          let ui = 0;
-         for (let i = 0; i < pow; i++) {
+         for (let i = 0; i < floorPow; i++) {
            if (slot[i]) continue;
-           if (byeSlots.has(i)) {
-             slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
-           } else if (ui < unseeded.length) {
-             slot[i] = unseeded[ui++];
-           } else {
-             // Por seguridad — no debería entrar aquí si el match es correcto
-             slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
-           }
+           slot[i] = unseededAll[ui++];
          }
          catParts = slot;
-       } else {
-         // Sin seeds → comportamiento original: intercalar BYEs entre parejas
-         // reales para evitar partidos BYE vs BYE.
-         const paddedParts = [];
-         let byeAdded = 0;
-         for (let i = 0; i < catParts.length; i++) {
-           paddedParts.push(catParts[i]);
-           if (byeAdded < byesCount) {
-             paddedParts.push({ id: `bye-${cat}-${byeAdded}`, name: '---', isBye: true });
-             byeAdded++;
+
+         const numRounds = Math.log2(floorPow);
+         catRounds = [];
+         for (let r = 0; r < numRounds; r++) {
+           const numMatchesInRound = floorPow / Math.pow(2, r + 1);
+           const matches = [];
+           for (let m = 0; m < numMatchesInRound; m++) {
+             matches.push({
+               id: `cat-${cat}-r${r}-m${m}`,
+               round: r,
+               matchIndex: m,
+               p1: r === 0 ? catParts[m * 2] : null,
+               p2: r === 0 ? catParts[m * 2 + 1] : null,
+               winner: null, time: null, score: null,
+             });
            }
+           catRounds.push(matches);
          }
-         catParts = paddedParts;
-       }
-       
-       const numRounds = Math.log2(pow);
-       const catRounds = [];
-       
-       for (let r = 0; r < numRounds; r++) {
-         const numMatchesInRound = pow / Math.pow(2, r + 1);
-         const matches = [];
-         for (let m = 0; m < numMatchesInRound; m++) {
-           matches.push({
-             id: `cat-${cat}-r${r}-m${m}`,
-             round: r,
-             matchIndex: m,
-             p1: r === 0 ? catParts[m * 2] : null,
-             p2: r === 0 ? catParts[m * 2 + 1] : null,
-             winner: null,
-             time: null,
-             score: null
+       } else {
+         // 2) Hay sobrantes → ronda previa.
+         //    Las (directCount - seeds) parejas mejor "rankeadas" del unseeded
+         //    pasan directas; el resto juega previa.
+         const directUnseededNeeded = Math.max(0, directCount - seededHere.length);
+         const directUnseeded = unseededAll.slice(0, directUnseededNeeded);
+         const prelimPairs = unseededAll.slice(directUnseededNeeded);
+
+         // 3) Identifica los slots del cuadro principal donde irán los
+         //    ganadores de previa: los slots con seed-rank más alto (los
+         //    que normalmente serían los seeds peores: N, N-1, …). Así el
+         //    #1 enfrenta a un ganador de previa en R1 — no a un directo.
+         const slotsByRank = [];
+         for (let s = 0; s < floorPow; s++) slotsByRank.push({ slot: s, rank: positions[s] });
+         slotsByRank.sort((a, b) => b.rank - a.rank);
+         const prelimSlotIdxs = [];
+         for (const { slot: s } of slotsByRank) {
+           if (slot[s]) continue; // ya hay un seed
+           prelimSlotIdxs.push(s);
+           if (prelimSlotIdxs.length === prelimMatchCount) break;
+         }
+
+         // Crea placeholders en esos slots
+         prelimSlotIdxs.forEach((slotIdx, pi) => {
+           slot[slotIdx] = {
+             id: `prelim-winner-${cat}-${pi}`,
+             name: `Ganador previa ${pi + 1}`,
+             isPrelimPlaceholder: true,
+             prelimMatchIdx: pi,
+           };
+         });
+
+         // Rellena slots restantes con direct unseeded
+         let dui = 0;
+         for (let i = 0; i < floorPow; i++) {
+           if (slot[i]) continue;
+           slot[i] = directUnseeded[dui++];
+         }
+         catParts = slot;
+
+         // 4) Construye los partidos de la previa con nextSlot apuntando al
+         //    slot del cuadro principal donde caerá el ganador.
+         const prelimMatches = [];
+         for (let pi = 0; pi < prelimMatchCount; pi++) {
+           prelimMatches.push({
+             id: `cat-${cat}-r0-prelim-${pi}`,
+             round: 0,
+             matchIndex: pi,
+             p1: prelimPairs[pi * 2],
+             p2: prelimPairs[pi * 2 + 1],
+             winner: null, time: null, score: null,
+             isPrelim: true,
+             nextSlot: prelimSlotIdxs[pi],
            });
          }
-         catRounds.push(matches);
+
+         // 5) Cuadro principal a partir de round 1 (porque la previa es R0)
+         const numRoundsMain = Math.log2(floorPow);
+         const mainRounds = [];
+         for (let r = 0; r < numRoundsMain; r++) {
+           const numMatches = floorPow / Math.pow(2, r + 1);
+           const matches = [];
+           for (let m = 0; m < numMatches; m++) {
+             matches.push({
+               id: `cat-${cat}-r${r + 1}-m${m}`,
+               round: r + 1,
+               matchIndex: m,
+               p1: r === 0 ? catParts[m * 2] : null,
+               p2: r === 0 ? catParts[m * 2 + 1] : null,
+               winner: null, time: null, score: null,
+             });
+           }
+           mainRounds.push(matches);
+         }
+
+         catRounds = [prelimMatches, ...mainRounds];
        }
 
        if (catRounds[0]) {
@@ -1795,7 +1829,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }, 100);
   };
 
-  const getRoundName = (roundIndex, totalRounds) => {
+  // getRoundName: si pasas un array de rondas, detectamos automáticamente
+  // si hay ronda previa (round 0 con isPrelim) y la nombramos como
+  // "Ronda Previa". Si pasas un número, comportamiento clásico por
+  // compatibilidad.
+  const getRoundName = (roundIndex, allRoundsOrLength) => {
+    const isArr = Array.isArray(allRoundsOrLength);
+    const totalRounds = isArr ? allRoundsOrLength.length : allRoundsOrLength;
+    const hasPrelim = isArr && allRoundsOrLength[0]?.[0]?.isPrelim === true;
+    if (hasPrelim && roundIndex === 0) return 'Ronda Previa';
     const roundsLeft = totalRounds - roundIndex;
     if (roundsLeft === 1) return 'Final';
     if (roundsLeft === 2) return 'Semifinales';
@@ -1953,7 +1995,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
             <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>🏆 Cabezas de Serie · {tConfig.name}</h2>
             <p style={{ margin: '0.4rem 0 0', fontSize: '0.85rem', color: '#64748B', lineHeight: 1.5 }}>
-              Selecciona las parejas que ocuparán los <strong>byes de la primera ronda</strong>. El nº de plazas equivale al nº de byes de cada categoría — se calcula automáticamente según las parejas inscritas. El #1 y el #2 quedan en lados opuestos del cuadro.
+              Asigna las parejas que entran como <strong>cabezas de serie</strong>. Se colocan en posiciones estándar: #1 y #2 en lados opuestos del cuadro (solo se cruzarían en la final), #3 y #4 en cuartos opuestos. Si hay <strong>ronda previa</strong> (cuando el nº de parejas no es potencia de 2), los seeds enfrentan a los ganadores de la previa en R1.
             </p>
           </div>
         </div>
@@ -1978,11 +2020,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </div>
             );
           }
-          // pow = potencia de 2 más cercana, byes = pow - n
-          let pow = 2; while (pow < n) pow *= 2;
-          const byesCount = pow - n;
-          // Slots de seed: tantos como byes (si no hay byes, no hay cabezas con bye)
-          const seedSlots = Math.max(byesCount, 0);
+          // floorPow = mayor potencia de 2 ≤ n. Si n > floorPow → previa.
+          let floorPow = 1; while (floorPow * 2 <= n) floorPow *= 2;
+          const prelimMatchCount = n - floorPow;
+          // Cabezas de serie permitidos: hasta 4 (estándar de torneos pequeños)
+          // o tantos como ganadores de previa haya, lo que sea mayor.
+          const seedSlots = Math.min(n - 1, Math.max(prelimMatchCount, Math.min(4, Math.floor(floorPow / 2))));
 
           // Mapa actual seed → participantId, para saber qué hay y bloquear duplicados
           const seedMap = {};
@@ -1995,13 +2038,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
                 <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>{cat}</h3>
                 <span style={{ fontSize: '0.78rem', color: '#475569', fontWeight: 600 }}>
-                  {n} parejas · cuadro de {pow} · <strong style={{ color: byesCount > 0 ? '#16A34A' : '#94A3B8' }}>{byesCount} bye{byesCount === 1 ? '' : 's'}</strong>
+                  {n} parejas · cuadro principal de {floorPow}
+                  {prelimMatchCount > 0
+                    ? <> · <strong style={{ color: '#D97706' }}>{prelimMatchCount} partido{prelimMatchCount === 1 ? '' : 's'} de previa</strong></>
+                    : <> · <strong style={{ color: '#16A34A' }}>sin previa</strong></>}
                 </span>
               </div>
 
               {seedSlots === 0 ? (
                 <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '0.7rem 0.9rem', borderRadius: '0.5rem' }}>
-                  No hay byes en esta categoría (el nº de parejas es potencia de 2). Todas juegan la primera ronda — no hace falta asignar cabezas de serie aquí.
+                  Pocas parejas para asignar cabezas de serie. Añade más y vuelve.
                 </p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -2061,7 +2107,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
         <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.75rem', padding: '0.85rem 1rem', marginTop: '0.5rem' }}>
           <p style={{ margin: 0, fontSize: '0.82rem', color: '#92400E', lineHeight: 1.5 }}>
-            💡 Al pulsar <strong>Generar Cuadro</strong>, los cabezas de serie se colocarán en posiciones estándar (#1 y #2 en lados opuestos) y serán los que tengan <strong>bye en la primera ronda</strong>.
+            💡 Al pulsar <strong>Generar Cuadro</strong>, los cabezas de serie ocupan sus posiciones estándar y, si hay <strong>ronda previa</strong>, enfrentan a los ganadores de la previa en R1 (sin byes salvajes).
           </p>
         </div>
 
@@ -3819,7 +3865,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               {renderedRounds.map(({ round: roundMatches, originalIdx: rIdx }) => (
                 <div key={`round-${rIdx}`} style={{ display: 'flex', flexDirection: 'column', minWidth: '220px' }}>
                   <h4 style={{ textAlign: 'center', color: bracket.isCons ? '#D97706' : '#16A34A', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 0.5rem 0', padding: '0.35rem 0.75rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#F0FDF4', borderRadius: '0.5rem', border: `1px solid ${bracket.isCons ? '#FDE68A' : '#DCFCE7'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    {getRoundName(rIdx, bracket.data.length)}
+                    {getRoundName(rIdx, bracket.data)}
                   </h4>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around' }}>
                   {roundMatches.map(match => (
