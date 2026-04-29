@@ -1760,6 +1760,151 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
   };
 
+  // ── Página inline de Inscripciones ──────────────────────────────────────
+  // Va ANTES de los if(phase===...) para que tenga prioridad sobre cualquier
+  // fase. Cuando el admin pulsa "📋 Inscripciones" entramos en una vista
+  // propia, con botón Volver. Se pinta como un return aparte (no es overlay).
+  if (showRegistrations) {
+    const thCell = { textAlign: 'left', padding: '0.55rem 0.75rem', fontSize: '0.7rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' };
+    const tdCell = { padding: '0.6rem 0.75rem', verticalAlign: 'top', color: '#0F172A' };
+    return (
+      <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '1rem' }}>
+        <button onClick={() => setShowRegistrations(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0, marginBottom: '1rem' }}>
+          ← Volver al torneo
+        </button>
+        <div style={{ background: 'white', borderRadius: '1.25rem', boxShadow: '0 8px 30px rgba(0,0,0,0.06)', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+          <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>📋 Inscripciones · {tConfig.name}</h2>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748B' }}>
+                {regsList.length} pareja{regsList.length === 1 ? '' : 's'} inscrita{regsList.length === 1 ? '' : 's'}
+                {tConfig.gift === 'shirt' && ' · 🎁 Camiseta'}
+                {tConfig.registrationFeeEnabled && tConfig.registrationFeeAmount > 0 && ` · 💳 ${tConfig.registrationFeeAmount}€`}
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={loadRegistrations} disabled={loadingRegs} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
+                {loadingRegs ? 'Cargando…' : '🔄 Refrescar'}
+              </button>
+              <button onClick={downloadRegistrationsCsv} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
+                ⬇ Exportar CSV
+              </button>
+            </div>
+          </div>
+          <div style={{ padding: '1rem 1.5rem 1.5rem' }}>
+            {regsList.length === 0 ? (
+              <div style={{ padding: '3rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.95rem' }}>
+                {loadingRegs ? 'Cargando…' : 'Aún no hay inscripciones online.'}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#F8FAFC' }}>
+                      <th style={thCell}>Pareja</th>
+                      <th style={thCell}>Categoría</th>
+                      <th style={thCell}>Contacto</th>
+                      {tConfig.gift === 'shirt' && <th style={thCell}>Talla</th>}
+                      {tConfig.registrationFeeEnabled && <th style={thCell}>Pago</th>}
+                      {tConfig.registrationFeeEnabled && <th style={thCell}>Acción pago</th>}
+                      <th style={thCell}>Validación</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {regsList.map(r => (
+                      <tr key={r.id} style={{ borderTop: '1px solid #F1F5F9' }}>
+                        <td style={tdCell}>
+                          <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player1_name}</div>
+                          <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player2_name}</div>
+                        </td>
+                        <td style={tdCell}>{r.category}</td>
+                        <td style={tdCell}>
+                          <div style={{ fontSize: '0.78rem', color: '#475569' }}>{r.player1_phone}</div>
+                          <div style={{ fontSize: '0.78rem', color: '#475569' }}>{r.player2_phone}</div>
+                          {(r.player1_email || r.player2_email) && (
+                            <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.25rem' }}>
+                              {[r.player1_email, r.player2_email].filter(Boolean).join(' · ')}
+                            </div>
+                          )}
+                        </td>
+                        {tConfig.gift === 'shirt' && (
+                          <td style={{ ...tdCell, fontWeight: 700, color: '#0369A1' }}>
+                            <div>{r.player1_shirt_size || r.shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}</div>
+                            <div>{r.player2_shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}</div>
+                          </td>
+                        )}
+                        {tConfig.registrationFeeEnabled && (
+                          <td style={tdCell}>
+                            {(() => {
+                              const colors = {
+                                paid: { bg: '#DCFCE7', color: '#15803D', label: '✓ Pagado' },
+                                pending: { bg: '#FEF3C7', color: '#92400E', label: '⏳ Pendiente' },
+                                failed: { bg: '#FEE2E2', color: '#B91C1C', label: '✗ Fallido' },
+                                not_required: { bg: '#F1F5F9', color: '#64748B', label: 'Sin pago' },
+                              };
+                              const c = colors[r.payment_status] || colors.pending;
+                              return (
+                                <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 800, background: c.bg, color: c.color }}>
+                                  {c.label}
+                                  {r.amount_paid != null && ` · ${Number(r.amount_paid).toFixed(2)}€`}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                        )}
+                        {tConfig.registrationFeeEnabled && (
+                          <td style={tdCell}>
+                            {r.payment_status !== 'not_required' && (
+                              <button onClick={() => markRegistrationPaid(r.id, r.payment_status)} style={{ padding: '0.3rem 0.7rem', borderRadius: '0.4rem', border: 'none', background: r.payment_status === 'paid' ? '#FEF2F2' : '#16A34A', color: r.payment_status === 'paid' ? '#DC2626' : 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
+                                {r.payment_status === 'paid' ? 'Marcar pendiente' : 'Marcar pagado'}
+                              </button>
+                            )}
+                          </td>
+                        )}
+                        <td style={tdCell}>
+                          {(() => {
+                            const cs = r.confirmation_status || 'pending';
+                            const palette = {
+                              pending:   { bg: '#FEF3C7', color: '#92400E', label: '⏳ Pendiente' },
+                              confirmed: { bg: '#DCFCE7', color: '#15803D', label: '✓ Confirmada' },
+                              rejected:  { bg: '#FEE2E2', color: '#B91C1C', label: '✗ Rechazada' },
+                            };
+                            const c = palette[cs] || palette.pending;
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-start' }}>
+                                <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 800, background: c.bg, color: c.color }}>
+                                  {c.label}
+                                </span>
+                                {cs === 'pending' && (
+                                  <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                    <button onClick={() => setRegistrationConfirmation(r, 'confirm')} style={{ padding: '0.3rem 0.6rem', borderRadius: '0.4rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
+                                      Confirmar
+                                    </button>
+                                    <button onClick={() => setRegistrationConfirmation(r, 'reject')} style={{ padding: '0.3rem 0.6rem', borderRadius: '0.4rem', border: 'none', background: '#DC2626', color: 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
+                                      Rechazar
+                                    </button>
+                                  </div>
+                                )}
+                                {cs !== 'pending' && (
+                                  <button onClick={() => setRegistrationConfirmation(r, cs === 'confirmed' ? 'reject' : 'confirm')} style={{ padding: '0.25rem 0.55rem', borderRadius: '0.4rem', border: '1px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}>
+                                    {cs === 'confirmed' ? 'Cambiar a rechazada' : 'Cambiar a confirmada'}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (phase === 'config') {
     return (
@@ -2765,151 +2910,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     );
   }
 
-  // ── Página inline de Inscripciones ──────────────────────────────────────
-  // Cuando el admin pulsa "📋 Inscripciones" entramos en una vista propia
-  // (no es modal), con botón Volver. Más fiable que un overlay que pueda
-  // quedar tapado por algún stacking context superior.
-  if (showRegistrations) {
-    const thCell = { textAlign: 'left', padding: '0.55rem 0.75rem', fontSize: '0.7rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' };
-    const tdCell = { padding: '0.6rem 0.75rem', verticalAlign: 'top', color: '#0F172A' };
-    return (
-      <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '1rem' }}>
-        <button onClick={() => setShowRegistrations(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0, marginBottom: '1rem' }}>
-          ← Volver al torneo
-        </button>
-        <div style={{ background: 'white', borderRadius: '1.25rem', boxShadow: '0 8px 30px rgba(0,0,0,0.06)', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
-          <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>📋 Inscripciones · {tConfig.name}</h2>
-              <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748B' }}>
-                {regsList.length} pareja{regsList.length === 1 ? '' : 's'} inscrita{regsList.length === 1 ? '' : 's'}
-                {tConfig.gift === 'shirt' && ' · 🎁 Camiseta'}
-                {tConfig.registrationFeeEnabled && tConfig.registrationFeeAmount > 0 && ` · 💳 ${tConfig.registrationFeeAmount}€`}
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={loadRegistrations} disabled={loadingRegs} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
-                {loadingRegs ? 'Cargando…' : '🔄 Refrescar'}
-              </button>
-              <button onClick={downloadRegistrationsCsv} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
-                ⬇ Exportar CSV
-              </button>
-            </div>
-          </div>
-          <div style={{ padding: '1rem 1.5rem 1.5rem' }}>
-            {regsList.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.95rem' }}>
-                {loadingRegs ? 'Cargando…' : 'Aún no hay inscripciones online.'}
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#F8FAFC' }}>
-                      <th style={thCell}>Pareja</th>
-                      <th style={thCell}>Categoría</th>
-                      <th style={thCell}>Contacto</th>
-                      {tConfig.gift === 'shirt' && <th style={thCell}>Talla</th>}
-                      {tConfig.registrationFeeEnabled && <th style={thCell}>Pago</th>}
-                      {tConfig.registrationFeeEnabled && <th style={thCell}>Acción pago</th>}
-                      <th style={thCell}>Validación</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {regsList.map(r => (
-                      <tr key={r.id} style={{ borderTop: '1px solid #F1F5F9' }}>
-                        <td style={tdCell}>
-                          <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player1_name}</div>
-                          <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player2_name}</div>
-                        </td>
-                        <td style={tdCell}>{r.category}</td>
-                        <td style={tdCell}>
-                          <div style={{ fontSize: '0.78rem', color: '#475569' }}>{r.player1_phone}</div>
-                          <div style={{ fontSize: '0.78rem', color: '#475569' }}>{r.player2_phone}</div>
-                          {(r.player1_email || r.player2_email) && (
-                            <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.25rem' }}>
-                              {[r.player1_email, r.player2_email].filter(Boolean).join(' · ')}
-                            </div>
-                          )}
-                        </td>
-                        {tConfig.gift === 'shirt' && (
-                          <td style={{ ...tdCell, fontWeight: 700, color: '#0369A1' }}>
-                            <div>{r.player1_shirt_size || r.shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}</div>
-                            <div>{r.player2_shirt_size || <span style={{ color: '#CBD5E1', fontWeight: 400 }}>—</span>}</div>
-                          </td>
-                        )}
-                        {tConfig.registrationFeeEnabled && (
-                          <td style={tdCell}>
-                            {(() => {
-                              const colors = {
-                                paid: { bg: '#DCFCE7', color: '#15803D', label: '✓ Pagado' },
-                                pending: { bg: '#FEF3C7', color: '#92400E', label: '⏳ Pendiente' },
-                                failed: { bg: '#FEE2E2', color: '#B91C1C', label: '✗ Fallido' },
-                                not_required: { bg: '#F1F5F9', color: '#64748B', label: 'Sin pago' },
-                              };
-                              const c = colors[r.payment_status] || colors.pending;
-                              return (
-                                <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 800, background: c.bg, color: c.color }}>
-                                  {c.label}
-                                  {r.amount_paid != null && ` · ${Number(r.amount_paid).toFixed(2)}€`}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                        )}
-                        {tConfig.registrationFeeEnabled && (
-                          <td style={tdCell}>
-                            {r.payment_status !== 'not_required' && (
-                              <button onClick={() => markRegistrationPaid(r.id, r.payment_status)} style={{ padding: '0.3rem 0.7rem', borderRadius: '0.4rem', border: 'none', background: r.payment_status === 'paid' ? '#FEF2F2' : '#16A34A', color: r.payment_status === 'paid' ? '#DC2626' : 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
-                                {r.payment_status === 'paid' ? 'Marcar pendiente' : 'Marcar pagado'}
-                              </button>
-                            )}
-                          </td>
-                        )}
-                        <td style={tdCell}>
-                          {(() => {
-                            const cs = r.confirmation_status || 'pending';
-                            const palette = {
-                              pending:   { bg: '#FEF3C7', color: '#92400E', label: '⏳ Pendiente' },
-                              confirmed: { bg: '#DCFCE7', color: '#15803D', label: '✓ Confirmada' },
-                              rejected:  { bg: '#FEE2E2', color: '#B91C1C', label: '✗ Rechazada' },
-                            };
-                            const c = palette[cs] || palette.pending;
-                            return (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-start' }}>
-                                <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 800, background: c.bg, color: c.color }}>
-                                  {c.label}
-                                </span>
-                                {cs === 'pending' && (
-                                  <div style={{ display: 'flex', gap: '0.3rem' }}>
-                                    <button onClick={() => setRegistrationConfirmation(r, 'confirm')} style={{ padding: '0.3rem 0.6rem', borderRadius: '0.4rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
-                                      Confirmar
-                                    </button>
-                                    <button onClick={() => setRegistrationConfirmation(r, 'reject')} style={{ padding: '0.3rem 0.6rem', borderRadius: '0.4rem', border: 'none', background: '#DC2626', color: 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
-                                      Rechazar
-                                    </button>
-                                  </div>
-                                )}
-                                {cs !== 'pending' && (
-                                  <button onClick={() => setRegistrationConfirmation(r, cs === 'confirmed' ? 'reject' : 'confirm')} style={{ padding: '0.25rem 0.55rem', borderRadius: '0.4rem', border: '1px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}>
-                                    {cs === 'confirmed' ? 'Cambiar a rechazada' : 'Cambiar a confirmada'}
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
