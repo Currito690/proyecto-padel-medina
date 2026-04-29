@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import QRCode from 'qrcode';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 
@@ -115,8 +116,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showRegistrations, setShowRegistrations] = useState(false);
   const [regsList, setRegsList] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
+  // QR del enlace público de inscripción (data URL para mostrar y descargar)
+  const [qrDataUrl, setQrDataUrl] = useState('');
   // Editor de pistas durante el torneo (panel modal)
   const [showCourtsEditor, setShowCourtsEditor] = useState(false);
+
+  // Genera el QR del enlace público cada vez que cambia publishedId.
+  // Usa la lib qrcode local — no depende de servicios externos.
+  useEffect(() => {
+    if (!publishedId) { setQrDataUrl(''); return; }
+    const url = `${window.location.origin}/torneos/${publishedId}`;
+    QRCode.toDataURL(url, { width: 320, margin: 2, errorCorrectionLevel: 'M' })
+      .then(setQrDataUrl)
+      .catch((e) => { console.error('QR generation failed:', e); setQrDataUrl(''); });
+  }, [publishedId]);
 
   useEffect(() => {
     localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
@@ -2528,6 +2541,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 Copiar
               </button>
             </div>
+
+            {/* QR del enlace público — para imprimir o compartir en redes */}
+            {qrDataUrl && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: 'white', borderRadius: '0.75rem', border: '1.5px solid #BAE6FD', marginBottom: '0.75rem' }}>
+                <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '0.04em' }}>📱 Código QR para inscribirse</p>
+                <img src={qrDataUrl} alt="QR de inscripción al torneo" style={{ width: '180px', height: '180px', display: 'block' }} />
+                <button
+                  onClick={() => {
+                    const a = document.createElement('a');
+                    a.href = qrDataUrl;
+                    a.download = `qr_inscripcion_${(tConfig.name || 'torneo').replace(/[^a-z0-9]+/gi, '_')}.png`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }}
+                  style={{ padding: '0.4rem 0.8rem', borderRadius: '0.5rem', border: '1.5px solid #BAE6FD', backgroundColor: '#EFF6FF', color: '#0369A1', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
+                >
+                  ⬇ Descargar QR
+                </button>
+                <p style={{ margin: 0, fontSize: '0.7rem', color: '#64748B', textAlign: 'center', maxWidth: '260px' }}>
+                  Imprímelo o cuélgalo en el club. Los jugadores lo escanean y van directos al formulario de inscripción.
+                </p>
+              </div>
+            )}
             <button
               onClick={async () => {
                 try {
