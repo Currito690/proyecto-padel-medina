@@ -7,7 +7,7 @@ const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
 const REPLY_TO = 'info@padelmedina.com';
 // Destinatario fijo: buzón del club. Si en el futuro se quiere cambiar
 // se puede leer de Deno.env.get('CLUB_NOTIFY_EMAIL') sin romper nada.
-const ADMIN_EMAIL = Deno.env.get('CLUB_NOTIFY_EMAIL') || 'padelmedina@hotmail.es';
+const ADMIN_EMAIL = Deno.env.get('CLUB_NOTIFY_EMAIL') || 'padelmedina@hotmail.com';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
