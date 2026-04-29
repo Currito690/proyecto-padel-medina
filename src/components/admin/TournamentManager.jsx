@@ -772,29 +772,59 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const idx = positions.indexOf(p.seed);
            if (idx >= 0 && idx < pow) slot[idx] = p;
          });
-         // Resto de parejas (sin seed o con seed > pow): los rellenamos en
-         // orden de "peor seed opuesto primero". Esto garantiza que los BYEs
-         // (slots que se quedan vacíos) caigan opuestos a los MEJORES seeds,
-         // por lo que el #1, #2... son los que tienen bye en R1.
+
+         // ── Distribución de BYEs ───────────────────────────────────────────
+         // Regla clave: como mucho 1 BYE por partido de R1. Si en un mismo
+         // R1 ponemos 2 byes, ese match no produce ganador → el cuarto
+         // resultante quedaría con un seed sin rival (dos rondas sin jugar).
+         //
+         // 1) Los seeds reciben bye en SU partido de R1 (top seeds primero).
+         // 2) Los byes restantes se reparten por otros R1 sueltos, uno por
+         //    partido. Así garantizamos que cada cuarto tenga al menos un
+         //    ganador real al que enfrentar al seed.
+         const byesNeeded = pow - catParts.length;
+         const byeSlots = new Set(); // slots que serán BYE
+         const matchesWithBye = new Set(); // matchIdx ya con bye
+         let byesAllocated = 0;
+
+         // 1) Seeds → bye en su mismo R1
+         const seedSlotsSorted = seededHere
+           .map(p => positions.indexOf(p.seed))
+           .filter(i => i >= 0 && i < pow)
+           .sort((a, b) => slot[a].seed - slot[b].seed);
+         for (const sIdx of seedSlotsSorted) {
+           if (byesAllocated >= byesNeeded) break;
+           const matchIdx = Math.floor(sIdx / 2);
+           if (matchesWithBye.has(matchIdx)) continue;
+           byeSlots.add(sIdx ^ 1);
+           matchesWithBye.add(matchIdx);
+           byesAllocated++;
+         }
+
+         // 2) Byes restantes → uno por partido de R1 sin bye todavía
+         for (let m = 0; m < pow / 2 && byesAllocated < byesNeeded; m++) {
+           if (matchesWithBye.has(m)) continue;
+           const s1 = m * 2, s2 = m * 2 + 1;
+           // Si por algún motivo ya hay un seed en uno de los slots, ponemos el
+           // bye en el otro. Si ambos están vacíos, el bye va al segundo.
+           const target = slot[s1] ? s2 : (slot[s2] ? s1 : s2);
+           byeSlots.add(target);
+           matchesWithBye.add(m);
+           byesAllocated++;
+         }
+
+         // 3) Rellenar el resto con unseeded (parejas sin seed)
          const unseeded = catParts.filter(p => !slot.some(s => s?.id === p.id));
-         const emptyIdxs = [];
-         for (let i = 0; i < pow; i++) if (!slot[i]) emptyIdxs.push(i);
-         // Para cada slot vacío, miramos el seed del oponente directo (i^1)
-         // y ordenamos: peor seed (más alto numéricamente) primero, luego sin seed.
-         emptyIdxs.sort((a, b) => {
-           const sa = slot[a ^ 1]?.seed;
-           const sb = slot[b ^ 1]?.seed;
-           // Sin seed → ∞ (van al final, sus slots quedarán para byes si sobran)
-           const va = Number.isFinite(sa) ? sa : Infinity;
-           const vb = Number.isFinite(sb) ? sb : Infinity;
-           return vb - va; // mayor (peor seed) primero
-         });
          let ui = 0;
-         for (const idx of emptyIdxs) {
-           if (ui < unseeded.length) {
-             slot[idx] = unseeded[ui++];
+         for (let i = 0; i < pow; i++) {
+           if (slot[i]) continue;
+           if (byeSlots.has(i)) {
+             slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
+           } else if (ui < unseeded.length) {
+             slot[i] = unseeded[ui++];
            } else {
-             slot[idx] = { id: `bye-${cat}-${idx}`, name: '---', isBye: true };
+             // Por seguridad — no debería entrar aquí si el match es correcto
+             slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
            }
          }
          catParts = slot;
