@@ -400,9 +400,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const downloadRegistrationsCsv = () => {
-    if (regsList.length === 0) { toast('No hay inscripciones que exportar.', 'error'); return; }
-    const headers = ['Categoría','Jugador 1','Email 1','Tel 1','Talla 1','Jugador 2','Email 2','Tel 2','Talla 2','Estado pago','Importe','Pagado en','Fecha inscripción'];
-    const rows = regsList.map(r => [
+    const manualOnly = participants.filter(p => !regsList.some(r => r.id === p.id));
+    if (regsList.length === 0 && manualOnly.length === 0) { toast('No hay inscripciones que exportar.', 'error'); return; }
+    const headers = ['Origen','Categoría','Jugador 1','Email 1','Tel 1','Talla 1','Jugador 2','Email 2','Tel 2','Talla 2','Estado pago','Importe','Pagado en','Fecha inscripción'];
+    const onlineRows = regsList.map(r => [
+      'Online',
       r.category,
       r.player1_name, r.player1_email, r.player1_phone, r.player1_shirt_size || r.shirt_size || '',
       r.player2_name, r.player2_email, r.player2_phone, r.player2_shirt_size || '',
@@ -411,7 +413,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       r.paid_at ? new Date(r.paid_at).toLocaleString('es-ES') : '',
       r.created_at ? new Date(r.created_at).toLocaleString('es-ES') : '',
     ]);
-    const csv = [headers, ...rows].map(row => row.map(csvEscape).join(',')).join('\n');
+    const manualRows = manualOnly.map(p => [
+      'Manual',
+      p.category || '',
+      p.name, '', '', p.player1_shirt_size || '',
+      '', '', '', p.player2_shirt_size || '',
+      '', '', '', '',
+    ]);
+    const csv = [headers, ...onlineRows, ...manualRows].map(row => row.map(csvEscape).join(',')).join('\n');
     // BOM para que Excel detecte UTF-8 con tildes
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -523,10 +532,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       toast('Primero debes publicar el torneo (Fase 2).');
       return;
     }
+    const wasPublished = !!tConfig.bracketPublished;
     // Aviso si el plazo de inscripción aún está abierto: publicar el cuadro
     // antes de tiempo bloquea inscripciones que aún podrían llegar.
     const deadlineStr = tConfig.registrationDeadline;
-    if (deadlineStr) {
+    if (!wasPublished && deadlineStr) {
       const deadlineMs = new Date(deadlineStr + 'T23:59:59').getTime();
       if (Date.now() < deadlineMs) {
         const fmt = new Date(deadlineStr + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -538,6 +548,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         );
         if (!ok) return;
       }
+    }
+    // Re-publicación: confirmar antes de spamear a todos los jugadores con
+    // un correo de "cuadro actualizado".
+    if (wasPublished) {
+      const ok = await confirmDialog(
+        'El cuadro ya está publicado. ¿Quieres reenviar un correo a todos los jugadores avisando de que se ha actualizado?',
+        { title: 'Notificar actualización', okText: 'Notificar a jugadores', danger: false }
+      );
+      if (!ok) return;
     }
     try {
       // bracketPublished=true marca el cuadro como visible al público.
@@ -551,7 +570,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         .eq('id', publishedId);
       if (error) throw error;
       setTConfig(tConfigWithFlag);
-      toast('🏆 Cuadro publicado. Avisando a los jugadores por correo…', 'success');
+      toast(
+        wasPublished
+          ? '🔄 Cuadro actualizado. Avisando a los jugadores por correo…'
+          : '🏆 Cuadro publicado. Avisando a los jugadores por correo…',
+        'success'
+      );
 
       // Notificación por correo a todos los jugadores confirmados con el
       // enlace al cuadro. No bloquea el flujo principal: si el envío falla
@@ -576,7 +600,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         } else {
           const tournamentUrl = `${window.location.origin}/torneos/${publishedId}/cuadro`;
           const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bracket-published', {
-            body: { emails, tournamentName: tConfig.name || 'Torneo', tournamentUrl },
+            body: {
+              emails,
+              tournamentName: tConfig.name || 'Torneo',
+              tournamentUrl,
+              kind: wasPublished ? 'updated' : 'published',
+            },
           });
           if (fnErr || (fnData && fnData.error)) {
             console.error('send-bracket-published failed', fnErr || fnData?.error);
@@ -2081,6 +2110,33 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   if (showRegistrations) {
     const thCell = { textAlign: 'left', padding: '0.55rem 0.75rem', fontSize: '0.7rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' };
     const tdCell = { padding: '0.6rem 0.75rem', verticalAlign: 'top', color: '#0F172A' };
+    const SHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+    // Parejas añadidas manualmente: están en `participants` pero no provienen
+    // de una inscripción online (no figuran en regsList por id).
+    const manualParticipants = participants.filter(p => !regsList.some(r => r.id === p.id));
+    // Recuento de tallas combinando online + manuales.
+    const shirtTally = (() => {
+      const counts = Object.fromEntries(SHIRT_SIZES.map(s => [s, 0]));
+      let unassigned = 0;
+      let total = 0;
+      const push = (s) => {
+        total++;
+        if (s && counts[s] !== undefined) counts[s]++;
+        else unassigned++;
+      };
+      regsList.forEach(r => {
+        push(r.player1_shirt_size || r.shirt_size);
+        push(r.player2_shirt_size);
+      });
+      manualParticipants.forEach(p => {
+        push(p.player1_shirt_size);
+        push(p.player2_shirt_size);
+      });
+      return { counts, unassigned, total };
+    })();
+    const setManualShirtSize = (id, field, value) => {
+      setParticipants(prev => prev.map(p => p.id === id ? { ...p, [field]: value || null } : p));
+    };
     return (
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '1rem' }}>
         <button onClick={() => setShowRegistrations(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0, marginBottom: '1rem' }}>
@@ -2091,10 +2147,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             <div>
               <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>📋 Inscripciones · {tConfig.name}</h2>
               <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748B' }}>
-                {regsList.length} pareja{regsList.length === 1 ? '' : 's'} inscrita{regsList.length === 1 ? '' : 's'}
+                {regsList.length} pareja{regsList.length === 1 ? '' : 's'} online
+                {manualParticipants.length > 0 && ` · ${manualParticipants.length} manual${manualParticipants.length === 1 ? '' : 'es'}`}
                 {tConfig.gift === 'shirt' && ' · 🎁 Camiseta'}
                 {tConfig.registrationFeeEnabled && tConfig.registrationFeeAmount > 0 && ` · 💳 ${tConfig.registrationFeeAmount}€`}
               </p>
+              {tConfig.gift === 'shirt' && shirtTally.total > 0 && (
+                <div style={{ marginTop: '0.6rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>🎽 Tallas:</span>
+                  {SHIRT_SIZES.map(s => (
+                    <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.55rem', borderRadius: '999px', background: shirtTally.counts[s] > 0 ? '#DBEAFE' : '#F1F5F9', color: shirtTally.counts[s] > 0 ? '#1E40AF' : '#94A3B8', fontWeight: 800, fontSize: '0.74rem', border: shirtTally.counts[s] > 0 ? '1px solid #BFDBFE' : '1px solid #E2E8F0' }}>
+                      <span>{shirtTally.counts[s]}</span>
+                      <span>{s}</span>
+                    </span>
+                  ))}
+                  {shirtTally.unassigned > 0 && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.55rem', borderRadius: '999px', background: '#FEF3C7', color: '#92400E', fontWeight: 800, fontSize: '0.74rem', border: '1px solid #FDE68A' }}>
+                      ❓ {shirtTally.unassigned} sin asignar
+                    </span>
+                  )}
+                  <span style={{ fontSize: '0.74rem', color: '#64748B', fontWeight: 700 }}>
+                    · Total jugadores: {shirtTally.total}
+                  </span>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <button onClick={loadRegistrations} disabled={loadingRegs} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
@@ -2107,7 +2183,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </div>
           <div style={{ padding: '1rem 1.5rem 1.5rem' }}>
             {regsList.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.95rem' }}>
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.95rem' }}>
                 {loadingRegs ? 'Cargando…' : 'Aún no hay inscripciones online.'}
               </div>
             ) : (
@@ -2126,7 +2202,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   </thead>
                   <tbody>
                     {regsList.map(r => (
-                      <tr key={r.id} style={{ borderTop: '1px solid #F1F5F9' }}>
+                      <tr key={`reg-${r.id}`} style={{ borderTop: '1px solid #F1F5F9' }}>
                         <td style={tdCell}>
                           <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player1_name}</div>
                           <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player2_name}</div>
@@ -2212,6 +2288,68 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {manualParticipants.length > 0 && (
+              <div style={{ marginTop: regsList.length === 0 ? '0' : '1.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#0F172A' }}>✋ Parejas añadidas manualmente</h3>
+                  <span style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 600 }}>
+                    {manualParticipants.length} pareja{manualParticipants.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {tConfig.gift === 'shirt' && (
+                  <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#64748B' }}>
+                    Asigna la talla de camiseta para cada jugador. Se sumará al recuento total.
+                  </p>
+                )}
+                <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F8FAFC' }}>
+                        <th style={thCell}>Pareja</th>
+                        <th style={thCell}>Categoría</th>
+                        {tConfig.gift === 'shirt' && <th style={thCell}>Talla J1</th>}
+                        {tConfig.gift === 'shirt' && <th style={thCell}>Talla J2</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {manualParticipants.map(p => (
+                        <tr key={`man-${p.id}`} style={{ borderTop: '1px solid #F1F5F9' }}>
+                          <td style={tdCell}>
+                            <div style={{ fontWeight: 700, color: '#0F172A' }}>{p.name}</div>
+                          </td>
+                          <td style={tdCell}>{p.category}</td>
+                          {tConfig.gift === 'shirt' && (
+                            <td style={tdCell}>
+                              <select
+                                value={p.player1_shirt_size || ''}
+                                onChange={e => setManualShirtSize(p.id, 'player1_shirt_size', e.target.value)}
+                                style={{ padding: '0.35rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #CBD5E1', fontSize: '0.78rem', fontWeight: 700, color: '#0369A1', background: 'white', cursor: 'pointer' }}
+                              >
+                                <option value="">—</option>
+                                {SHIRT_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            </td>
+                          )}
+                          {tConfig.gift === 'shirt' && (
+                            <td style={tdCell}>
+                              <select
+                                value={p.player2_shirt_size || ''}
+                                onChange={e => setManualShirtSize(p.id, 'player2_shirt_size', e.target.value)}
+                                style={{ padding: '0.35rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #CBD5E1', fontSize: '0.78rem', fontWeight: 700, color: '#0369A1', background: 'white', cursor: 'pointer' }}
+                              >
+                                <option value="">—</option>
+                                {SHIRT_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
@@ -3572,9 +3710,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </button>
               <button
                 onClick={handlePublishBracket}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #DCFCE7', backgroundColor: '#F0FDF4', color: '#16A34A', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                title={tConfig.bracketPublished ? 'Avisar a los jugadores de que el cuadro se ha actualizado' : 'Publicar el cuadro y avisar a los jugadores por correo'}
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: tConfig.bracketPublished ? '1.5px solid #BFDBFE' : '1.5px solid #DCFCE7', backgroundColor: tConfig.bracketPublished ? '#EFF6FF' : '#F0FDF4', color: tConfig.bracketPublished ? '#1D4ED8' : '#16A34A', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
-                Publicar Cuadro
+                {tConfig.bracketPublished ? '🔄 Notificar Actualización' : 'Publicar Cuadro'}
               </button>
             </>
           )}

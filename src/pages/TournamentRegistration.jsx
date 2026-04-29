@@ -260,6 +260,27 @@ export default function TournamentRegistration() {
       return;
     }
 
+    // Aviso al club por correo (no bloqueante: si falla solo se loguea).
+    // El admin debe enterarse de cada nueva inscripción para validarla.
+    supabase.functions.invoke('send-registration-admin-notify', {
+      body: {
+        tournamentName: tournament?.name || 'Torneo',
+        category: dualCategory && cat2 && cat2 !== cat ? `${cat} + ${cat2}` : cat,
+        player1Name: p1Name,
+        player2Name: p2Name,
+        player1Email: p1Email || null,
+        player2Email: p2Email || null,
+        player1Phone: p1Phone || null,
+        player2Phone: p2Phone || null,
+        player1ShirtSize: giftIsShirt ? (p1Size || null) : null,
+        player2ShirtSize: giftIsShirt ? (p2Size || null) : null,
+        paymentStatus,
+        paymentMethod: chosenMethod,
+        amount: totalFee || null,
+        registrationsUrl: `${window.location.origin}/admin`,
+      },
+    }).catch(err => console.warn('No se pudo avisar al club por correo:', err));
+
     // Solo se redirige al TPV si el jugador eligió pagar con tarjeta.
     // Si eligió "Pago en el club" (chosenMethod === 'club') la inscripción
     // queda como 'pending' y será el admin quien marque el pago como recibido.

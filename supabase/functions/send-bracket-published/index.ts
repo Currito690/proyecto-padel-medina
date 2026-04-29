@@ -12,24 +12,33 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-function bracketHtml(tournamentName: string, tournamentUrl: string): string {
+function bracketHtml(tournamentName: string, tournamentUrl: string, isUpdate: boolean): string {
+  const heroLabel = isUpdate ? 'Cuadro actualizado' : '¡Cuadro publicado!';
+  const title = isUpdate ? 'El cuadro se ha actualizado' : '¡Ya está el cuadro!';
+  const intro = isUpdate
+    ? `Hay novedades en el cuadro del torneo <strong style="color:#0F172A">${tournamentName}</strong>. Vuelve a comprobar tus partidos, horarios y pista por si algo ha cambiado.`
+    : `Se acaba de publicar el cuadro del torneo <strong style="color:#0F172A">${tournamentName}</strong>. Consulta tus partidos, horarios y la pista que te toca.`;
+  const heroIcon = isUpdate ? '🔄' : '🏆';
+  const gradient = isUpdate
+    ? 'linear-gradient(135deg,#0EA5E9 0%,#2563EB 100%)'
+    : 'linear-gradient(135deg,#16A34A 0%,#059669 100%)';
   return `<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cuadro publicado</title></head>
+<title>${heroLabel}</title></head>
 <body style="margin:0;padding:0;background:#F1F5F9;font-family:Arial,Helvetica,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#F1F5F9;padding:32px 16px">
   <tr><td align="center">
   <table width="100%" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
-    <tr><td style="background:linear-gradient(135deg,#16A34A 0%,#059669 100%);padding:36px 28px;text-align:center">
-      <div style="font-size:44px;line-height:1;margin-bottom:10px">🏆</div>
+    <tr><td style="background:${gradient};padding:36px 28px;text-align:center">
+      <div style="font-size:44px;line-height:1;margin-bottom:10px">${heroIcon}</div>
       <h1 style="color:#ffffff;margin:0;font-size:26px;font-weight:800;letter-spacing:-0.5px">Padel Medina</h1>
-      <p style="color:rgba(255,255,255,0.85);margin:6px 0 0;font-size:14px;font-weight:500">¡Cuadro publicado!</p>
+      <p style="color:rgba(255,255,255,0.85);margin:6px 0 0;font-size:14px;font-weight:500">${heroLabel}</p>
     </td></tr>
     <tr><td style="padding:32px 28px">
-      <h2 style="color:#0F172A;font-size:22px;margin:0 0 12px;font-weight:800">¡Ya está el cuadro!</h2>
+      <h2 style="color:#0F172A;font-size:22px;margin:0 0 12px;font-weight:800">${title}</h2>
       <p style="color:#64748B;margin:0 0 20px;font-size:15px;line-height:1.6">
-        Se acaba de publicar el cuadro del torneo <strong style="color:#0F172A">${tournamentName}</strong>. Consulta tus partidos, horarios y la pista que te toca.
+        ${intro}
       </p>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0">
         <tr><td align="center">
@@ -68,7 +77,8 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders });
   }
   try {
-    const { emails, tournamentName, tournamentUrl } = await req.json();
+    const { emails, tournamentName, tournamentUrl, kind } = await req.json();
+    const isUpdate = kind === 'updated';
 
     if (!Array.isArray(emails) || emails.length === 0 || !tournamentName || !tournamentUrl) {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), {
@@ -98,8 +108,10 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const subject = `🏆 Cuadro publicado — ${tournamentName}`;
-    const html = bracketHtml(tournamentName, tournamentUrl);
+    const subject = isUpdate
+      ? `🔄 Cuadro actualizado — ${tournamentName}`
+      : `🏆 Cuadro publicado — ${tournamentName}`;
+    const html = bracketHtml(tournamentName, tournamentUrl, isUpdate);
 
     // Envío individual por cada destinatario para preservar privacidad
     // (no se ven los demás correos en el "To"). En paralelo con allSettled
