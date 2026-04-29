@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
@@ -2958,11 +2959,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       )}
 
       {/* ── Panel de inscripciones (talla, pago, CSV) ── */}
-      {showRegistrations && (() => {
+      {/* Renderizado vía portal sobre <body> para evitar que un stacking
+         context superior (transform, filter, opacity en algún ancestro)
+         oculte el modal o lo deje detrás del contenido. */}
+      {showRegistrations && createPortal((() => {
         const thCell = { textAlign: 'left', padding: '0.55rem 0.75rem', fontSize: '0.7rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' };
         const tdCell = { padding: '0.6rem 0.75rem', verticalAlign: 'top', color: '#0F172A' };
         return (
-        <div onClick={() => setShowRegistrations(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setShowRegistrations(false); }}
+          style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 99999, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+        >
           <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '1000px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
             <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <div>
@@ -3108,7 +3115,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </div>
         </div>
         );
-      })()}
+      })(), document.body)}
 
       <style>{`
         .tm-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
