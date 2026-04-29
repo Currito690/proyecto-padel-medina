@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
@@ -64,6 +64,10 @@ export default function TournamentRegistration() {
   const [gridBlockedSlots, setGridBlockedSlots] = useState(new Set());
   const [gridDragging, setGridDragging] = useState(false);
   const [gridDragAction, setGridDragAction] = useState(null);
+  // Lock síncrono anti doble-click: si el user pulsa "Inscribirse" dos veces
+  // rápido, el primero pone esto en true y el segundo se rechaza al instante,
+  // sin esperar al re-render que desactiva el botón vía `loading`.
+  const submitLockRef = useRef(false);
 
   useEffect(() => {
     const fetchTournament = async () => {
@@ -177,6 +181,8 @@ export default function TournamentRegistration() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    // Anti doble-click — corta cualquier reentrada antes de validar.
+    if (submitLockRef.current) return;
     if (!p1Name || !p2Name || !cat) {
       toast('Introduce el nombre de ambos jugadores y la categoría.');
       return;
@@ -200,6 +206,7 @@ export default function TournamentRegistration() {
       toast('Indica la talla de camiseta de cada jugador.');
       return;
     }
+    submitLockRef.current = true;
     setLoading(true);
 
     // Convert grid to unavailable_times array
@@ -249,6 +256,7 @@ export default function TournamentRegistration() {
       toast('Hubo un error al registrarte. Vuelve a intentarlo.', 'error');
       console.error(insError);
       setLoading(false);
+      submitLockRef.current = false; // permitir reintento
       return;
     }
 

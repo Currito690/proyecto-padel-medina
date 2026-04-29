@@ -4,6 +4,7 @@ import { useAuth } from './context/AuthContext';
 import { supabase } from './services/supabase';
 import { subscribeAdminToPush } from './services/pushNotifications';
 import MainLayout from './components/layout/MainLayout';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const BookingDashboard = lazy(() => import('./pages/BookingDashboard'));
 const MyBookings = lazy(() => import('./pages/MyBookings'));
@@ -232,6 +233,7 @@ function App() {
 
   return (
     <div className="app-container">
+      <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public Routes */}
@@ -269,6 +271,7 @@ function App() {
           )}
         </Routes>
       </Suspense>
+      </ErrorBoundary>
     </div>
   );
 }

@@ -7,7 +7,25 @@ import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(console.warn);
+  navigator.serviceWorker.register('/sw.js').then((reg) => {
+    // Cuando el usuario vuelve a la pestaña (Ej: tras estar en otra app),
+    // pedimos al browser que compruebe si hay un SW nuevo. Si lo hay y
+    // cambia el controller, el listener de abajo recarga la página.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(console.warn);
+
+  // Si el SW activo cambia (= deploy nuevo + skipWaiting + clients.claim),
+  // recarga la página automáticamente para que el usuario obtenga el JS/CSS
+  // actualizado sin tener que hacer Ctrl+Shift+R. Solo recarga una vez para
+  // evitar bucles si algo va mal.
+  let _swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (_swReloaded) return;
+    _swReloaded = true;
+    window.location.reload();
+  });
 }
 
 createRoot(document.getElementById('root')).render(

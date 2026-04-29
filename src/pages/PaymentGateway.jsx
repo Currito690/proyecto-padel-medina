@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -14,6 +14,9 @@ const PaymentGateway = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
+  // Lock síncrono anti doble-click. Crítico aquí porque generar dos
+  // bookings por un click duplicado supondría un cargo doble en Redsys.
+  const payLockRef = useRef(false);
   const [clubHours, setClubHours] = useState(null);
   // allowedByRules: métodos permitidos por reglas admin (pista+franja).
   // null mientras carga; luego string[] (intersección de todos los items del carrito).
@@ -106,11 +109,13 @@ const PaymentGateway = () => {
 
   const handleRedsysPay = async (method = 'card') => {
     if (!user || items.length === 0) return;
+    if (payLockRef.current) return; // anti doble-click duro
     if (items.length > 1) {
       setError('El pago online sólo admite una reserva a la vez. Usa "Pago en el Club" o elimina reservas del carrito.');
       return;
     }
     const item = items[0];
+    payLockRef.current = true;
     setLoading(true);
     setError(null);
 
@@ -215,12 +220,15 @@ const PaymentGateway = () => {
       console.error('Error Redsys:', err);
       setError(`Error: ${err.message}`);
       setLoading(false);
+      payLockRef.current = false; // permitir reintento si la pasarela falló
     }
   };
 
 
   const handleClubPayment = async () => {
     if (items.length === 0) return;
+    if (payLockRef.current) return; // mismo lock — evita combinar pagos en paralelo
+    payLockRef.current = true;
     setProcessingClub(true);
     try {
       const rows = items.map((item) => ({
@@ -263,6 +271,7 @@ const PaymentGateway = () => {
       console.error('Error al reservar:', err);
       toast('Error al procesar la reserva: ' + err.message);
       setProcessingClub(false);
+      payLockRef.current = false; // permitir reintento
     }
   };
 
