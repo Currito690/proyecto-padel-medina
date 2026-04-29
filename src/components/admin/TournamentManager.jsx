@@ -551,10 +551,49 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         .eq('id', publishedId);
       if (error) throw error;
       setTConfig(tConfigWithFlag);
-      toast('¡Cuadro publicado! Los jugadores pueden verlo (incluida la consolación si la has generado) en:\n/torneos/' + publishedId + '/cuadro');
+      toast('🏆 Cuadro publicado. Avisando a los jugadores por correo…', 'success');
+
+      // Notificación por correo a todos los jugadores confirmados con el
+      // enlace al cuadro. No bloquea el flujo principal: si el envío falla
+      // se avisa pero el cuadro ya está publicado.
+      try {
+        const { data: regs, error: regsErr } = await supabase
+          .from('tournament_registrations')
+          .select('player1_email, player2_email')
+          .eq('tournament_id', publishedId)
+          .eq('confirmation_status', 'confirmed');
+        if (regsErr) throw regsErr;
+
+        const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const emails = Array.from(new Set(
+          (regs || [])
+            .flatMap(r => [r.player1_email, r.player2_email])
+            .map(e => (e || '').trim().toLowerCase())
+            .filter(e => emailRe.test(e))
+        ));
+        if (emails.length === 0) {
+          toast('Cuadro publicado, pero no había correos válidos en las parejas confirmadas.', 'warning');
+        } else {
+          const tournamentUrl = `${window.location.origin}/torneos/${publishedId}/cuadro`;
+          const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bracket-published', {
+            body: { emails, tournamentName: tConfig.name || 'Torneo', tournamentUrl },
+          });
+          if (fnErr || (fnData && fnData.error)) {
+            console.error('send-bracket-published failed', fnErr || fnData?.error);
+            toast(`Cuadro publicado, pero el correo a jugadores falló: ${fnErr?.message || fnData?.error || 'desconocido'}`, 'error');
+          } else {
+            const sent = fnData?.sent ?? emails.length;
+            const failed = fnData?.failed ?? 0;
+            toast(`📧 Correo enviado a ${sent} jugador${sent === 1 ? '' : 'es'}${failed > 0 ? ` (${failed} fallido${failed === 1 ? '' : 's'})` : ''}`, 'success');
+          }
+        }
+      } catch (mailErr) {
+        console.error('No se pudo enviar el correo del cuadro:', mailErr);
+        toast('Cuadro publicado, pero no se pudo enviar el correo de aviso a los jugadores.', 'error');
+      }
     } catch (e) {
       console.error(e);
-      toast('Error al publicar el cuadro: ' + (e.message || e));
+      toast('Error al publicar el cuadro: ' + (e.message || e), 'error');
     }
   };
 
