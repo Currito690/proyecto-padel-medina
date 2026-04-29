@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { toast, confirmDialog } from '../utils/notify';
 
 const MyBookings = () => {
   const { user } = useAuth();
@@ -131,14 +132,15 @@ const MyBookings = () => {
 
   const cancelBooking = async (booking) => {
     if (!cancelSettings.enabled) {
-      alert('La cancelación de reservas está desactivada. Contacta con el club.');
+      toast('La cancelación de reservas está desactivada. Contacta con el club.');
       return;
     }
     if (!isCancelable(booking.date, booking.time_slot)) {
-      alert(`Las reservas no se pueden cancelar con menos de ${cancelSettings.hours} horas de antelación.`);
+      toast(`Las reservas no se pueden cancelar con menos de ${cancelSettings.hours} horas de antelación.`);
       return;
     }
-    if (!window.confirm('¿Cancelar esta reserva?')) return;
+    const ok = await confirmDialog('¿Cancelar esta reserva?', { title: 'Cancelar reserva', okText: 'Cancelar reserva', danger: true });
+    if (!ok) return;
     await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', booking.id);
     setBookings(prev => prev.filter(b => b.id !== booking.id));
   };

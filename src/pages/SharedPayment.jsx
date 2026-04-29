@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
+import { toast, confirmDialog } from '../utils/notify';
 
 const SharedPayment = () => {
   const [searchParams] = useSearchParams();
@@ -64,14 +65,14 @@ const SharedPayment = () => {
     });
 
     if (!rawRes.ok) {
-      alert('Error al conectar con la pasarela de pago. Inténtalo de nuevo.');
+      toast('Error al conectar con la pasarela de pago. Inténtalo de nuevo.', 'error');
       setLoading(false);
       return;
     }
 
     const data = await rawRes.json();
     if (!data?.Ds_MerchantParameters) {
-      alert('Error al conectar con la pasarela de pago. Inténtalo de nuevo.');
+      toast('Error al conectar con la pasarela de pago. Inténtalo de nuevo.', 'error');
       setLoading(false);
       return;
     }

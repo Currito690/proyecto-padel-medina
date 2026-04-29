@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../services/supabase';
+import { toast, confirmDialog } from '../utils/notify';
 
 const HOURS = [
   '00:00','01:00','02:00','03:00','04:00','05:00','06:00','07:00','08:00','09:00','10:00','11:00',
@@ -177,11 +178,11 @@ export default function TournamentRegistration() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!p1Name || !p2Name || !cat) {
-      alert('Introduce el nombre de ambos jugadores y la categoría.');
+      toast('Introduce el nombre de ambos jugadores y la categoría.');
       return;
     }
     if (!p1Phone || !p2Phone) {
-      alert('El teléfono de ambos jugadores es obligatorio.');
+      toast('El teléfono de ambos jugadores es obligatorio.');
       return;
     }
     // Mínimo un correo válido en la pareja para poder enviar la confirmación
@@ -190,13 +191,13 @@ export default function TournamentRegistration() {
     const e1 = (p1Email || '').trim();
     const e2 = (p2Email || '').trim();
     if (!e1 && !e2) {
-      alert('Indica al menos un correo (de J1 o J2). Lo necesitamos para avisaros cuando el club confirme la pareja.');
+      toast('Indica al menos un correo (de J1 o J2). Lo necesitamos para avisaros cuando el club confirme la pareja.');
       return;
     }
-    if (e1 && !emailRe.test(e1)) { alert('El correo del Jugador 1 no es válido.'); return; }
-    if (e2 && !emailRe.test(e2)) { alert('El correo del Jugador 2 no es válido.'); return; }
+    if (e1 && !emailRe.test(e1)) { toast('El correo del Jugador 1 no es válido.', 'error'); return; }
+    if (e2 && !emailRe.test(e2)) { toast('El correo del Jugador 2 no es válido.', 'error'); return; }
     if (giftIsShirt && (!p1Size || !p2Size)) {
-      alert('Indica la talla de camiseta de cada jugador.');
+      toast('Indica la talla de camiseta de cada jugador.');
       return;
     }
     setLoading(true);
@@ -245,7 +246,7 @@ export default function TournamentRegistration() {
       });
 
     if (insError) {
-      alert('Hubo un error al registrarte. Vuelve a intentarlo.');
+      toast('Hubo un error al registrarte. Vuelve a intentarlo.', 'error');
       console.error(insError);
       setLoading(false);
       return;
@@ -260,7 +261,7 @@ export default function TournamentRegistration() {
         return; // el navegador navegará al TPV
       } catch (e) {
         console.error('Error iniciando pago:', e);
-        alert('No se pudo conectar con la pasarela de pago. Tu inscripción quedó como pendiente; el club te indicará cómo pagar.');
+        toast('No se pudo conectar con la pasarela de pago. Tu inscripción quedó como pendiente; el club te indicará cómo pagar.', 'error');
         setSuccess(true);
         setLoading(false);
         return;

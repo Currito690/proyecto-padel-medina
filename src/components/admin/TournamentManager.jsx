@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { toast, confirmDialog } from '../../utils/notify';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -262,8 +263,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return () => supabase.removeChannel(channel);
   }, [publishedId, showAvailability]);
 
-  const handleResetTournament = () => {
-    if (window.confirm('¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.')) {
+  const handleResetTournament = async () => {
+    const ok = await confirmDialog(
+      '¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.',
+      { title: 'Reiniciar torneo', okText: 'Borrar y empezar', danger: true }
+    );
+    if (ok) {
       localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
       setPhase('config');
       setTConfig({ name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, courtStartHours: {}, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 } });
@@ -285,10 +290,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (error) throw error;
       setPublishedId(tournamentKey);
       setDbStatus('open');
-      alert('¡Torneo publicado! Ya aparece en la página pública y puedes enviar el enlace a los jugadores.');
+      toast('¡Torneo publicado! Ya aparece en la página pública y puedes enviar el enlace a los jugadores.', 'success');
     } catch (e) {
       console.error(e);
-      alert('Error al publicar el torneo: ' + (e.message || e));
+      toast('Error al publicar el torneo: ' + (e.message || e));
     }
   };
 
@@ -302,7 +307,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       .eq('tournament_id', publishedId)
       .order('created_at', { ascending: true });
     if (error) {
-      alert('Error al cargar inscripciones: ' + error.message);
+      toast('Error al cargar inscripciones: ' + error.message);
       setLoadingRegs(false);
       return;
     }
@@ -320,7 +325,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const setRegistrationConfirmation = async (reg, action) => {
     if (!reg) return;
     const verb = action === 'confirm' ? 'CONFIRMAR' : 'RECHAZAR';
-    if (!window.confirm(`¿${verb} la pareja "${reg.player1_name} y ${reg.player2_name}" (${reg.category})?\n\nSe enviará un correo a la pareja.`)) return;
+    const ok = await confirmDialog(
+      `¿${verb} la pareja "${reg.player1_name} y ${reg.player2_name}" (${reg.category})?\n\nSe enviará un correo a la pareja.`,
+      { title: action === 'confirm' ? 'Confirmar inscripción' : 'Rechazar inscripción', okText: action === 'confirm' ? 'Confirmar' : 'Rechazar', danger: action === 'reject' }
+    );
+    if (!ok) return;
 
     const newStatus = action === 'confirm' ? 'confirmed' : 'rejected';
     const updates = { confirmation_status: newStatus, confirmed_at: new Date().toISOString() };
@@ -329,7 +338,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       .from('tournament_registrations')
       .update(updates)
       .eq('id', reg.id);
-    if (updErr) { alert('Error al actualizar la inscripción: ' + updErr.message); return; }
+    if (updErr) { toast('Error al actualizar la inscripción: ' + updErr.message); return; }
 
     // Optimistic update local
     setRegsList(prev => prev.map(r => r.id === reg.id ? { ...r, ...updates } : r));
@@ -339,7 +348,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       .map(e => (e || '').trim())
       .filter(Boolean);
     if (emails.length === 0) {
-      alert(`Pareja ${action === 'confirm' ? 'confirmada' : 'rechazada'} en BBDD, pero no había ningún correo guardado y no se ha podido avisar.`);
+      toast(`Pareja ${action === 'confirm' ? 'confirmada' : 'rechazada'} en BBDD, pero no había ningún correo guardado y no se ha podido avisar.`);
       return;
     }
     try {
@@ -354,11 +363,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       });
       if (fnErr || (data && data.error)) {
         console.error('send-tournament-confirmation error', fnErr || data?.error);
-        alert(`Estado guardado, pero el correo no se pudo enviar: ${fnErr?.message || data?.error || 'desconocido'}`);
+        toast(`Estado guardado, pero el correo no se pudo enviar: ${fnErr?.message || data?.error || 'desconocido'}`);
       }
     } catch (e) {
       console.error('invoke error', e);
-      alert(`Estado guardado, pero el correo no se pudo enviar: ${e?.message || e}`);
+      toast(`Estado guardado, pero el correo no se pudo enviar: ${e?.message || e}`);
     }
   };
 
@@ -377,7 +386,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       .from('tournament_registrations')
       .update(updates)
       .eq('id', regId);
-    if (error) { alert('Error: ' + error.message); return; }
+    if (error) { toast('Error: ' + error.message); return; }
     setRegsList(prev => prev.map(r => r.id === regId ? { ...r, ...updates } : r));
   };
 
@@ -391,7 +400,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const downloadRegistrationsCsv = () => {
-    if (regsList.length === 0) { alert('No hay inscripciones que exportar.'); return; }
+    if (regsList.length === 0) { toast('No hay inscripciones que exportar.', 'error'); return; }
     const headers = ['Categoría','Jugador 1','Email 1','Tel 1','Talla 1','Jugador 2','Email 2','Tel 2','Talla 2','Estado pago','Importe','Pagado en','Fecha inscripción'];
     const rows = regsList.map(r => [
       r.category,
@@ -449,19 +458,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
       if (newParticipants.length > 0) {
         setParticipants([...participants, ...newParticipants]);
-        alert(
+        toast(
           `Se han añadido ${newParticipants.length} pareja(s) confirmada(s) desde la web.` +
           (pendingCount > 0 ? `\n\n⚠️ Hay ${pendingCount} pareja(s) pendiente(s) de validar — no entran al cuadro hasta que las confirmes.` : '')
         );
       } else {
-        alert(
+        toast(
           'No hay inscripciones confirmadas nuevas.' +
           (pendingCount > 0 ? `\n\n⚠️ Hay ${pendingCount} pareja(s) pendiente(s) de validar.` : '')
         );
       }
     } catch (e) {
       console.error(e);
-      alert('Error al sincronizar las inscripciones online.');
+      toast('Error al sincronizar las inscripciones online.', 'error');
     }
     setSyncing(false);
   };
@@ -474,10 +483,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         .update({ config })
         .eq('id', publishedId);
       if (error) throw error;
-      alert('Plazo de inscripción actualizado.');
+      toast('Plazo de inscripción actualizado.');
     } catch (e) {
       console.error(e);
-      alert('Error al actualizar el plazo.');
+      toast('Error al actualizar el plazo.', 'error');
     }
   };
 
@@ -485,10 +494,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Independiente de la fecha límite — si está cerrado, la web pública
   // bloquea el formulario aunque el plazo aún no haya pasado.
   const toggleRegistrationClosed = async () => {
-    if (!publishedId) { alert('Publica primero el torneo.'); return; }
+    if (!publishedId) { toast('Publica primero el torneo.'); return; }
     const closing = !tConfig.registrationClosed;
     if (closing) {
-      const ok = window.confirm('¿Cerrar las inscripciones ahora? Los jugadores no podrán apuntarse hasta que vuelvas a abrirlas.');
+      const ok = await confirmDialog(
+        '¿Cerrar las inscripciones ahora? Los jugadores no podrán apuntarse hasta que vuelvas a abrirlas.',
+        { title: 'Cerrar inscripción', okText: 'Cerrar inscripción', danger: true }
+      );
       if (!ok) return;
     }
     try {
@@ -499,16 +511,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         .eq('id', publishedId);
       if (error) throw error;
       setTConfig(newConfig);
-      alert(closing ? '🔒 Inscripciones cerradas.' : '🔓 Inscripciones reabiertas.');
+      toast(closing ? '🔒 Inscripciones cerradas.' : '🔓 Inscripciones reabiertas.');
     } catch (e) {
       console.error(e);
-      alert('Error al actualizar el estado de las inscripciones.');
+      toast('Error al actualizar el estado de las inscripciones.', 'error');
     }
   };
 
   const handlePublishBracket = async () => {
     if (!publishedId) {
-      alert('Primero debes publicar el torneo (Fase 2).');
+      toast('Primero debes publicar el torneo (Fase 2).');
       return;
     }
     // Aviso si el plazo de inscripción aún está abierto: publicar el cuadro
@@ -518,10 +530,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const deadlineMs = new Date(deadlineStr + 'T23:59:59').getTime();
       if (Date.now() < deadlineMs) {
         const fmt = new Date(deadlineStr + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-        const ok = window.confirm(
+        const ok = await confirmDialog(
           `⚠️ El plazo de inscripción todavía está abierto hasta el ${fmt}.\n\n` +
           'Si publicas el cuadro ahora, el enlace público pasará a mostrar el cuadro y se cerrará la posibilidad de inscribirse.\n\n' +
-          '¿Estás seguro de que quieres publicar el cuadro?'
+          '¿Estás seguro de que quieres publicar el cuadro?',
+          { title: 'Publicar cuadro', okText: 'Publicar cuadro', danger: true }
         );
         if (!ok) return;
       }
@@ -538,10 +551,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         .eq('id', publishedId);
       if (error) throw error;
       setTConfig(tConfigWithFlag);
-      alert('¡Cuadro publicado! Los jugadores pueden verlo (incluida la consolación si la has generado) en:\n/torneos/' + publishedId + '/cuadro');
+      toast('¡Cuadro publicado! Los jugadores pueden verlo (incluida la consolación si la has generado) en:\n/torneos/' + publishedId + '/cuadro');
     } catch (e) {
       console.error(e);
-      alert('Error al publicar el cuadro: ' + (e.message || e));
+      toast('Error al publicar el cuadro: ' + (e.message || e));
     }
   };
 
@@ -612,11 +625,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   const generateBracket = () => {
     if (participants.length < 2) {
-      alert("Añade al menos 2 parejas para crear un torneo.");
+      toast("Añade al menos 2 parejas para crear un torneo.");
       return;
     }
     if (!tConfig.startDate || !tConfig.endDate) {
-      alert("Configura las fechas de inicio y fin del torneo antes de generar el cuadro.\n\nVuelve a Configuración y rellena los campos 'Fecha de Inicio' y 'Fecha de Fin'.");
+      toast("Configura las fechas de inicio y fin del torneo antes de generar el cuadro.\n\nVuelve a Configuración y rellena los campos 'Fecha de Inicio' y 'Fecha de Fin'.");
       return;
     }
     try {
@@ -901,7 +914,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
 
     if (Object.keys(newAllRounds).length === 0) {
-      alert('No hay suficientes parejas en ninguna categoría para generar un cuadro. Asegúrate de tener al menos 2 parejas por categoría.');
+      toast('No hay suficientes parejas en ninguna categoría para generar un cuadro. Asegúrate de tener al menos 2 parejas por categoría.', 'error');
       return;
     }
 
@@ -910,7 +923,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setPhase('bracket');
     } catch (err) {
       console.error('generateBracket error:', err);
-      alert('Error al generar el cuadro: ' + (err?.message || String(err)));
+      toast('Error al generar el cuadro: ' + (err?.message || String(err)));
     }
   };
 
@@ -1022,7 +1035,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // que quedaron mal programados con la versión vieja del auto-scheduler.
   const recomputeAllAutoTimes = () => {
     const globalSlots = buildGlobalSlots();
-    if (globalSlots.length === 0) { alert('Configura las fechas del torneo antes de recalcular.'); return; }
+    if (globalSlots.length === 0) { toast('Configura las fechas del torneo antes de recalcular.', 'error'); return; }
     const slotIdx = (s) => globalSlots.indexOf(s);
     const getSlot = (t) => t ? t.split(' - Pista')[0].trim() : null;
 
@@ -1082,7 +1095,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     setRounds(nextMain);
     setConsRounds(nextCons);
-    alert('✅ Horarios recalculados respetando afinidad de jugadores, orden entre rondas y cupo de pistas. Los horarios que tú hayas puesto a mano se respetaron.');
+    toast('✅ Horarios recalculados respetando afinidad de jugadores, orden entre rondas y cupo de pistas. Los horarios que tú hayas puesto a mano se respetaron.', 'success');
   };
 
 
@@ -1473,13 +1486,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const totalPlayed = catRounds.reduce((acc, r) => acc + r.filter(m => m.winner).length, 0);
     const totalMatches = catRounds.reduce((acc, r) => acc + r.length, 0);
     if (totalPlayed < totalMatches) {
-      alert(`La liguilla todavía tiene partidos sin resultado (${totalMatches - totalPlayed} pendientes). Resuélvelos antes de generar las eliminatorias.`);
+      toast(`La liguilla todavía tiene partidos sin resultado (${totalMatches - totalPlayed} pendientes). Resuélvelos antes de generar las eliminatorias.`);
       return;
     }
 
     const qualifyN = parseInt(tConfig.liguillaQualifyPerGroup || 2, 10);
     if (ordered.length < qualifyN) {
-      alert(`No hay suficientes parejas clasificadas (${ordered.length}) para generar las eliminatorias con top ${qualifyN}.`);
+      toast(`No hay suficientes parejas clasificadas (${ordered.length}) para generar las eliminatorias con top ${qualifyN}.`, 'error');
       return;
     }
 
@@ -1532,7 +1545,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
 
     setConsRounds(prev => ({ ...prev, [cat]: koRounds }));
-    alert(`✅ Eliminatorias finales generadas (top ${qualifyN}). Aparecerán como cuadro adicional debajo de la liguilla.`);
+    toast(`✅ Eliminatorias finales generadas (top ${qualifyN}). Aparecerán como cuadro adicional debajo de la liguilla.`, 'success');
   };
 
   const generateConsolation = (cat) => {
@@ -1567,7 +1580,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (consPlayers.length < 2) {
       const catParticipants = participants.filter(p => p.category === cat);
       if (catParticipants.length < 2) {
-        alert(`No hay suficientes participantes en la categoría "${cat}" para generar el cuadro de consolación.`);
+        toast(`No hay suficientes participantes en la categoría "${cat}" para generar el cuadro de consolación.`);
         return;
       }
       // Crear placeholders: "Perdedor P.X" para cada pareja esperada
@@ -1735,7 +1748,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         pdf.save(`Cuadro_${tConfig.name.replace(/\s+/g, '_')}_${safeTitle}.pdf`);
       } catch (err) {
         console.error("Error generating PDF:", err);
-        alert("Hubo un error al generar el PDF.");
+        toast("Hubo un error al generar el PDF.", 'error');
       } finally {
         element.removeAttribute('style');
         setIsExporting(false);
@@ -2761,7 +2774,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   {window.location.host}/torneos/{publishedId}
                 </a>
               </div>
-              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/torneos/${publishedId}`); alert('¡Enlace copiado al portapapeles!'); }} style={{ marginLeft: '0.75rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#334155', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/torneos/${publishedId}`); toast('¡Enlace copiado al portapapeles!', 'success'); }} style={{ marginLeft: '0.75rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#334155', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Copiar
               </button>
             </div>
@@ -2797,10 +2810,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     .update({ config: fullConfig, name: tConfig.name || 'Torneo' })
                     .eq('id', publishedId);
                   if (error) throw error;
-                  alert('✅ Enlace actualizado con la configuración actual (fechas, horarios, categorías, pistas, cuadros).');
+                  toast('✅ Enlace actualizado con la configuración actual (fechas, horarios, categorías, pistas, cuadros).', 'success');
                 } catch (e) {
                   console.error(e);
-                  alert('Error al actualizar el enlace.');
+                  toast('Error al actualizar el enlace.', 'error');
                 }
               }}
               style={{
@@ -3443,8 +3456,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 🏟️ Pistas
               </button>
               <button
-                onClick={() => {
-                  if (window.confirm('¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro.')) {
+                onClick={async () => {
+                  const ok = await confirmDialog(
+                    '¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro.',
+                    { title: 'Reiniciar resultados', okText: 'Reiniciar', danger: true }
+                  );
+                  if (ok) {
                     const resetRounds = (allRounds) =>
                       Object.fromEntries(
                         Object.entries(allRounds).map(([cat, catRounds]) => [
@@ -3470,10 +3487,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 Reiniciar Torneo
               </button>
               <button
-                onClick={() => {
-                  if (window.confirm('¿Volver a sortear el cuadro? Se perderán todos los resultados actuales y se generará un nuevo orden aleatorio con las mismas parejas.')) {
-                    generateBracket();
-                  }
+                onClick={async () => {
+                  const ok = await confirmDialog(
+                    '¿Volver a sortear el cuadro? Se perderán todos los resultados actuales y se generará un nuevo orden aleatorio con las mismas parejas.',
+                    { title: 'Re-sortear cuadro', okText: 'Re-sortear', danger: true }
+                  );
+                  if (ok) generateBracket();
                 }}
                 style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', backgroundColor: 'white', color: '#B45309', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
@@ -3929,7 +3948,7 @@ const TournamentManager = () => {
       .select('id, name, status, config, created_at')
       .single();
     if (error) {
-      alert('Error al crear torneo: ' + error.message);
+      toast('Error al crear torneo: ' + error.message);
       return;
     }
     setTournaments(prev => [{ id: data.id, name: data.name, date: data.created_at, status: data.status, config: data.config || {} }, ...prev]);
@@ -3937,7 +3956,11 @@ const TournamentManager = () => {
   };
 
   const deleteTournament = async (id) => {
-    if (!window.confirm('¿Estás seguro de que quieres eliminar este torneo permanentemente?\n\nTambién se borrarán todas las inscripciones asociadas.')) return;
+    const ok = await confirmDialog(
+      '¿Estás seguro de que quieres eliminar este torneo permanentemente?\n\nTambién se borrarán todas las inscripciones asociadas.',
+      { title: 'Eliminar torneo', okText: 'Eliminar permanentemente', danger: true }
+    );
+    if (!ok) return;
 
     // 1) Borrar inscripciones asociadas primero (por si el FK no tiene ON DELETE CASCADE).
     const { error: regErr } = await supabase
@@ -3946,7 +3969,7 @@ const TournamentManager = () => {
       .eq('tournament_id', id);
     if (regErr) {
       console.warn('Error borrando inscripciones:', regErr);
-      alert('Error al borrar inscripciones: ' + regErr.message);
+      toast('Error al borrar inscripciones: ' + regErr.message);
       return;
     }
 
@@ -3956,12 +3979,12 @@ const TournamentManager = () => {
       .delete({ count: 'exact' })
       .eq('id', id);
     if (error) {
-      alert('Error al eliminar: ' + error.message);
+      toast('Error al eliminar: ' + error.message);
       return;
     }
     if (count === 0) {
       // RLS bloqueó el borrado silenciosamente (no eres admin o no está aplicada la migración).
-      alert('No se pudo eliminar el torneo. Verifica que estás logeado como admin y que la migración RLS está aplicada en Supabase.');
+      toast('No se pudo eliminar el torneo. Verifica que estás logeado como admin y que la migración RLS está aplicada en Supabase.', 'error');
       return;
     }
 
@@ -3996,7 +4019,7 @@ const TournamentManager = () => {
       } catch {}
     }
     if (found.length === 0) {
-      alert('No hay torneos locales pendientes de subir en este dispositivo.');
+      toast('No hay torneos locales pendientes de subir en este dispositivo.', 'error');
       return;
     }
 
@@ -4005,7 +4028,7 @@ const TournamentManager = () => {
       .from('tournaments')
       .select('id, name, config');
     if (exErr) {
-      alert('Error al consultar torneos existentes: ' + exErr.message);
+      toast('Error al consultar torneos existentes: ' + exErr.message);
       return;
     }
     const isDup = (candidate) => (existing || []).some(t =>
@@ -4015,7 +4038,7 @@ const TournamentManager = () => {
 
     const toUpload = found.filter(f => !isDup(f));
     if (toUpload.length === 0) {
-      alert(`Los ${found.length} torneos locales ya están en la base de datos. No se subió nada nuevo.`);
+      toast(`Los ${found.length} torneos locales ya están en la base de datos. No se subió nada nuevo.`);
       return;
     }
 
@@ -4028,11 +4051,11 @@ const TournamentManager = () => {
 
     const { error: insErr } = await supabase.from('tournaments').insert(rows);
     if (insErr) {
-      alert('Error al subir torneos: ' + insErr.message + '\n\nSi ves un error de RLS, aplica la migración 20260422_tournaments_admin_write.sql en Supabase.');
+      toast('Error al subir torneos: ' + insErr.message + '\n\nSi ves un error de RLS, aplica la migración 20260422_tournaments_admin_write.sql en Supabase.');
       return;
     }
 
-    alert(`✅ ${toUpload.length} torneo${toUpload.length === 1 ? '' : 's'} subido${toUpload.length === 1 ? '' : 's'} a la base de datos. Se verá${toUpload.length === 1 ? '' : 'n'} ahora desde cualquier dispositivo.`);
+    toast(`✅ ${toUpload.length} torneo${toUpload.length === 1 ? '' : 's'} subido${toUpload.length === 1 ? '' : 's'} a la base de datos. Se verá${toUpload.length === 1 ? '' : 'n'} ahora desde cualquier dispositivo.`);
     fetchTournaments();
   };
 

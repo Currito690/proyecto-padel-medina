@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
+import { toast, confirmDialog } from '../../utils/notify';
 
 const fmt = (dateStr) => {
   if (!dateStr) return null;
@@ -135,7 +136,7 @@ export default function EventsManager() {
       .from('events').update({ published: !ev.published }).eq('id', ev.id).select().single();
     if (error || !data) {
       console.error('togglePublish error:', error);
-      alert('No se pudo actualizar el evento. Verifica que estás logeado como admin y que la migración RLS de events está aplicada en Supabase.');
+      toast('No se pudo actualizar el evento. Verifica que estás logeado como admin y que la migración RLS de events está aplicada en Supabase.', 'error');
       return;
     }
     setEvents(prev => prev.map(e => e.id === data.id ? data : e));
@@ -151,16 +152,17 @@ export default function EventsManager() {
           url: ev.registration_url || '/perfil',
         },
       });
-      alert('Notificación push enviada a todos los jugadores suscritos.');
+      toast('Notificación push enviada a todos los jugadores suscritos.');
     } catch (err) {
       console.error(err);
-      alert('Error al enviar la notificación.');
+      toast('Error al enviar la notificación.', 'error');
     }
     setNotifying(null);
   };
 
   const deleteEvent = async (evId) => {
-    if (!window.confirm('¿Eliminar este evento? No se puede deshacer.')) return;
+    const ok = await confirmDialog('¿Eliminar este evento? No se puede deshacer.', { title: 'Eliminar evento', okText: 'Eliminar', danger: true });
+    if (!ok) return;
     const ev = events.find(e => e.id === evId);
 
     const { error, count } = await supabase
@@ -168,11 +170,11 @@ export default function EventsManager() {
       .delete({ count: 'exact' })
       .eq('id', evId);
     if (error) {
-      alert('Error al eliminar el evento: ' + error.message);
+      toast('Error al eliminar el evento: ' + error.message);
       return;
     }
     if (count === 0) {
-      alert('No se pudo eliminar el evento. Posiblemente lo creó otra sesión de admin y la política RLS lo bloquea. Aplica la migración 20260422_events_admin_full.sql en Supabase.');
+      toast('No se pudo eliminar el evento. Posiblemente lo creó otra sesión de admin y la política RLS lo bloquea. Aplica la migración 20260422_events_admin_full.sql en Supabase.', 'error');
       return;
     }
 

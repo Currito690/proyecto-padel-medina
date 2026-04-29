@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
+import { toast, confirmDialog } from '../utils/notify';
 
 const PaymentGateway = () => {
   const navigate = useNavigate();
@@ -260,7 +261,7 @@ const PaymentGateway = () => {
       navigate('/mis-reservas?pago=ok');
     } catch (err) {
       console.error('Error al reservar:', err);
-      alert('Error al procesar la reserva: ' + err.message);
+      toast('Error al procesar la reserva: ' + err.message);
       setProcessingClub(false);
     }
   };

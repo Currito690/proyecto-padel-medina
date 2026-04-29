@@ -5,6 +5,7 @@ import TimeSlotList from '../components/booking/TimeSlotList';
 import DateSelector from '../components/booking/DateSelector';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
+import { toast, confirmDialog } from '../utils/notify';
 
 const SCHEDULE_TIMES = [
   '09:00 - 10:30',
@@ -189,7 +190,7 @@ const BookingDashboard = () => {
 
   const handleCourtChange = (courtId) => {
     if (isDateLocked(selectedDate)) {
-      alert(`Las reservas para fechas futuras se abren a las ${siteSettings.slots_release_time}. Hoy puedes reservar normalmente.`);
+      toast(`Las reservas para fechas futuras se abren a las ${siteSettings.slots_release_time}. Hoy puedes reservar normalmente.`);
       return;
     }
     setSelectedCourt(courtId);
@@ -206,7 +207,7 @@ const BookingDashboard = () => {
 
   const handleBook = () => {
     if (isDateLocked(selectedDate)) {
-      alert(`Las reservas para esta fecha se abren a las ${siteSettings.slots_release_time}.`);
+      toast(`Las reservas para esta fecha se abren a las ${siteSettings.slots_release_time}.`);
       return;
     }
     const slot = slots.find(s => s.id === selectedSlot);

@@ -5,6 +5,7 @@ import TournamentManager from '../components/admin/TournamentManager';
 import EventsManager from '../components/admin/EventsManager';
 import FinanceManager from '../components/admin/FinanceManager';
 import DateSelector from '../components/booking/DateSelector';
+import { toast, confirmDialog } from '../utils/notify';
 
 const TIMES = ['09:00 - 10:30', '10:30 - 12:00', '12:00 - 13:30', '16:00 - 17:30', '17:30 - 19:00', '19:00 - 20:30', '20:30 - 22:00'];
 
@@ -38,7 +39,7 @@ const UserRow = ({ u, togglingId, toggleBan, onDeleted, supabase }) => {
       if (data?.error) throw new Error(data.error);
       onDeleted(u.id);
     } catch (err) {
-      alert('Error al eliminar: ' + (err.message || JSON.stringify(err)));
+      toast('Error al eliminar: ' + (err.message || JSON.stringify(err)));
     } finally {
       setDeleting(false);
       setShowConfirmDelete(false);
@@ -130,7 +131,7 @@ const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
     const { error } = await supabase.from('profiles').update({ banned: newBanned }).eq('id', u.id);
     if (error) {
       console.error('Error al actualizar estado del jugador:', error);
-      alert('Error: ' + (error.message || 'No se pudo actualizar. Asegúrate de haber ejecutado la migración SQL en Supabase.'));
+      toast('Error: ' + (error.message || 'No se pudo actualizar. Asegúrate de haber ejecutado la migración SQL en Supabase.'));
     } else {
       setAllUsers(prev => prev.map(p => p.id === u.id ? { ...p, banned: newBanned } : p));
     }
@@ -270,7 +271,7 @@ const AdminDashboard = () => {
     setSavingPaymentCell(null);
     if (error) {
       console.error('Error guardando regla de pago:', error);
-      alert('Error al guardar: ' + error.message);
+      toast('Error al guardar: ' + error.message);
       // Revert
       setPaymentRules(prev => ({
         ...prev,
@@ -290,7 +291,7 @@ const AdminDashboard = () => {
 
     if (resBookings.error) {
       console.error('Error cargando reservas:', resBookings.error);
-      alert('Error cargando reservas de BD: ' + resBookings.error.message);
+      toast('Error cargando reservas de BD: ' + resBookings.error.message);
     }
 
     let bookings = resBookings.data || [];
@@ -458,7 +459,7 @@ const AdminDashboard = () => {
 
     if (actionError) {
       console.error('Action error:', actionError);
-      alert('Error en base de datos: ' + actionError.message + (actionError.details ? ' - ' + actionError.details : ''));
+      toast('Error en base de datos: ' + actionError.message + (actionError.details ? ' - ' + actionError.details : ''));
     }
 
     setActiveSlot(null);
@@ -480,7 +481,7 @@ const AdminDashboard = () => {
       court_id: moveTargetCourtId,
     }).eq('id', moveBooking.id);
     if (error) {
-      alert('Error al mover la reserva: ' + error.message);
+      toast('Error al mover la reserva: ' + error.message);
     } else {
       setMoveBooking(null);
       await loadSlots(selectedDate);
