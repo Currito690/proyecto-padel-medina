@@ -1916,11 +1916,38 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       }));
     };
 
+    const saveSeeds = async () => {
+      // Persiste el estado completo del torneo (incluyendo participants con
+      // sus seeds asignados) a Supabase. Si el torneo aún no está publicado
+      // confiamos solo en el localStorage (que ya se guarda automáticamente
+      // vía useEffect).
+      if (!publishedId) {
+        toast('Cabezas de serie guardados en este dispositivo.', 'success');
+        return;
+      }
+      try {
+        const config = { ...tConfig, rounds, consRounds, participants, phase };
+        const { error } = await supabase.from('tournaments')
+          .update({ config })
+          .eq('id', publishedId);
+        if (error) throw error;
+        toast('🏆 Cabezas de serie guardados.', 'success');
+      } catch (e) {
+        console.error('saveSeeds error', e);
+        toast('Error al guardar cabezas de serie: ' + (e.message || e), 'error');
+      }
+    };
+
     return (
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '1rem' }}>
-        <button onClick={() => setShowSeedsPanel(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0, marginBottom: '1rem' }}>
-          ← Volver al torneo
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button onClick={() => setShowSeedsPanel(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0 }}>
+            ← Volver al torneo
+          </button>
+          <button onClick={saveSeeds} style={{ padding: '0.55rem 1.1rem', borderRadius: '0.55rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', boxShadow: '0 4px 12px rgba(22,163,74,0.18)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            💾 Guardar cabezas de serie
+          </button>
+        </div>
 
         <div style={{ background: 'white', borderRadius: '1.25rem', boxShadow: '0 8px 30px rgba(0,0,0,0.06)', overflow: 'hidden', border: '1px solid #E2E8F0', marginBottom: '1rem' }}>
           <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
@@ -2036,6 +2063,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <p style={{ margin: 0, fontSize: '0.82rem', color: '#92400E', lineHeight: 1.5 }}>
             💡 Al pulsar <strong>Generar Cuadro</strong>, los cabezas de serie se colocarán en posiciones estándar (#1 y #2 en lados opuestos) y serán los que tengan <strong>bye en la primera ronda</strong>.
           </p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          <button onClick={saveSeeds} style={{ padding: '0.7rem 1.5rem', borderRadius: '0.55rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.95rem', cursor: 'pointer', boxShadow: '0 4px 12px rgba(22,163,74,0.18)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            💾 Guardar cabezas de serie
+          </button>
         </div>
       </div>
     );
