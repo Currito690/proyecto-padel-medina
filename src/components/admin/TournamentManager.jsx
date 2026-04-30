@@ -1016,10 +1016,39 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          });
        }
 
-       // Pre-assign slots for rounds 1+ so the full schedule is visible upfront
+       // Pre-assign slots for rounds 1+ so the full schedule is visible upfront.
+       // CRÍTICO: cada partido tiene que ir DESPUÉS de los dos partidos que le dan
+       // jugadores. Si los cuartos acaban a las 21:00, las semifinales no pueden
+       // ponerse a las 18:00 del mismo día. Calculamos earliestIdx = max(idx de
+       // ambos predecesores) + huecos por duración + descanso, y filtramos
+       // candidates por ese mínimo.
+       const slotIdxOf = (s) => globalSlots.indexOf(s);
+       const getSlotPart = (t) => t ? t.split(' - Pista')[0].trim() : null;
+       const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
+       const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
+       const gapSlots = Math.ceil((durationMin + restMin) / 60);
+       const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
+
        for (let r = 1; r < catRounds.length; r++) {
-         catRounds[r].forEach(match => {
-           const slot = pickSlot(globalSlots, slotUsage, tConfig.courtsCount);
+         catRounds[r].forEach((match, mIdx) => {
+           // Predecesores: en el caso general son catRounds[r-1][mIdx*2] y [mIdx*2+1].
+           // Con ronda previa (catRounds[0] = previa), los partidos de catRounds[1]
+           // reciben ganadores via `nextSlot`, no por la regla m/2 estándar.
+           let predTimes = [];
+           if (r === 1 && hasPrelim) {
+             const targetSlots = [mIdx * 2, mIdx * 2 + 1];
+             predTimes = catRounds[0]
+               .filter(p => p.isPrelim && targetSlots.includes(p.nextSlot))
+               .map(p => p.time);
+           } else {
+             const predA = catRounds[r - 1][mIdx * 2];
+             const predB = catRounds[r - 1][mIdx * 2 + 1];
+             predTimes = [predA?.time, predB?.time];
+           }
+           const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
+           const earliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
+           const candidates = earliestIdx > 0 ? globalSlots.slice(earliestIdx) : globalSlots;
+           const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
            slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
            match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
          });
@@ -1188,6 +1217,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
         const gapSlots = Math.ceil((durationMin + restMin) / 60);
         const allowedCourts = getAllowedCourts(cat, isCons);
+        const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
         for (let r = 0; r < catRounds.length; r++) {
           catRounds[r].forEach((m, mIdx) => {
             if (m.timeManual && m.time) return; // respeta lo puesto por admin
@@ -1195,11 +1225,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
             let earliestIdx = 0;
             if (r > 0) {
-              const predA = catRounds[r - 1][mIdx * 2];
-              const predB = catRounds[r - 1][mIdx * 2 + 1];
-              const aIdx = slotIdx(getSlot(predA?.time));
-              const bIdx = slotIdx(getSlot(predB?.time));
-              earliestIdx = Math.max(aIdx, bIdx) + gapSlots;
+              // Con ronda previa, los partidos de R1 reciben ganadores via
+              // `nextSlot` (no por la regla m/2). Sin previa o para r >= 2,
+              // mapping estándar.
+              let predTimes = [];
+              if (r === 1 && hasPrelim) {
+                const targetSlots = [mIdx * 2, mIdx * 2 + 1];
+                predTimes = catRounds[0]
+                  .filter(p => p.isPrelim && targetSlots.includes(p.nextSlot))
+                  .map(p => p.time);
+              } else {
+                const predA = catRounds[r - 1][mIdx * 2];
+                const predB = catRounds[r - 1][mIdx * 2 + 1];
+                predTimes = [predA?.time, predB?.time];
+              }
+              const indices = predTimes.map(t => slotIdx(getSlot(t))).filter(i => i >= 0);
+              earliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
             }
 
             const occupied = buildOccupiedCourts(nextMain, nextCons);
