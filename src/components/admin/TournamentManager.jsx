@@ -1522,13 +1522,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const newLoser = newWinner.id === match.p1.id ? match.p2 : match.p1;
     if (!newLoser || newLoser.isBye) return;
 
+    // hasPrelim = R0 son partidos isPrelim → la primera ronda real del cuadro
+    // principal es R1 (cuartos en el caso típico). En ese caso TODOS los
+    // perdedores de R1 van a consolación porque para ellos R1 es su primer
+    // partido jugado del torneo.
+    const r0 = (rounds[cat] || [])[0] || [];
+    const hasPrelim = !!r0[0]?.isPrelim;
+
     let sendToCons = false;
     if (match.round === 0) {
       sendToCons = true;
     } else if (match.round === 1) {
-      const r0 = (rounds[cat] || [])[0] || [];
-      const r0Match = r0.find(r0m => r0m.p1?.id === newLoser.id || r0m.p2?.id === newLoser.id);
-      if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) sendToCons = true;
+      if (hasPrelim) {
+        sendToCons = true;
+      } else {
+        const r0Match = r0.find(r0m => r0m.p1?.id === newLoser.id || r0m.p2?.id === newLoser.id);
+        if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) sendToCons = true;
+      }
     }
     if (!sendToCons) return;
 
@@ -1717,7 +1727,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const generateConsolation = (cat) => {
     const catRounds = rounds[cat];
     if (!catRounds || catRounds.length < 1) return;
-    
+
+    // Detección de ronda previa: si R0 son partidos isPrelim, la primera
+    // ronda "real" del cuadro principal es R1 (los cuartos en este caso),
+    // así que los perdedores de R1 también van a consolación porque para
+    // ellos R1 ES su primera (y única) ronda jugada.
+    const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
+
     // Perdedores puros de R0
     const losersR0 = catRounds[0].map(m => {
        if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) {
@@ -1726,11 +1742,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        return null;
     }).filter(Boolean);
 
-    // Perdedores de R1 cuyo oponente (o él) tuvo BYE en R0
+    // Perdedores de R1.
+    // · Sin previa: solo si su oponente (o él mismo) tuvo BYE en R0
+    //   (porque solo entonces R1 es su primer partido).
+    // · Con previa: TODOS los perdedores de R1 van a consolación, porque
+    //   las parejas de cuartos no jugaron la previa.
     const losersR1WithBye = (catRounds[1] || []).map(m => {
        if (m.winner && m.p1 && m.p2) {
           const loser = m.winner.id === m.p1.id ? m.p2 : m.p1;
           if (loser.isBye) return null;
+          if (hasPrelim) return loser;
           const r0Match = catRounds[0].find(r0m => r0m.p1?.id === loser.id || r0m.p2?.id === loser.id);
           if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) {
              return loser;
