@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
+import { toTitleCase, normalizeForCompare } from '../utils/names';
 
 const HOURS = [
   '00:00','01:00','02:00','03:00','04:00','05:00','06:00','07:00','08:00','09:00','10:00','11:00',
@@ -206,6 +207,33 @@ export default function TournamentRegistration() {
       toast('Indica la talla de camiseta de cada jugador.');
       return;
     }
+    // Normalización a Title Case para evitar variantes "JUAN" / "juan" / "Juan"
+    // que ensucian el cuadro y rompen la detección de duplicados.
+    const p1NameNorm = toTitleCase(p1Name);
+    const p2NameNorm = toTitleCase(p2Name);
+    const finalCategory = dualCategory && cat2 && cat2 !== cat ? `${cat} + ${cat2}` : cat;
+
+    // Comprobamos duplicado contra la BBDD: la misma pareja no puede inscribirse
+    // dos veces en la misma categoría (orden de jugadores indistinto).
+    try {
+      const { data: existingRegs } = await supabase
+        .from('tournament_registrations')
+        .select('player1_name, player2_name, category')
+        .eq('tournament_id', id);
+      const incoming = [normalizeForCompare(p1NameNorm), normalizeForCompare(p2NameNorm)].sort().join('|');
+      const dup = (existingRegs || []).some(r => {
+        if (r.category !== finalCategory) return false;
+        const existing = [normalizeForCompare(r.player1_name), normalizeForCompare(r.player2_name)].sort().join('|');
+        return existing === incoming;
+      });
+      if (dup) {
+        toast('Esta pareja ya está inscrita en esa categoría. Si crees que es un error, contacta con el club.', 'error');
+        return;
+      }
+    } catch (chkErr) {
+      console.warn('No se pudo verificar duplicados antes de inscribir:', chkErr);
+    }
+
     submitLockRef.current = true;
     setLoading(true);
 
@@ -237,11 +265,11 @@ export default function TournamentRegistration() {
       .insert({
         id: registrationId,
         tournament_id: id,
-        category: dualCategory && cat2 && cat2 !== cat ? `${cat} + ${cat2}` : cat,
-        player1_name: p1Name,
+        category: finalCategory,
+        player1_name: p1NameNorm,
         player1_email: p1Email,
         player1_phone: p1Phone,
-        player2_name: p2Name,
+        player2_name: p2NameNorm,
         player2_email: p2Email,
         player2_phone: p2Phone,
         unavailable_times: unavailableTimes,
@@ -265,9 +293,9 @@ export default function TournamentRegistration() {
     supabase.functions.invoke('send-registration-admin-notify', {
       body: {
         tournamentName: tournament?.name || 'Torneo',
-        category: dualCategory && cat2 && cat2 !== cat ? `${cat} + ${cat2}` : cat,
-        player1Name: p1Name,
-        player2Name: p2Name,
+        category: finalCategory,
+        player1Name: p1NameNorm,
+        player2Name: p2NameNorm,
         player1Email: p1Email || null,
         player2Email: p2Email || null,
         player1Phone: p1Phone || null,

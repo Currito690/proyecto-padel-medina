@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { toast, confirmDialog } from '../../utils/notify';
+import { toTitleCase, normalizeForCompare } from '../../utils/names';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -632,10 +633,21 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     const catList = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
     const assignedCat = newCoupleCategory || catList[0] || 'General';
+    const normalizedName = toTitleCase(newCouple);
+
+    // Detección de duplicados en la misma categoría (case/accent insensitive).
+    const dup = participants.some(p =>
+      p.category === assignedCat &&
+      normalizeForCompare(p.name) === normalizeForCompare(normalizedName)
+    );
+    if (dup) {
+      toast(`Ya hay una pareja "${normalizedName}" en la categoría ${assignedCat}.`, 'error');
+      return;
+    }
 
     setParticipants([...participants, {
       id: Date.now().toString(),
-      name: newCouple.trim(),
+      name: normalizedName,
       category: assignedCat,
       prefRules: [],
       prefNames: []
@@ -710,6 +722,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
     if (!tConfig.startDate || !tConfig.endDate) {
       toast("Configura las fechas de inicio y fin del torneo antes de generar el cuadro.\n\nVuelve a Configuración y rellena los campos 'Fecha de Inicio' y 'Fecha de Fin'.");
+      return;
+    }
+    // Validación de duplicados por categoría: misma pareja repetida rompe el cuadro.
+    const dupsByCat = {};
+    participants.forEach(part => {
+      const key = `${part.category}::${normalizeForCompare(part.name)}`;
+      dupsByCat[key] = (dupsByCat[key] || 0) + 1;
+    });
+    const dupes = Object.entries(dupsByCat).filter(([, n]) => n > 1).map(([k]) => k.split('::')[1]);
+    if (dupes.length > 0) {
+      toast(`Hay parejas duplicadas en la misma categoría: ${[...new Set(dupes)].join(', ')}. Elimina una de cada antes de generar el cuadro.`, 'error');
       return;
     }
     try {
@@ -4132,37 +4155,53 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         );
                       })}
 
-                      {(!match.p1?.isBye && !match.p2?.isBye) && !isExporting && (
-                        <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
-                          {editingScoreId === match.id ? (
-                            <>
-                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                                <input
-                                  autoFocus
-                                  type="text"
-                                  placeholder="Ej: 6-4 3-6 7-5"
-                                  value={scoreInput}
-                                  onChange={e => setScoreInput(e.target.value)}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, bracket.isCons, cat);
-                                    if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); }
-                                  }}
-                                  style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 }}
-                                />
-                                <button onClick={() => handleScoreSubmit(match, scoreInput, bracket.isCons, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✓</button>
-                                <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✕</button>
+                      {(!match.p1?.isBye && !match.p2?.isBye) && !isExporting && (() => {
+                        // El botón "Introducir resultado" solo tiene sentido cuando AMBAS
+                        // parejas son reales y conocidas. Si alguna sigue siendo un placeholder
+                        // o aún no se ha resuelto la ronda anterior, mostramos un aviso
+                        // y deshabilitamos la edición.
+                        const ready = match.p1 && match.p2 && !match.p1.isPlaceholder && !match.p2.isPlaceholder;
+                        if (!ready) {
+                          return (
+                            <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
+                              <div style={{ width: '100%', textAlign: 'center', color: '#94A3B8', fontSize: '0.7rem', fontWeight: 700, padding: '0.35rem 0.5rem', background: '#F8FAFC', borderRadius: '0.4rem' }}>
+                                ⏳ Esperando ganador de la ronda anterior
                               </div>
-                              <p style={{ margin: '0.3rem 0 0', fontSize: '0.62rem', color: '#16A34A', fontWeight: 600, textAlign: 'center' }}>
-                                ✨ El ganador se detecta automáticamente al guardar
-                              </p>
-                            </>
-                          ) : (
-                            <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: '0.35rem 0.5rem' }}>
-                              {match.score ? `✎ ${match.score}` : '+ Introducir resultado (auto-detecta ganador)'}
-                            </button>
-                          )}
-                        </div>
-                      )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
+                            {editingScoreId === match.id ? (
+                              <>
+                                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                  <input
+                                    autoFocus
+                                    type="text"
+                                    placeholder="Ej: 6-4 3-6 7-5"
+                                    value={scoreInput}
+                                    onChange={e => setScoreInput(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, bracket.isCons, cat);
+                                      if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); }
+                                    }}
+                                    style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 }}
+                                  />
+                                  <button onClick={() => handleScoreSubmit(match, scoreInput, bracket.isCons, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✓</button>
+                                  <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✕</button>
+                                </div>
+                                <p style={{ margin: '0.3rem 0 0', fontSize: '0.62rem', color: '#16A34A', fontWeight: 600, textAlign: 'center' }}>
+                                  ✨ El ganador se detecta automáticamente al guardar
+                                </p>
+                              </>
+                            ) : (
+                              <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: '0.35rem 0.5rem' }}>
+                                {match.score ? `✎ ${match.score}` : '+ Introducir resultado (auto-detecta ganador)'}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                   </div>
