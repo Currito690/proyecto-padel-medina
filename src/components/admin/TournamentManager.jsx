@@ -1661,9 +1661,27 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
 
     let p = [...consPlayers];
-    for (let i = p.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [p[i], p[j]] = [p[j], p[i]];
+    // Si son placeholders (Perdedor P.1, P.2, ...) usamos un orden
+    // determinista intercalando mitades para que el emparejamiento de la
+    // primera ronda sea P1 vs P3, P2 vs P4 (en vez de P1 vs P2, P3 vs P4),
+    // que visualmente es más coherente con un cuadro estándar.
+    // Para perdedores reales mantenemos el sorteo aleatorio de toda la vida.
+    const allPlaceholders = p.length > 0 && p.every(x => x?.isPlaceholder);
+    if (allPlaceholders) {
+      const half = Math.ceil(p.length / 2);
+      const firstHalf = p.slice(0, half);
+      const secondHalf = p.slice(half);
+      const interleaved = [];
+      for (let i = 0; i < half; i++) {
+        interleaved.push(firstHalf[i]);
+        if (secondHalf[i] !== undefined) interleaved.push(secondHalf[i]);
+      }
+      p = interleaved;
+    } else {
+      for (let i = p.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [p[i], p[j]] = [p[j], p[i]];
+      }
     }
 
     let pow = 2;
