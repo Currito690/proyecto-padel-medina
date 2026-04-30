@@ -1019,9 +1019,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // Pre-assign slots for rounds 1+ so the full schedule is visible upfront.
        // CRÍTICO: cada partido tiene que ir DESPUÉS de los dos partidos que le dan
        // jugadores. Si los cuartos acaban a las 21:00, las semifinales no pueden
-       // ponerse a las 18:00 del mismo día. Calculamos earliestIdx = max(idx de
-       // ambos predecesores) + huecos por duración + descanso, y filtramos
-       // candidates por ese mínimo.
+       // ponerse a las 18:00 del mismo día. Para partidos cuyos predecesores son
+       // BYEs (sin time), aplicamos una "barrera de ronda": no pueden ir antes
+       // que el último partido real de la ronda anterior.
        const slotIdxOf = (s) => globalSlots.indexOf(s);
        const getSlotPart = (t) => t ? t.split(' - Pista')[0].trim() : null;
        const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
@@ -1030,6 +1030,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
 
        for (let r = 1; r < catRounds.length; r++) {
+         // Barrera de ronda: máx idx de cualquier match real en r-1.
+         const barrierIndices = catRounds[r - 1]
+           .map(m => slotIdxOf(getSlotPart(m.time)))
+           .filter(i => i >= 0);
+         const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
+
          catRounds[r].forEach((match, mIdx) => {
            // Predecesores: en el caso general son catRounds[r-1][mIdx*2] y [mIdx*2+1].
            // Con ronda previa (catRounds[0] = previa), los partidos de catRounds[1]
@@ -1046,7 +1052,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              predTimes = [predA?.time, predB?.time];
            }
            const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
-           const earliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
+           const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
+           // Stricter de los dos: si los predecesores específicos no están programados
+           // (caso byes), igualmente esperamos a que TODOS los matches reales de r-1
+           // hayan terminado.
+           const earliestIdx = Math.max(predEarliestIdx, barrierIdx);
            const candidates = earliestIdx > 0 ? globalSlots.slice(earliestIdx) : globalSlots;
            const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
            slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
@@ -1219,6 +1229,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const allowedCourts = getAllowedCourts(cat, isCons);
         const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
         for (let r = 0; r < catRounds.length; r++) {
+          // Barrera de ronda: ningún match de r puede ir antes que el último
+          // match real de r-1 (también si los predecesores específicos son byes
+          // sin time, cosa habitual en consolación).
+          const barrierIndices = r > 0
+            ? catRounds[r - 1].map(pm => slotIdx(getSlot(pm.time))).filter(i => i >= 0)
+            : [];
+          const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
+
           catRounds[r].forEach((m, mIdx) => {
             if (m.timeManual && m.time) return; // respeta lo puesto por admin
             if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye) return;
@@ -1240,7 +1258,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 predTimes = [predA?.time, predB?.time];
               }
               const indices = predTimes.map(t => slotIdx(getSlot(t))).filter(i => i >= 0);
-              earliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
+              const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
+              earliestIdx = Math.max(predEarliestIdx, barrierIdx);
             }
 
             const occupied = buildOccupiedCourts(nextMain, nextCons);
@@ -1892,6 +1911,38 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            match.time = `${assignedTime} - Pista ${Math.min(slotUsage[assignedTime], tConfig.courtsCount)}`;
         }
       });
+    }
+
+    // Pre-scheduling de R1+ con la misma lógica que generateBracket: cada match
+    // tiene que ir DESPUÉS de sus predecesores Y de cualquier match real de la
+    // ronda anterior (barrera de ronda). Sin esto, los semis con dos byes se
+    // programan al primer hueco libre y la final puede caer antes que un semi.
+    {
+      const slotIdxOf = (s) => globalSlots.indexOf(s);
+      const getSlotPart = (t) => t ? t.split(' - Pista')[0].trim() : null;
+      const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
+      const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
+      const gapSlots = Math.ceil((durationMin + restMin) / 60);
+
+      for (let r = 1; r < newRounds.length; r++) {
+        const barrierIndices = newRounds[r - 1]
+          .map(m => slotIdxOf(getSlotPart(m.time)))
+          .filter(i => i >= 0);
+        const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
+
+        newRounds[r].forEach((match, mIdx) => {
+          const predA = newRounds[r - 1][mIdx * 2];
+          const predB = newRounds[r - 1][mIdx * 2 + 1];
+          const predTimes = [predA?.time, predB?.time];
+          const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
+          const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
+          const earliestIdx = Math.max(predEarliestIdx, barrierIdx);
+          const candidates = earliestIdx > 0 ? globalSlots.slice(earliestIdx) : globalSlots;
+          const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
+          slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
+          match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
+        });
+      }
     }
 
     if (newRounds[0]) {
