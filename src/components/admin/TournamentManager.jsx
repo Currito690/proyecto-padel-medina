@@ -3550,7 +3550,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <div>
                 <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🏟️ Pistas del torneo</h3>
                 <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
-                  Cambios efectivos al pulsar "🔄 Recalcular horarios". Los partidos ya jugados no se mueven.
+                  Ajusta pistas, horarios y a qué categorías se asigna cada una. Pulsa "Aplicar y recalcular horarios" para llevar los cambios al cuadro actual. Los horarios manuales no se mueven.
                 </p>
               </div>
               <button onClick={() => setShowCourtsEditor(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
@@ -3602,6 +3602,63 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   ))}
                 </div>
               </div>
+              {/* ── Pistas asignadas por categoría (mismo control que en config) ── */}
+              <div style={{ padding: '0.85rem', backgroundColor: '#F0F9FF', borderRadius: '0.65rem', border: '1px solid #BAE6FD' }}>
+                <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.82rem', fontWeight: 800, color: '#075985' }}>
+                  🏟️ Pistas asignadas por categoría
+                </label>
+                <p style={{ margin: '0 0 0.55rem', fontSize: '0.72rem', color: '#0369A1', lineHeight: 1.5 }}>
+                  Marca en qué pistas se podrá programar cada categoría (cuadro principal y consolación). Si no marcas ninguna, el auto-programador podrá usar cualquier pista del torneo. Pulsa "Aplicar y recalcular horarios" para aplicarlo al cuadro actual.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(cat => {
+                    const courtsAvailable = Array.from({ length: tConfig.courtsCount || 1 }, (_, i) => i + 1);
+                    const mainAllowed = tConfig.courtsByCategory?.[cat]?.main || [];
+                    const consAllowed = tConfig.courtsByCategory?.[cat]?.cons || [];
+                    const toggleCourt = (kind, courtN) => {
+                      const current = tConfig.courtsByCategory?.[cat]?.[kind] || [];
+                      const next = current.includes(courtN) ? current.filter(c => c !== courtN) : [...current, courtN].sort((a, b) => a - b);
+                      setTConfig({
+                        ...tConfig,
+                        courtsByCategory: {
+                          ...tConfig.courtsByCategory,
+                          [cat]: { ...(tConfig.courtsByCategory?.[cat] || {}), [kind]: next },
+                        },
+                      });
+                    };
+                    const renderRow = (kind, label, allowed) => (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <span style={{ minWidth: '85px', fontSize: '0.74rem', color: '#0F172A', fontWeight: 700 }}>{label}</span>
+                        {courtsAvailable.map(c => {
+                          const checked = allowed.includes(c);
+                          return (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => toggleCourt(kind, c)}
+                              style={{ padding: '0.25rem 0.5rem', borderRadius: '0.35rem', border: `1.5px solid ${checked ? '#0EA5E9' : '#CBD5E1'}`, background: checked ? '#0EA5E9' : 'white', color: checked ? 'white' : '#475569', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}
+                              title={getCourtName(c)}
+                            >
+                              {getCourtName(c)}
+                            </button>
+                          );
+                        })}
+                        {allowed.length === 0 && (
+                          <span style={{ fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>(todas)</span>
+                        )}
+                      </div>
+                    );
+                    return (
+                      <div key={cat} style={{ padding: '0.55rem 0.7rem', borderRadius: '0.45rem', background: 'white', border: '1px solid #BAE6FD', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                        <span style={{ fontWeight: 800, fontSize: '0.78rem', color: '#075985' }}>{cat}</span>
+                        {renderRow('main', 'Principal', mainAllowed)}
+                        {renderRow('cons', 'Consolación', consAllowed)}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
                 <button onClick={() => setShowCourtsEditor(false)} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
                   Cerrar
