@@ -129,8 +129,31 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const subject = `📋 Nueva inscripción — ${payload.tournamentName} (${payload.category})`;
+    // Asunto sin emojis (algunos filtros — Hotmail incluido — penalizan
+    // emojis en el subject de remitentes con poca reputación).
+    const subject = `Nueva inscripcion - ${payload.tournamentName} (${payload.category})`;
     const html = buildHtml(payload);
+    // Versión texto plano. Resend la usa para multipart/alternative, lo que
+    // mejora bastante la deliverability en clientes corporativos / Hotmail.
+    const textLines = [
+      `Nueva inscripcion en ${payload.tournamentName}`,
+      `Categoria: ${payload.category}`,
+      '',
+      `Pareja: ${payload.player1Name} y ${payload.player2Name}`,
+      payload.player1Phone ? `Tel J1: ${payload.player1Phone}` : '',
+      payload.player1Email ? `Email J1: ${payload.player1Email}` : '',
+      payload.player2Phone ? `Tel J2: ${payload.player2Phone}` : '',
+      payload.player2Email ? `Email J2: ${payload.player2Email}` : '',
+      (payload.player1ShirtSize || payload.player2ShirtSize)
+        ? `Tallas: J1 ${payload.player1ShirtSize || '-'} / J2 ${payload.player2ShirtSize || '-'}`
+        : '',
+      payload.paymentStatus && payload.paymentStatus !== 'not_required'
+        ? `Pago: ${payload.paymentStatus}${payload.amount ? ` (${payload.amount}EUR)` : ''}`
+        : '',
+      '',
+      'Recuerda confirmar la pareja en el panel de admin para que entre en el cuadro.',
+      payload.registrationsUrl ? payload.registrationsUrl : '',
+    ].filter(Boolean).join('\n');
 
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -138,7 +161,20 @@ Deno.serve(async (req: Request) => {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ from: FROM_EMAIL, reply_to: REPLY_TO, to: [ADMIN_EMAIL], subject, html }),
+      body: JSON.stringify({
+        from: FROM_EMAIL,
+        reply_to: REPLY_TO,
+        to: [ADMIN_EMAIL],
+        subject,
+        html,
+        text: textLines,
+        // Headers transaccionales: ayudan a que Hotmail/Outlook entiendan
+        // que es notificación legítima y no marketing.
+        headers: {
+          'X-Entity-Ref-ID': `padelmedina-reg-${Date.now()}`,
+          'X-Auto-Response-Suppress': 'OOF, AutoReply',
+        },
+      }),
     });
     const result = await res.json();
     if (!res.ok) {
