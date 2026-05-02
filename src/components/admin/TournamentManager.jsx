@@ -2191,7 +2191,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
         {allCats.map(cat => {
           // Parejas de esa categoría (solo cuentan si están en participants)
-          const catParts = participants.filter(p => (p.category || '').split(' + ').includes(cat) || p.category === cat);
+          // Acepta tanto el separador nuevo " y " como el antiguo " + " para no
+          // romper inscripciones legacy guardadas antes del cambio de formato.
+          const catParts = participants.filter(p => {
+            const raw = p.category || '';
+            const parts = raw.split(/\s+y\s+|\s+\+\s+/);
+            return parts.includes(cat) || p.category === cat;
+          });
           const n = catParts.length;
           if (n < 2) {
             return (
