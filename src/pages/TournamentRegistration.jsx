@@ -182,15 +182,29 @@ export default function TournamentRegistration() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // Anti doble-click — corta cualquier reentrada antes de validar.
+    // Anti doble-click DURO: lock + setLoading se ponen ANTES de cualquier
+    // operación asíncrona (incluido el check de duplicados). Antes el lock
+    // se ponía después del await del SELECT de duplicados, y entre el click
+    // y ese momento entraban hasta 7 inscripciones en el mismo segundo.
     if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    setLoading(true);
+
+    // Helper: si una validación síncrona o el check de duplicados rechaza
+    // la inscripción, hay que liberar el lock para que el usuario pueda
+    // corregir y volver a darle.
+    const releaseLock = () => {
+      submitLockRef.current = false;
+      setLoading(false);
+    };
+
     if (!p1Name || !p2Name || !cat) {
       toast('Introduce el nombre de ambos jugadores y la categoría.');
-      return;
+      return releaseLock();
     }
     if (!p1Phone || !p2Phone) {
       toast('El teléfono de ambos jugadores es obligatorio.');
-      return;
+      return releaseLock();
     }
     // Mínimo un correo válido en la pareja para poder enviar la confirmación
     // del admin. Da igual si es del J1 o del J2; si están los dos, mejor.
@@ -199,13 +213,13 @@ export default function TournamentRegistration() {
     const e2 = (p2Email || '').trim();
     if (!e1 && !e2) {
       toast('Indica al menos un correo (de J1 o J2). Lo necesitamos para avisaros cuando el club confirme la pareja.');
-      return;
+      return releaseLock();
     }
-    if (e1 && !emailRe.test(e1)) { toast('El correo del Jugador 1 no es válido.', 'error'); return; }
-    if (e2 && !emailRe.test(e2)) { toast('El correo del Jugador 2 no es válido.', 'error'); return; }
+    if (e1 && !emailRe.test(e1)) { toast('El correo del Jugador 1 no es válido.', 'error'); return releaseLock(); }
+    if (e2 && !emailRe.test(e2)) { toast('El correo del Jugador 2 no es válido.', 'error'); return releaseLock(); }
     if (giftIsShirt && (!p1Size || !p2Size)) {
       toast('Indica la talla de camiseta de cada jugador.');
-      return;
+      return releaseLock();
     }
     // Normalización a Title Case para evitar variantes "JUAN" / "juan" / "Juan"
     // que ensucian el cuadro y rompen la detección de duplicados.
@@ -228,14 +242,11 @@ export default function TournamentRegistration() {
       });
       if (dup) {
         toast('Esta pareja ya está inscrita en esa categoría. Si crees que es un error, contacta con el club.', 'error');
-        return;
+        return releaseLock();
       }
     } catch (chkErr) {
       console.warn('No se pudo verificar duplicados antes de inscribir:', chkErr);
     }
-
-    submitLockRef.current = true;
-    setLoading(true);
 
     // Convert grid to unavailable_times array
     const byDay = {};
