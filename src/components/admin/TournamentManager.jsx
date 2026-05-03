@@ -118,6 +118,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showRegistrations, setShowRegistrations] = useState(false);
   const [regsList, setRegsList] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
+  // Filtro de categoría en el panel de inscripciones. 'Todas' muestra todo.
+  const [regsCatFilter, setRegsCatFilter] = useState('Todas');
   // QR del enlace público de inscripción (data URL para mostrar y descargar)
   const [qrDataUrl, setQrDataUrl] = useState('');
   // Panel de cabezas de serie (selector por categoría)
@@ -2317,9 +2319,32 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const thCell = { textAlign: 'left', padding: '0.55rem 0.75rem', fontSize: '0.7rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' };
     const tdCell = { padding: '0.6rem 0.75rem', verticalAlign: 'top', color: '#0F172A' };
     const SHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+
+    // Descompone "Masculino D y Masculino C" (o legacy "... + ...") en
+    // ['Masculino D', 'Masculino C']. Si la categoría es simple devuelve [c].
+    const splitCats = (raw) => {
+      if (!raw) return [];
+      return raw.split(/\s+y\s+|\s+\+\s+/).map(s => s.trim()).filter(Boolean);
+    };
+    // Lista de categorías para el desplegable (de la config del torneo).
+    const tournamentCategories = (tConfig.categories || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    // Filtro: una pareja aparece si juega en la categoría seleccionada
+    // (soporta dobles categorías). 'Todas' no filtra nada.
+    const matchesFilter = (cat) =>
+      regsCatFilter === 'Todas' || splitCats(cat).some(c =>
+        c.toLowerCase() === regsCatFilter.toLowerCase()
+      );
+
+    const filteredRegs = regsList.filter(r => matchesFilter(r.category));
+
     // Parejas añadidas manualmente: están en `participants` pero no provienen
     // de una inscripción online (no figuran en regsList por id).
     const manualParticipants = participants.filter(p => !regsList.some(r => r.id === p.id));
+    const filteredManual = manualParticipants.filter(p => matchesFilter(p.category));
     // Recuento de tallas combinando online + manuales.
     const shirtTally = (() => {
       const counts = Object.fromEntries(SHIRT_SIZES.map(s => [s, 0]));
@@ -2379,6 +2404,21 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               )}
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              {tournamentCategories.length > 1 && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', color: '#475569', fontWeight: 700 }}>
+                  Categoría:
+                  <select
+                    value={regsCatFilter}
+                    onChange={e => setRegsCatFilter(e.target.value)}
+                    style={{ padding: '0.45rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#0F172A', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
+                  >
+                    <option value="Todas">Todas</option>
+                    {tournamentCategories.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button onClick={loadRegistrations} disabled={loadingRegs} style={{ padding: '0.55rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
                 {loadingRegs ? 'Cargando…' : '🔄 Refrescar'}
               </button>
@@ -2388,9 +2428,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             </div>
           </div>
           <div style={{ padding: '1rem 1.5rem 1.5rem' }}>
-            {regsList.length === 0 ? (
+            {regsCatFilter !== 'Todas' && (
+              <p style={{ margin: '0 0 0.75rem', fontSize: '0.78rem', color: '#1E40AF', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '0.5rem', padding: '0.5rem 0.75rem' }}>
+                Filtrando por <strong>{regsCatFilter}</strong>: {filteredRegs.length} pareja{filteredRegs.length === 1 ? '' : 's'} online
+                {filteredManual.length > 0 && ` · ${filteredManual.length} manual${filteredManual.length === 1 ? '' : 'es'}`}.
+                Las parejas inscritas en doble categoría aparecen en cada una.
+              </p>
+            )}
+            {filteredRegs.length === 0 ? (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.95rem' }}>
-                {loadingRegs ? 'Cargando…' : 'Aún no hay inscripciones online.'}
+                {loadingRegs ? 'Cargando…' : (regsCatFilter === 'Todas' ? 'Aún no hay inscripciones online.' : `No hay inscripciones online en ${regsCatFilter}.`)}
               </div>
             ) : (
               <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
@@ -2407,7 +2454,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {regsList.map(r => (
+                    {filteredRegs.map(r => (
                       <tr key={`reg-${r.id}`} style={{ borderTop: '1px solid #F1F5F9' }}>
                         <td style={tdCell}>
                           <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player1_name}</div>
@@ -2497,12 +2544,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </div>
             )}
 
-            {manualParticipants.length > 0 && (
-              <div style={{ marginTop: regsList.length === 0 ? '0' : '1.5rem' }}>
+            {filteredManual.length > 0 && (
+              <div style={{ marginTop: filteredRegs.length === 0 ? '0' : '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
                   <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#0F172A' }}>✋ Parejas añadidas manualmente</h3>
                   <span style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 600 }}>
-                    {manualParticipants.length} pareja{manualParticipants.length === 1 ? '' : 's'}
+                    {filteredManual.length} pareja{filteredManual.length === 1 ? '' : 's'}
                   </span>
                 </div>
                 {tConfig.gift === 'shirt' && (
@@ -2521,7 +2568,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {manualParticipants.map(p => (
+                      {filteredManual.map(p => (
                         <tr key={`man-${p.id}`} style={{ borderTop: '1px solid #F1F5F9' }}>
                           <td style={tdCell}>
                             <div style={{ fontWeight: 700, color: '#0F172A' }}>{p.name}</div>
