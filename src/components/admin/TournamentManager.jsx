@@ -126,6 +126,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showSeedsPanel, setShowSeedsPanel] = useState(false);
   // Editor de pistas durante el torneo (panel modal)
   const [showCourtsEditor, setShowCourtsEditor] = useState(false);
+  // Modal pre-generación: deja al admin elegir/confirmar el formato
+  // (eliminatoria, liguilla, liguilla+KO) por cada categoría antes de
+  // generar el cuadro. Estado pickerFormats es la copia editable que se
+  // aplicará a tConfig.formatByCategory al pulsar "Generar".
+  const [showFormatPicker, setShowFormatPicker] = useState(false);
+  const [pickerFormats, setPickerFormats] = useState({});
 
   // Genera el QR del enlace público cada vez que cambia publishedId.
   // Usa la lib qrcode local — no depende de servicios externos.
@@ -274,7 +280,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (ok) {
       localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
       setPhase('config');
-      setTConfig({ name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, courtStartHours: {}, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 } });
+      setTConfig({ name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', registrationDeadlineTime: '23:59', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, courtStartHours: {}, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 } });
       setParticipants([]);
       setRounds({});
       setConsRounds({});
@@ -539,10 +545,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Aviso si el plazo de inscripción aún está abierto: publicar el cuadro
     // antes de tiempo bloquea inscripciones que aún podrían llegar.
     const deadlineStr = tConfig.registrationDeadline;
+    const deadlineTime = tConfig.registrationDeadlineTime || '23:59';
     if (!wasPublished && deadlineStr) {
-      const deadlineMs = new Date(deadlineStr + 'T23:59:59').getTime();
+      const deadlineMs = new Date(`${deadlineStr}T${deadlineTime}:00`).getTime();
       if (Date.now() < deadlineMs) {
-        const fmt = new Date(deadlineStr + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+        const fmtDay = new Date(deadlineStr + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+        const fmt = `${fmtDay} a las ${deadlineTime}`;
         const ok = await confirmDialog(
           `⚠️ El plazo de inscripción todavía está abierto hasta el ${fmt}.\n\n` +
           'Si publicas el cuadro ahora, el enlace público pasará a mostrar el cuadro y se cerrará la posibilidad de inscribirse.\n\n' +
@@ -717,7 +725,41 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
-  const generateBracket = () => {
+  // Abre el modal pre-generación con los formatos actuales pre-seleccionados.
+  // Permite al admin confirmar/cambiar el formato por categoría antes de
+  // disparar la generación, sin tener que volver a la pantalla de Config.
+  const openFormatPicker = () => {
+    if (participants.length < 2) {
+      toast('Añade al menos 2 parejas para crear un torneo.');
+      return;
+    }
+    if (!tConfig.startDate || !tConfig.endDate) {
+      toast("Configura las fechas de inicio y fin del torneo antes de generar el cuadro.\n\nVuelve a Configuración y rellena los campos 'Fecha de Inicio' y 'Fecha de Fin'.");
+      return;
+    }
+    const cats = (tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean);
+    const initial = {};
+    cats.forEach(c => {
+      initial[c] = tConfig.formatByCategory?.[c] || 'eliminatoria';
+    });
+    setPickerFormats(initial);
+    setShowFormatPicker(true);
+  };
+
+  // Aplica los formatos elegidos a tConfig y dispara la generación. La
+  // generación regenera rounds/consRounds (es lo que hace generateBracket
+  // de toda la vida) — no toca el resto de la config (fechas, pistas,
+  // cabezas de serie, parejas, ni los horarios manuales que estaban en
+  // matches que sigan existiendo si la pareja sigue en el cuadro).
+  const confirmFormatPicker = () => {
+    const newFormats = { ...(tConfig.formatByCategory || {}), ...pickerFormats };
+    setTConfig(prev => ({ ...prev, formatByCategory: newFormats }));
+    setShowFormatPicker(false);
+    // Pequeño delay para que el setState se aplique antes de generar
+    setTimeout(() => generateBracket(newFormats), 50);
+  };
+
+  const generateBracket = (overrideFormats) => {
     if (participants.length < 2) {
       toast("Añade al menos 2 parejas para crear un torneo.");
       return;
@@ -823,7 +865,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        let catParts = normalizedParticipants.filter(exp => exp.category === cat);
        if (catParts.length < 2) return;
 
-       const format = tConfig.formatByCategory?.[cat] || 'eliminatoria';
+       // overrideFormats viene del modal de "Generar Cuadro" — lo aplicamos
+       // aquí porque el setState de tConfig todavía puede no haberse aplicado.
+       const format = overrideFormats?.[cat] || tConfig.formatByCategory?.[cat] || 'eliminatoria';
 
        if (format === 'liguilla') {
          // Round-robin: circle method
@@ -2712,8 +2756,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
             <div>
               <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Plazo de Inscripción</label>
-              <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#0F172A', cursor: 'pointer', boxSizing: 'border-box' }} />
-              <p style={{ margin: '0.3rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>Fecha límite para inscripciones online. Los jugadores no podrán inscribirse después de este día.</p>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ flex: '2 1 180px', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#0F172A', cursor: 'pointer', boxSizing: 'border-box' }} />
+                <input type="time" value={tConfig.registrationDeadlineTime || '23:59'} onChange={e => setTConfig({...tConfig, registrationDeadlineTime: e.target.value})} style={{ flex: '1 1 110px', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#0F172A', cursor: 'pointer', boxSizing: 'border-box' }} />
+              </div>
+              <p style={{ margin: '0.3rem 0 0', fontSize: '0.75rem', color: '#64748B' }}>Fecha y hora límite para inscripciones online. Por defecto cierra a las 23:59 del día elegido.</p>
             </div>
 
             <div className="tm-time-row">
@@ -3303,6 +3350,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Plazo de Inscripción Online</p>
           <div className="tm-deadline-row">
             <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'white', boxSizing: 'border-box' }} />
+            <input type="time" value={tConfig.registrationDeadlineTime || '23:59'} onChange={e => setTConfig({...tConfig, registrationDeadlineTime: e.target.value})} style={{ padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'white', boxSizing: 'border-box' }} />
             {publishedId ? (
               <button onClick={handleUpdateDeadline} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Guardar plazo
@@ -3363,9 +3411,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 <span style={{ color: '#94A3B8', fontWeight: 400, marginLeft: '0.5rem' }}>(total: {participants.length})</span>
               </h4>
               <button
-                onClick={generateBracket}
+                onClick={openFormatPicker}
                 disabled={participants.length < 2}
-                title={participants.length < 2 ? 'Añade al menos 2 parejas para generar el cuadro' : 'Genera el cuadro de eliminatoria/liguilla con las parejas inscritas'}
+                title={participants.length < 2 ? 'Añade al menos 2 parejas para generar el cuadro' : 'Elige el formato por categoría y genera el cuadro'}
                 style={{ padding: '0.5rem 0.95rem', borderRadius: '0.5rem', border: 'none', backgroundColor: participants.length < 2 ? '#CBD5E1' : '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.78rem', cursor: participants.length < 2 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}
               >
                 🎲 Generar Cuadro
@@ -3625,8 +3673,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
           <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
 
-          <button 
-            onClick={generateBracket}
+          <button
+            onClick={openFormatPicker}
             style={{ width: '100%', padding: '1rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 800, fontSize: '1.05rem', cursor: 'pointer', opacity: participants.length < 2 ? 0.5 : 1 }}
           >
             Sortear y Generar Cuadro
@@ -3776,6 +3824,76 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </div>
         );
       })()}
+
+      {/* ── Modal pre-generación: elegir formato por categoría ── */}
+      {showFormatPicker && (
+        <div onClick={() => setShowFormatPicker(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🎲 Formato por categoría</h3>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
+                  Elige el formato de cada categoría antes de generar el cuadro. El resto de la configuración (fechas, pistas, parejas, cabezas de serie) se conserva.
+                </p>
+              </div>
+              <button onClick={() => setShowFormatPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+            </div>
+            <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {(tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean).map(cat => {
+                const partsInCat = participants.filter(p => p.category === cat).length;
+                return (
+                  <div key={cat} style={{ padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: '120px' }}>
+                      <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0F172A' }}>{cat}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.15rem' }}>{partsInCat} pareja{partsInCat === 1 ? '' : 's'}</div>
+                    </div>
+                    <select
+                      value={pickerFormats[cat] || 'eliminatoria'}
+                      onChange={e => setPickerFormats(prev => ({ ...prev, [cat]: e.target.value }))}
+                      style={{ flex: '0 1 240px', minWidth: '180px', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', fontWeight: 600, color: '#0F172A', background: 'white', cursor: 'pointer' }}
+                    >
+                      <option value="eliminatoria">Eliminatoria (cuadro)</option>
+                      <option value="liguilla">Liguilla (todos contra todos)</option>
+                      <option value="liguilla_ko">Liguilla + eliminatorias finales</option>
+                    </select>
+                  </div>
+                );
+              })}
+
+              {Object.values(pickerFormats).some(f => f === 'liguilla_ko') && (
+                <div style={{ marginTop: '0.25rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                  <p style={{ margin: '0 0 0.4rem', fontSize: '0.72rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Liguilla + KO — clasifican</p>
+                  <select
+                    value={tConfig.liguillaQualifyPerGroup ?? 2}
+                    onChange={e => setTConfig({ ...tConfig, liguillaQualifyPerGroup: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.82rem', backgroundColor: 'white', cursor: 'pointer' }}
+                  >
+                    <option value={2}>Top 2 (semifinales)</option>
+                    <option value={4}>Top 4 (cuartos)</option>
+                    <option value={8}>Top 8 (octavos)</option>
+                  </select>
+                </div>
+              )}
+
+              {(rounds && Object.keys(rounds).length > 0) && (
+                <div style={{ marginTop: '0.5rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#991B1B', lineHeight: 1.5 }}>
+                    ⚠️ <strong>Ya hay un cuadro generado.</strong> Al pulsar "Generar" se regenerará desde cero — se perderán los resultados y los horarios manuales del cuadro actual. La configuración del torneo (fechas, pistas, cabezas de serie, parejas inscritas) se conserva.
+                  </p>
+                </div>
+              )}
+            </div>
+            <div style={{ padding: '0.85rem 1.5rem', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button onClick={() => setShowFormatPicker(false)} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button onClick={confirmFormatPicker} style={{ padding: '0.6rem 1.2rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer' }}>
+                🎲 Generar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Editor de pistas durante el torneo ── */}
       {showCourtsEditor && (
@@ -3940,6 +4058,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <div className="tm-deadline-row">
             <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#92400E', whiteSpace: 'nowrap' }}>Plazo inscripción:</span>
             <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #FDE68A', fontSize: '0.8rem', cursor: 'pointer', backgroundColor: '#FFFBEB', boxSizing: 'border-box' }} />
+            <input type="time" value={tConfig.registrationDeadlineTime || '23:59'} onChange={e => setTConfig({...tConfig, registrationDeadlineTime: e.target.value})} style={{ padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #FDE68A', fontSize: '0.8rem', cursor: 'pointer', backgroundColor: '#FFFBEB', boxSizing: 'border-box' }} />
             {publishedId && (
               <button onClick={handleUpdateDeadline} style={{ padding: '0.3rem 0.75rem', borderRadius: '0.4rem', backgroundColor: '#D97706', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Guardar

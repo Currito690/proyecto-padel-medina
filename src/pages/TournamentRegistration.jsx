@@ -111,7 +111,8 @@ export default function TournamentRegistration() {
     // Si el admin cerró las inscripciones manualmente, ignoramos la fecha.
     if (tournament?.config?.registrationClosed) return true;
     if (!tournament?.config?.registrationDeadline) return false;
-    return new Date() > new Date(tournament.config.registrationDeadline + 'T23:59:59');
+    const time = tournament.config.registrationDeadlineTime || '23:59';
+    return new Date() > new Date(`${tournament.config.registrationDeadline}T${time}:00`);
   })();
 
   const getHoursForDay = (day) => {
@@ -467,7 +468,9 @@ export default function TournamentRegistration() {
           )}
           {tournament.config.registrationDeadline && (
             <p style={{ margin: '0.5rem 0 0', color: deadlinePassed ? '#DC2626' : '#92400E', fontWeight: 600, fontSize: '0.82rem', backgroundColor: deadlinePassed ? '#FEE2E2' : '#FFFBEB', display: 'inline-block', padding: '0.3rem 0.75rem', borderRadius: '2rem' }}>
-              Plazo: {fmtDateDisplay(tournament.config.registrationDeadline)}{deadlinePassed ? ' · CERRADO' : ''}
+              Plazo: {fmtDateDisplay(tournament.config.registrationDeadline)}
+              {tournament.config.registrationDeadlineTime && tournament.config.registrationDeadlineTime !== '23:59' ? ` a las ${tournament.config.registrationDeadlineTime}` : ''}
+              {deadlinePassed ? ' · CERRADO' : ''}
             </p>
           )}
           {!deadlinePassed && (

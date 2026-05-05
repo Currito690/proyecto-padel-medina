@@ -90,7 +90,8 @@ const BookingDashboard = () => {
           // Cierre manual del admin tiene prioridad sobre la fecha
           if (t.config?.registrationClosed === true) return false;
           if (t.config?.registrationDeadline) {
-            const ms = new Date(t.config.registrationDeadline + 'T23:59:59').getTime();
+            const time = t.config.registrationDeadlineTime || '23:59';
+            const ms = new Date(`${t.config.registrationDeadline}T${time}:00`).getTime();
             if (now > ms) return false;
           }
           return true;

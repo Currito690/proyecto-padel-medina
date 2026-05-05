@@ -61,7 +61,8 @@ const Tournaments = () => {
 
   const deadlinePassed = (t) => {
     if (!t.config?.registrationDeadline) return false;
-    return new Date() > new Date(t.config.registrationDeadline + 'T23:59:59');
+    const time = t.config.registrationDeadlineTime || '23:59';
+    return new Date() > new Date(`${t.config.registrationDeadline}T${time}:00`);
   };
 
   const isOpen = (t) => t.status === 'open' || t.status == null;
