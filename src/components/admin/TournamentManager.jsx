@@ -803,7 +803,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         if (h >= 0 && h < HOURS.length) globalSlots.push(`${dateLabel} ${HOURS[h]}`);
       }
     });
-    
+    // Colchón de 14 días tras el endDate: si el torneo se queda corto de
+    // slots para todos los partidos, las horas "extendidas" siguen estando en
+    // globalSlots y las comparaciones de orden temporal funcionan. Sin esto
+    // la final podía caer al primer slot libre del día 1.
+    if (tConfig.endDate) {
+      const endDate = new Date(tConfig.endDate + 'T12:00:00');
+      for (let i = 1; i <= 14; i++) {
+        const d = new Date(endDate);
+        d.setDate(endDate.getDate() + i);
+        const label = fmtDateLabel(d);
+        for (let h = sHourIdx; h < eHourIdx; h++) {
+          if (h >= 0 && h < HOURS.length) globalSlots.push(`${label} ${HOURS[h]}`);
+        }
+      }
+    }
+
     // Diccionario para registrar cuántos partidos hay en cada hora
     let slotUsage = {};
     globalSlots.forEach(s => slotUsage[s] = 0);
@@ -1068,18 +1083,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // ponerse a las 18:00 del mismo día. Para partidos cuyos predecesores son
        // BYEs (sin time), aplicamos una "barrera de ronda": no pueden ir antes
        // que el último partido real de la ronda anterior.
-       const slotIdxOf = (s) => globalSlots.indexOf(s);
        const getSlotPart = (t) => t ? t.split(' - Pista')[0].trim() : null;
+       // slotMinutes convierte un slot ('13/05 16:00') a minutos absolutos para
+       // comparar fechas/horas SIN depender de globalSlots.indexOf, que falla
+       // si el slot está fuera del rango oficial del torneo (extension de pickSlot).
+       const slotMinutes = (s) => {
+         if (!s) return -1;
+         const parts = s.split(' ');
+         if (parts.length !== 2) return -1;
+         const [d, m] = parts[0].split('/').map(Number);
+         const [h, mi] = parts[1].split(':').map(Number);
+         if (!Number.isFinite(d) || !Number.isFinite(m) || !Number.isFinite(h)) return -1;
+         return ((m - 1) * 31 + (d - 1)) * 24 * 60 + h * 60 + (mi || 0);
+       };
        const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
        const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
        const gapSlots = Math.ceil((durationMin + restMin) / 60);
+       const gapMinutes = gapSlots * 60;
        const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
 
-       // computeEarliestIdx: índice mínimo permitido para un partido de ronda r,
-       // partido mIdx, dada la lista actual de catRounds. Combina:
+       // computeEarliestMinutes: timestamp mínimo permitido (en minutos absolutos)
+       // para un partido de ronda r, partido mIdx. Combina:
        //   - predecesores específicos (con previa: nextSlot routing; sino m/2)
        //   - barrera de ronda: max time de cualquier partido real en r-1
-       const computeEarliestIdx = (r, mIdx) => {
+       const computeEarliestMinutes = (r, mIdx) => {
          if (r === 0) return 0;
          let predTimes = [];
          if (r === 1 && hasPrelim) {
@@ -1092,44 +1119,95 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const predB = catRounds[r - 1][mIdx * 2 + 1];
            predTimes = [predA?.time, predB?.time];
          }
-         const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
-         const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
-         const barrierIndices = catRounds[r - 1]
-           .map(m => slotIdxOf(getSlotPart(m.time)))
-           .filter(i => i >= 0);
-         const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
-         return Math.max(predEarliestIdx, barrierIdx);
+         const minutes = predTimes.map(t => slotMinutes(getSlotPart(t))).filter(m => m >= 0);
+         const predEarliest = minutes.length > 0 ? Math.max(...minutes) + gapMinutes : 0;
+         const barrierMinutes = catRounds[r - 1]
+           .map(m => slotMinutes(getSlotPart(m.time)))
+           .filter(m => m >= 0);
+         const barrier = barrierMinutes.length > 0 ? Math.max(...barrierMinutes) + gapMinutes : 0;
+         return Math.max(predEarliest, barrier);
        };
 
-       // PASS 1: Pre-asigna slots a R1+ respetando earliestIdx.
+       // pickSlotAfter: respeta earliestMinutes Y la afinidad horaria de los
+       // jugadores (preferred). Si tienen huecos preferidos disponibles los usa;
+       // si no, se cae al primer hueco posible. NUNCA antes de earliestMinutes.
+       const pickSlotAfter = (earliestMinutes, courts, preferred = null) => {
+         const getCapacity = (slot) => {
+           const hourPart = slot.split(' ')[1];
+           return getAvailableCourtsForHour(hourPart, courts, tConfig.courtStartHours);
+         };
+         const tryList = (list) => {
+           for (const s of list) {
+             if (slotMinutes(s) < earliestMinutes) continue;
+             if ((slotUsage[s] ?? 0) < getCapacity(s)) return s;
+           }
+           return null;
+         };
+         // 1. Slots preferidos (afinidad horaria de los jugadores)
+         if (preferred && preferred.length > 0) {
+           const f = tryList(preferred);
+           if (f) return f;
+         }
+         // 2. Cualquier slot oficial del torneo
+         const f2 = tryList(globalSlots);
+         if (f2) return f2;
+         // 3. Extender a horas posteriores / días posteriores
+         const lastSlot = globalSlots[globalSlots.length - 1];
+         if (lastSlot) {
+           const [lastDateLabel, lastHour] = lastSlot.split(' ');
+           const lastHourIdx = HOURS.indexOf(lastHour);
+           for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
+             const s = `${lastDateLabel} ${HOURS[h]}`;
+             if (slotMinutes(s) < earliestMinutes) continue;
+             if ((slotUsage[s] ?? 0) < getCapacity(s)) return s;
+           }
+           const [ld, lm] = lastDateLabel.split('/').map(Number);
+           const lastDateObj = new Date(new Date().getFullYear(), lm - 1, ld);
+           for (let extra = 1; extra <= 60; extra++) {
+             const next = new Date(lastDateObj);
+             next.setDate(lastDateObj.getDate() + extra);
+             const nextLabel = fmtDateLabel(next);
+             for (let h = 0; h < HOURS.length; h++) {
+               const s = `${nextLabel} ${HOURS[h]}`;
+               if (slotMinutes(s) < earliestMinutes) continue;
+               if ((slotUsage[s] ?? 0) < getCapacity(s)) return s;
+             }
+           }
+         }
+         return lastSlot || 'Sin horario';
+       };
+
+       // PASS 1: Pre-asigna slots a R1+ respetando earliestMinutes + afinidad
+       // horaria si los dos jugadores son conocidos (cuartos con seeds, etc.).
        for (let r = 1; r < catRounds.length; r++) {
          catRounds[r].forEach((match, mIdx) => {
-           const earliestIdx = computeEarliestIdx(r, mIdx);
-           const candidates = earliestIdx > 0 ? globalSlots.slice(earliestIdx) : globalSlots;
-           const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
+           const earliestMinutes = computeEarliestMinutes(r, mIdx);
+           // Afinidad: solo si ambos jugadores son reales (sin placeholder/bye)
+           let preferred = null;
+           if (match.p1?.finalSlots && match.p2?.finalSlots && !match.p1.isBye && !match.p2.isBye && !match.p1.isPlaceholder && !match.p2.isPlaceholder && !match.p1.isPrelimPlaceholder && !match.p2.isPrelimPlaceholder) {
+             const common = match.p1.finalSlots.filter(s => match.p2.finalSlots.includes(s));
+             if (common.length > 0) preferred = common;
+           }
+           const slot = pickSlotAfter(earliestMinutes, tConfig.courtsCount, preferred);
            slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
            match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
          });
        }
 
        // PASS 2: Validación. Recorre las rondas otra vez y arregla cualquier
-       // violación que haya quedado (caso de byes, placeholders, o cualquier
-       // edge case del PASS 1). Si match.time < earliestIdx, lo reasigna.
-       // Hacemos hasta 3 iteraciones porque arreglar un partido puede crear
-       // nuevas violaciones aguas abajo (semi se mueve → final también debe).
+       // violación que haya quedado. Hasta 3 iteraciones porque arreglar un
+       // partido puede crear nuevas violaciones aguas abajo.
        for (let pass = 0; pass < 3; pass++) {
          let fixed = 0;
          for (let r = 1; r < catRounds.length; r++) {
            catRounds[r].forEach((match, mIdx) => {
              if (!match.time) return;
-             const earliestIdx = computeEarliestIdx(r, mIdx);
-             const curIdx = slotIdxOf(getSlotPart(match.time));
-             if (curIdx >= 0 && curIdx < earliestIdx) {
-               // Liberamos el slot viejo y reasignamos
+             const earliestMinutes = computeEarliestMinutes(r, mIdx);
+             const curMinutes = slotMinutes(getSlotPart(match.time));
+             if (curMinutes >= 0 && curMinutes < earliestMinutes) {
                const oldSlot = getSlotPart(match.time);
                if (slotUsage[oldSlot] > 0) slotUsage[oldSlot]--;
-               const candidates = globalSlots.slice(earliestIdx);
-               const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
+               const slot = pickSlotAfter(earliestMinutes, tConfig.courtsCount);
                slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
                match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
                fixed++;
@@ -1273,10 +1351,26 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // horaria + orden entre rondas + cupo de pistas. Útil para reparar brackets
   // que quedaron mal programados con la versión vieja del auto-scheduler.
   const recomputeAllAutoTimes = () => {
-    const globalSlots = buildGlobalSlots();
+    // extraDays=14: incluimos 14 días de colchón después del endDate para
+    // que cualquier hora "extendida" siga estando en globalSlots y los
+    // comparadores de orden temporal (slotIdx) funcionen correctamente.
+    const globalSlots = buildGlobalSlots(14);
     if (globalSlots.length === 0) { toast('Configura las fechas del torneo antes de recalcular.', 'error'); return; }
-    const slotIdx = (s) => globalSlots.indexOf(s);
     const getSlot = (t) => t ? t.split(' - Pista')[0].trim() : null;
+    // slotMinutes: ya no usamos slotIdx. Convertimos cada slot a minutos
+    // absolutos para comparar tiempos correctamente incluso si el slot está
+    // FUERA de globalSlots (caso típico cuando el scheduler extiende a días
+    // posteriores al endDate del torneo).
+    const slotMinutesGlobal = (s) => {
+      if (!s) return -1;
+      const parts = s.split(' ');
+      if (parts.length !== 2) return -1;
+      const [d, m] = parts[0].split('/').map(Number);
+      const [h, mi] = parts[1].split(':').map(Number);
+      if (!Number.isFinite(d) || !Number.isFinite(m) || !Number.isFinite(h)) return -1;
+      return ((m - 1) * 31 + (d - 1)) * 24 * 60 + h * 60 + (mi || 0);
+    };
+    const slotIdx = (s) => globalSlots.indexOf(s);
 
     // Clonar todo y limpiar times auto-asignados; respetar los manuales.
     const cloneCatRounds = (obj) => Object.fromEntries(
@@ -1471,7 +1565,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (nextRoundIdx < nextRounds.length) {
         const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
         if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye && !nextMatch.time) {
-          const globalSlots = buildGlobalSlots();
+          const globalSlots = buildGlobalSlots(14);
           const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
           const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
           const slotUsage = buildSlotUsage(globalSlots, updatedMain, updatedCons);
@@ -1583,18 +1677,35 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         || tryList(globalSlots);
   };
 
-  // Helper: compute globalSlots from tConfig
-  const buildGlobalSlots = () => {
+  // Helper: compute globalSlots from tConfig.
+  // extraDays > 0 añade días después del endDate con horario startHour..endHour.
+  // CRÍTICO para los schedulers: si un match acaba "extendido" más allá del
+  // endDate (porque el torneo se queda corto de slots), su hora tiene que
+  // estar en globalSlots para que las comparaciones de orden temporal
+  // funcionen. 14 días de colchón es suficiente para cualquier torneo realista.
+  const buildGlobalSlots = (extraDays = 0) => {
     const sHourIdx = HOURS.indexOf(tConfig.startHour);
     const eHourIdx = HOURS.indexOf(tConfig.endHour);
     const firstDayHourIdx = tConfig.firstDayStartHour ? HOURS.indexOf(tConfig.firstDayStartHour) : sHourIdx;
     const slots = [];
-    getActiveDates(tConfig.startDate, tConfig.endDate).forEach((dateLabel, idx) => {
+    const activeDates = getActiveDates(tConfig.startDate, tConfig.endDate);
+    activeDates.forEach((dateLabel, idx) => {
       const actualStart = idx === 0 ? firstDayHourIdx : sHourIdx;
       for (let h = actualStart; h < eHourIdx; h++) {
         if (h >= 0 && h < HOURS.length) slots.push(`${dateLabel} ${HOURS[h]}`);
       }
     });
+    if (extraDays > 0 && tConfig.endDate) {
+      const endDate = new Date(tConfig.endDate + 'T12:00:00');
+      for (let i = 1; i <= extraDays; i++) {
+        const d = new Date(endDate);
+        d.setDate(endDate.getDate() + i);
+        const label = fmtDateLabel(d);
+        for (let h = sHourIdx; h < eHourIdx; h++) {
+          if (h >= 0 && h < HOURS.length) slots.push(`${label} ${HOURS[h]}`);
+        }
+      }
+    }
     return slots;
   };
 
@@ -1727,7 +1838,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (nextRoundIdx < nextRounds.length) {
       const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
       if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye) {
-        const globalSlots = buildGlobalSlots();
+        const globalSlots = buildGlobalSlots(14);
         const slotIdx = (s) => globalSlots.indexOf(s);
         const getSlotFromMatch = (m) => m?.time ? m.time.split(' - Pista')[0].trim() : null;
         const predA = nextRounds[match.round][nextMatchIdx * 2];
@@ -1972,8 +2083,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const newRounds = [];
 
     // Use shared helpers to get globalSlots and reconstruct full slotUsage
-    // (accounting for ALL matches in ALL categories and existing consolation)
-    const globalSlots = buildGlobalSlots();
+    // (accounting for ALL matches in ALL categories and existing consolation).
+    // 14 días extra para que las horas extendidas más allá del endDate sigan
+    // dentro de globalSlots y los comparadores de orden temporal funcionen.
+    const globalSlots = buildGlobalSlots(14);
     // Include the consolation bracket being generated in the snapshot
     // (consRounds doesn't have this cat yet, but we pass what we have)
     const slotUsage = buildSlotUsage(globalSlots, rounds, consRounds);
