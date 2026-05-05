@@ -3684,6 +3684,77 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </button>
         </div>
       </div>
+
+      {/* Modal de elección de formato — debe renderizarse aquí (fase setup)
+          porque es donde están los botones que lo abren. */}
+      {showFormatPicker && (
+        <div onClick={() => setShowFormatPicker(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🎲 Formato por categoría</h3>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
+                  Elige el formato de cada categoría antes de generar el cuadro. El resto de la configuración (fechas, pistas, parejas, cabezas de serie) se conserva.
+                </p>
+              </div>
+              <button onClick={() => setShowFormatPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+            </div>
+            <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {(tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean).map(cat => {
+                const partsInCat = participants.filter(p => p.category === cat).length;
+                return (
+                  <div key={cat} style={{ padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: '120px' }}>
+                      <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0F172A' }}>{cat}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.15rem' }}>{partsInCat} pareja{partsInCat === 1 ? '' : 's'}</div>
+                    </div>
+                    <select
+                      value={pickerFormats[cat] || 'eliminatoria'}
+                      onChange={e => setPickerFormats(prev => ({ ...prev, [cat]: e.target.value }))}
+                      style={{ flex: '0 1 240px', minWidth: '180px', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', fontWeight: 600, color: '#0F172A', background: 'white', cursor: 'pointer' }}
+                    >
+                      <option value="eliminatoria">Eliminatoria (cuadro)</option>
+                      <option value="liguilla">Liguilla (todos contra todos)</option>
+                      <option value="liguilla_ko">Liguilla + eliminatorias finales</option>
+                    </select>
+                  </div>
+                );
+              })}
+
+              {Object.values(pickerFormats).some(f => f === 'liguilla_ko') && (
+                <div style={{ marginTop: '0.25rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                  <p style={{ margin: '0 0 0.4rem', fontSize: '0.72rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Liguilla + KO — clasifican</p>
+                  <select
+                    value={tConfig.liguillaQualifyPerGroup ?? 2}
+                    onChange={e => setTConfig({ ...tConfig, liguillaQualifyPerGroup: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.82rem', backgroundColor: 'white', cursor: 'pointer' }}
+                  >
+                    <option value={2}>Top 2 (semifinales)</option>
+                    <option value={4}>Top 4 (cuartos)</option>
+                    <option value={8}>Top 8 (octavos)</option>
+                  </select>
+                </div>
+              )}
+
+              {(rounds && Object.keys(rounds).length > 0) && (
+                <div style={{ marginTop: '0.5rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#991B1B', lineHeight: 1.5 }}>
+                    ⚠️ <strong>Ya hay un cuadro generado.</strong> Al pulsar "Generar" se regenerará desde cero — se perderán los resultados y los horarios manuales del cuadro actual. La configuración del torneo (fechas, pistas, cabezas de serie, parejas inscritas) se conserva.
+                  </p>
+                </div>
+              )}
+            </div>
+            <div style={{ padding: '0.85rem 1.5rem', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button onClick={() => setShowFormatPicker(false)} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button onClick={confirmFormatPicker} style={{ padding: '0.6rem 1.2rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer' }}>
+                🎲 Generar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
      </div>
     );
   }
@@ -3824,76 +3895,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </div>
         );
       })()}
-
-      {/* ── Modal pre-generación: elegir formato por categoría ── */}
-      {showFormatPicker && (
-        <div onClick={() => setShowFormatPicker(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🎲 Formato por categoría</h3>
-                <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
-                  Elige el formato de cada categoría antes de generar el cuadro. El resto de la configuración (fechas, pistas, parejas, cabezas de serie) se conserva.
-                </p>
-              </div>
-              <button onClick={() => setShowFormatPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
-            </div>
-            <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {(tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean).map(cat => {
-                const partsInCat = participants.filter(p => p.category === cat).length;
-                return (
-                  <div key={cat} style={{ padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: '120px' }}>
-                      <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0F172A' }}>{cat}</div>
-                      <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.15rem' }}>{partsInCat} pareja{partsInCat === 1 ? '' : 's'}</div>
-                    </div>
-                    <select
-                      value={pickerFormats[cat] || 'eliminatoria'}
-                      onChange={e => setPickerFormats(prev => ({ ...prev, [cat]: e.target.value }))}
-                      style={{ flex: '0 1 240px', minWidth: '180px', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', fontWeight: 600, color: '#0F172A', background: 'white', cursor: 'pointer' }}
-                    >
-                      <option value="eliminatoria">Eliminatoria (cuadro)</option>
-                      <option value="liguilla">Liguilla (todos contra todos)</option>
-                      <option value="liguilla_ko">Liguilla + eliminatorias finales</option>
-                    </select>
-                  </div>
-                );
-              })}
-
-              {Object.values(pickerFormats).some(f => f === 'liguilla_ko') && (
-                <div style={{ marginTop: '0.25rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
-                  <p style={{ margin: '0 0 0.4rem', fontSize: '0.72rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Liguilla + KO — clasifican</p>
-                  <select
-                    value={tConfig.liguillaQualifyPerGroup ?? 2}
-                    onChange={e => setTConfig({ ...tConfig, liguillaQualifyPerGroup: parseInt(e.target.value) })}
-                    style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', fontSize: '0.82rem', backgroundColor: 'white', cursor: 'pointer' }}
-                  >
-                    <option value={2}>Top 2 (semifinales)</option>
-                    <option value={4}>Top 4 (cuartos)</option>
-                    <option value={8}>Top 8 (octavos)</option>
-                  </select>
-                </div>
-              )}
-
-              {(rounds && Object.keys(rounds).length > 0) && (
-                <div style={{ marginTop: '0.5rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#991B1B', lineHeight: 1.5 }}>
-                    ⚠️ <strong>Ya hay un cuadro generado.</strong> Al pulsar "Generar" se regenerará desde cero — se perderán los resultados y los horarios manuales del cuadro actual. La configuración del torneo (fechas, pistas, cabezas de serie, parejas inscritas) se conserva.
-                  </p>
-                </div>
-              )}
-            </div>
-            <div style={{ padding: '0.85rem 1.5rem', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-              <button onClick={() => setShowFormatPicker(false)} style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
-                Cancelar
-              </button>
-              <button onClick={confirmFormatPicker} style={{ padding: '0.6rem 1.2rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer' }}>
-                🎲 Generar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Editor de pistas durante el torneo ── */}
       {showCourtsEditor && (
