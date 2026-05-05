@@ -1075,39 +1075,68 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        const gapSlots = Math.ceil((durationMin + restMin) / 60);
        const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
 
-       for (let r = 1; r < catRounds.length; r++) {
-         // Barrera de ronda: máx idx de cualquier match real en r-1.
+       // computeEarliestIdx: índice mínimo permitido para un partido de ronda r,
+       // partido mIdx, dada la lista actual de catRounds. Combina:
+       //   - predecesores específicos (con previa: nextSlot routing; sino m/2)
+       //   - barrera de ronda: max time de cualquier partido real en r-1
+       const computeEarliestIdx = (r, mIdx) => {
+         if (r === 0) return 0;
+         let predTimes = [];
+         if (r === 1 && hasPrelim) {
+           const targetSlots = [mIdx * 2, mIdx * 2 + 1];
+           predTimes = catRounds[0]
+             .filter(p => p.isPrelim && targetSlots.includes(p.nextSlot))
+             .map(p => p.time);
+         } else {
+           const predA = catRounds[r - 1][mIdx * 2];
+           const predB = catRounds[r - 1][mIdx * 2 + 1];
+           predTimes = [predA?.time, predB?.time];
+         }
+         const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
+         const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
          const barrierIndices = catRounds[r - 1]
            .map(m => slotIdxOf(getSlotPart(m.time)))
            .filter(i => i >= 0);
          const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
+         return Math.max(predEarliestIdx, barrierIdx);
+       };
 
+       // PASS 1: Pre-asigna slots a R1+ respetando earliestIdx.
+       for (let r = 1; r < catRounds.length; r++) {
          catRounds[r].forEach((match, mIdx) => {
-           // Predecesores: en el caso general son catRounds[r-1][mIdx*2] y [mIdx*2+1].
-           // Con ronda previa (catRounds[0] = previa), los partidos de catRounds[1]
-           // reciben ganadores via `nextSlot`, no por la regla m/2 estándar.
-           let predTimes = [];
-           if (r === 1 && hasPrelim) {
-             const targetSlots = [mIdx * 2, mIdx * 2 + 1];
-             predTimes = catRounds[0]
-               .filter(p => p.isPrelim && targetSlots.includes(p.nextSlot))
-               .map(p => p.time);
-           } else {
-             const predA = catRounds[r - 1][mIdx * 2];
-             const predB = catRounds[r - 1][mIdx * 2 + 1];
-             predTimes = [predA?.time, predB?.time];
-           }
-           const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
-           const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
-           // Stricter de los dos: si los predecesores específicos no están programados
-           // (caso byes), igualmente esperamos a que TODOS los matches reales de r-1
-           // hayan terminado.
-           const earliestIdx = Math.max(predEarliestIdx, barrierIdx);
+           const earliestIdx = computeEarliestIdx(r, mIdx);
            const candidates = earliestIdx > 0 ? globalSlots.slice(earliestIdx) : globalSlots;
            const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
            slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
            match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
          });
+       }
+
+       // PASS 2: Validación. Recorre las rondas otra vez y arregla cualquier
+       // violación que haya quedado (caso de byes, placeholders, o cualquier
+       // edge case del PASS 1). Si match.time < earliestIdx, lo reasigna.
+       // Hacemos hasta 3 iteraciones porque arreglar un partido puede crear
+       // nuevas violaciones aguas abajo (semi se mueve → final también debe).
+       for (let pass = 0; pass < 3; pass++) {
+         let fixed = 0;
+         for (let r = 1; r < catRounds.length; r++) {
+           catRounds[r].forEach((match, mIdx) => {
+             if (!match.time) return;
+             const earliestIdx = computeEarliestIdx(r, mIdx);
+             const curIdx = slotIdxOf(getSlotPart(match.time));
+             if (curIdx >= 0 && curIdx < earliestIdx) {
+               // Liberamos el slot viejo y reasignamos
+               const oldSlot = getSlotPart(match.time);
+               if (slotUsage[oldSlot] > 0) slotUsage[oldSlot]--;
+               const candidates = globalSlots.slice(earliestIdx);
+               const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
+               slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
+               match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
+               fixed++;
+             }
+           });
+         }
+         if (fixed === 0) break;
        }
 
        if (catRounds[0]) {
@@ -1323,6 +1352,61 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     scheduleCatRounds(nextMain, false);
     scheduleCatRounds(nextCons, true);
+
+    // PASS 2: validación post-pase. Si algún match auto-asignado quedó antes
+    // que sus predecesores (caso byes/placeholders), lo reasignamos. Hasta 3
+    // iteraciones para propagar reajustes a rondas más tardías.
+    const validateAndFixPass = (catRoundsObj, isCons) => {
+      Object.entries(catRoundsObj).forEach(([cat, catRounds]) => {
+        const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
+        const gapSlots = Math.ceil((durationMin + restMin) / 60);
+        const allowedCourts = getAllowedCourts(cat, isCons);
+        const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
+        for (let pass = 0; pass < 3; pass++) {
+          let fixed = 0;
+          for (let r = 1; r < catRounds.length; r++) {
+            catRounds[r].forEach((m, mIdx) => {
+              if (m.timeManual && m.time) return;
+              if (!m.time) return;
+              const barrierIndices = catRounds[r - 1]
+                .map(pm => slotIdx(getSlot(pm.time)))
+                .filter(i => i >= 0);
+              const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
+              let predTimes = [];
+              if (r === 1 && hasPrelim) {
+                const targetSlots = [mIdx * 2, mIdx * 2 + 1];
+                predTimes = catRounds[0]
+                  .filter(p => p.isPrelim && targetSlots.includes(p.nextSlot))
+                  .map(p => p.time);
+              } else {
+                const predA = catRounds[r - 1][mIdx * 2];
+                const predB = catRounds[r - 1][mIdx * 2 + 1];
+                predTimes = [predA?.time, predB?.time];
+              }
+              const indices = predTimes.map(t => slotIdx(getSlot(t))).filter(i => i >= 0);
+              const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
+              const earliestIdx = Math.max(predEarliestIdx, barrierIdx);
+              const curIdx = slotIdx(getSlot(m.time));
+              if (curIdx >= 0 && curIdx < earliestIdx) {
+                const occupied = buildOccupiedCourts(nextMain, nextCons);
+                const p1Slots = expandPlayerSlots(m.p1, globalSlots);
+                const p2Slots = expandPlayerSlots(m.p2, globalSlots);
+                let common = p1Slots.filter(s => p2Slots.includes(s));
+                if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
+                const picked = pickSlotAndCourt(common, occupied, allowedCourts, globalSlots, earliestIdx);
+                if (picked) {
+                  m.time = `${picked.slot} - Pista ${picked.court}`;
+                  fixed++;
+                }
+              }
+            });
+          }
+          if (fixed === 0) break;
+        }
+      });
+    };
+    validateAndFixPass(nextMain, false);
+    validateAndFixPass(nextCons, true);
 
     setRounds(nextMain);
     setConsRounds(nextCons);
@@ -1970,24 +2054,51 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
       const gapSlots = Math.ceil((durationMin + restMin) / 60);
 
-      for (let r = 1; r < newRounds.length; r++) {
+      const computeEarliestIdx = (r, mIdx) => {
+        if (r === 0) return 0;
+        const predA = newRounds[r - 1][mIdx * 2];
+        const predB = newRounds[r - 1][mIdx * 2 + 1];
+        const predTimes = [predA?.time, predB?.time];
+        const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
+        const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
         const barrierIndices = newRounds[r - 1]
           .map(m => slotIdxOf(getSlotPart(m.time)))
           .filter(i => i >= 0);
         const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
+        return Math.max(predEarliestIdx, barrierIdx);
+      };
 
+      // PASS 1: pre-asigna
+      for (let r = 1; r < newRounds.length; r++) {
         newRounds[r].forEach((match, mIdx) => {
-          const predA = newRounds[r - 1][mIdx * 2];
-          const predB = newRounds[r - 1][mIdx * 2 + 1];
-          const predTimes = [predA?.time, predB?.time];
-          const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
-          const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
-          const earliestIdx = Math.max(predEarliestIdx, barrierIdx);
+          const earliestIdx = computeEarliestIdx(r, mIdx);
           const candidates = earliestIdx > 0 ? globalSlots.slice(earliestIdx) : globalSlots;
           const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
           slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
           match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
         });
+      }
+
+      // PASS 2: validación. Repara violaciones de orden temporal.
+      for (let pass = 0; pass < 3; pass++) {
+        let fixed = 0;
+        for (let r = 1; r < newRounds.length; r++) {
+          newRounds[r].forEach((match, mIdx) => {
+            if (!match.time) return;
+            const earliestIdx = computeEarliestIdx(r, mIdx);
+            const curIdx = slotIdxOf(getSlotPart(match.time));
+            if (curIdx >= 0 && curIdx < earliestIdx) {
+              const oldSlot = getSlotPart(match.time);
+              if (slotUsage[oldSlot] > 0) slotUsage[oldSlot]--;
+              const candidates = globalSlots.slice(earliestIdx);
+              const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
+              slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
+              match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
+              fixed++;
+            }
+          });
+        }
+        if (fixed === 0) break;
       }
     }
 
