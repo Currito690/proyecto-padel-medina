@@ -820,8 +820,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
 
     // Diccionario para registrar cuántos partidos hay en cada hora
+    // (compatibilidad — algunas funciones todavía lo leen)
     let slotUsage = {};
     globalSlots.forEach(s => slotUsage[s] = 0);
+
+    // Tracking de disponibilidad POR PISTA (no solo por slot). Sin esto,
+    // si una categoría está restringida a Pista 2, el scheduler le mete
+    // dos partidos al mismo slot+pista (porque Pista 1 sigue libre y la
+    // capacidad del slot total es 2). Con `occupied[slot]` (Set de
+    // pistas tomadas) lo evitamos.
+    const occupied = {};
+    const markOccupied = (slot, court) => {
+      if (!occupied[slot]) occupied[slot] = new Set();
+      occupied[slot].add(court);
+      slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
+    };
+    const isCourtFree = (slot, court) => !(occupied[slot]?.has(court));
 
     // Expandir disponibilidad de TODOS los participantes (excluyendo sus horas bloqueadas)
     const expandedParticipants = p.map(part => {
@@ -884,6 +898,78 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // aquí porque el setState de tConfig todavía puede no haberse aplicado.
        const format = overrideFormats?.[cat] || tConfig.formatByCategory?.[cat] || 'eliminatoria';
 
+       // ── Helpers del scheduler (compartidos por liguilla y eliminatoria) ──
+       const allowedCourtsForCat = getAllowedCourts(cat, false);
+       const slotMinutesGen = (s) => {
+         if (!s) return -1;
+         const parts = s.split(' ');
+         if (parts.length !== 2) return -1;
+         const [d, m] = parts[0].split('/').map(Number);
+         const [h, mi] = parts[1].split(':').map(Number);
+         if (!Number.isFinite(d) || !Number.isFinite(m) || !Number.isFinite(h)) return -1;
+         return ((m - 1) * 31 + (d - 1)) * 24 * 60 + h * 60 + (mi || 0);
+       };
+       // pickSlotCourtForMatch: encuentra { slot, court } válido respetando
+       //   - earliestMinutes (orden temporal con predecesores + barrera)
+       //   - allowedCourtsForCat (pistas permitidas por categoría)
+       //   - occupied (qué pistas ya están tomadas en cada slot — across cats)
+       //   - tConfig.courtStartHours (a partir de qué hora abre cada pista)
+       //   - preferred (afinidad horaria de los jugadores; preferencia)
+       const pickSlotCourtForMatch = (earliestMinutes, preferred = null) => {
+         const tryList = (list) => {
+           for (const s of list) {
+             if (slotMinutesGen(s) < earliestMinutes) continue;
+             const hourPart = s.split(' ')[1];
+             for (const c of allowedCourtsForCat) {
+               if (!isCourtFree(s, c)) continue;
+               const startsAt = tConfig.courtStartHours?.[c];
+               if (startsAt && hourPart < startsAt) continue;
+               return { slot: s, court: c };
+             }
+           }
+           return null;
+         };
+         if (preferred && preferred.length > 0) {
+           const f = tryList(preferred);
+           if (f) return f;
+         }
+         const f2 = tryList(globalSlots);
+         if (f2) return f2;
+         const lastSlot = globalSlots[globalSlots.length - 1];
+         if (lastSlot) {
+           const [lastDateLabel, lastHour] = lastSlot.split(' ');
+           const lastHourIdx = HOURS.indexOf(lastHour);
+           for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
+             const s = `${lastDateLabel} ${HOURS[h]}`;
+             if (slotMinutesGen(s) < earliestMinutes) continue;
+             for (const c of allowedCourtsForCat) {
+               if (!isCourtFree(s, c)) continue;
+               const startsAt = tConfig.courtStartHours?.[c];
+               if (startsAt && HOURS[h] < startsAt) continue;
+               return { slot: s, court: c };
+             }
+           }
+           const [ld, lm] = lastDateLabel.split('/').map(Number);
+           const lastDateObj = new Date(new Date().getFullYear(), lm - 1, ld);
+           for (let extra = 1; extra <= 60; extra++) {
+             const next = new Date(lastDateObj);
+             next.setDate(lastDateObj.getDate() + extra);
+             const nextLabel = fmtDateLabel(next);
+             for (let h = 0; h < HOURS.length; h++) {
+               const s = `${nextLabel} ${HOURS[h]}`;
+               if (slotMinutesGen(s) < earliestMinutes) continue;
+               for (const c of allowedCourtsForCat) {
+                 if (!isCourtFree(s, c)) continue;
+                 const startsAt = tConfig.courtStartHours?.[c];
+                 if (startsAt && HOURS[h] < startsAt) continue;
+                 return { slot: s, court: c };
+               }
+             }
+           }
+         }
+         return null;
+       };
+
        if (format === 'liguilla') {
          // Round-robin: circle method
          let pool = [...catParts];
@@ -900,13 +986,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              const p2Slots = t2.finalSlots?.length ? t2.finalSlots : globalSlots;
              let common = p1Slots.filter(s => p2Slots.includes(s));
              if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-             const assigned = pickSlot(common, slotUsage, tConfig.courtsCount);
-             slotUsage[assigned] = (slotUsage[assigned] ?? 0) + 1;
+             const picked = pickSlotCourtForMatch(0, common);
+             const time = picked
+               ? `${picked.slot} - Pista ${picked.court}`
+               : 'Sin horario';
+             if (picked) markOccupied(picked.slot, picked.court);
              roundMatches.push({
                id: `rr-${cat}-r${r}-m${roundMatches.length}`,
                round: r, matchIndex: roundMatches.length,
                p1: t1, p2: t2, winner: null, score: null, isRR: true,
-               time: `${assigned} - Pista ${Math.min(slotUsage[assigned], tConfig.courtsCount)}`,
+               time,
              });
            }
            if (roundMatches.length > 0) rrCatRounds.push(roundMatches);
@@ -1070,9 +1159,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               const p2Final = match.p2.finalSlots || [];
               let common = p1Final.filter(s => p2Final.includes(s));
               if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
-              const assignedTime = pickSlot(common, slotUsage, tConfig.courtsCount);
-              slotUsage[assignedTime] = (slotUsage[assignedTime] ?? 0) + 1;
-              match.time = `${assignedTime} - Pista ${Math.min(slotUsage[assignedTime], tConfig.courtsCount)}`;
+              const picked = pickSlotCourtForMatch(0, common);
+              if (picked) {
+                markOccupied(picked.slot, picked.court);
+                match.time = `${picked.slot} - Pista ${picked.court}`;
+              }
            }
          });
        }
@@ -1084,18 +1175,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // BYEs (sin time), aplicamos una "barrera de ronda": no pueden ir antes
        // que el último partido real de la ronda anterior.
        const getSlotPart = (t) => t ? t.split(' - Pista')[0].trim() : null;
-       // slotMinutes convierte un slot ('13/05 16:00') a minutos absolutos para
-       // comparar fechas/horas SIN depender de globalSlots.indexOf, que falla
-       // si el slot está fuera del rango oficial del torneo (extension de pickSlot).
-       const slotMinutes = (s) => {
-         if (!s) return -1;
-         const parts = s.split(' ');
-         if (parts.length !== 2) return -1;
-         const [d, m] = parts[0].split('/').map(Number);
-         const [h, mi] = parts[1].split(':').map(Number);
-         if (!Number.isFinite(d) || !Number.isFinite(m) || !Number.isFinite(h)) return -1;
-         return ((m - 1) * 31 + (d - 1)) * 24 * 60 + h * 60 + (mi || 0);
-       };
        const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
        const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
        const gapSlots = Math.ceil((durationMin + restMin) / 60);
@@ -1119,98 +1198,60 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const predB = catRounds[r - 1][mIdx * 2 + 1];
            predTimes = [predA?.time, predB?.time];
          }
-         const minutes = predTimes.map(t => slotMinutes(getSlotPart(t))).filter(m => m >= 0);
+         const minutes = predTimes.map(t => slotMinutesGen(getSlotPart(t))).filter(m => m >= 0);
          const predEarliest = minutes.length > 0 ? Math.max(...minutes) + gapMinutes : 0;
          const barrierMinutes = catRounds[r - 1]
-           .map(m => slotMinutes(getSlotPart(m.time)))
+           .map(m => slotMinutesGen(getSlotPart(m.time)))
            .filter(m => m >= 0);
          const barrier = barrierMinutes.length > 0 ? Math.max(...barrierMinutes) + gapMinutes : 0;
          return Math.max(predEarliest, barrier);
        };
 
-       // pickSlotAfter: respeta earliestMinutes Y la afinidad horaria de los
-       // jugadores (preferred). Si tienen huecos preferidos disponibles los usa;
-       // si no, se cae al primer hueco posible. NUNCA antes de earliestMinutes.
-       const pickSlotAfter = (earliestMinutes, courts, preferred = null) => {
-         const getCapacity = (slot) => {
-           const hourPart = slot.split(' ')[1];
-           return getAvailableCourtsForHour(hourPart, courts, tConfig.courtStartHours);
-         };
-         const tryList = (list) => {
-           for (const s of list) {
-             if (slotMinutes(s) < earliestMinutes) continue;
-             if ((slotUsage[s] ?? 0) < getCapacity(s)) return s;
-           }
-           return null;
-         };
-         // 1. Slots preferidos (afinidad horaria de los jugadores)
-         if (preferred && preferred.length > 0) {
-           const f = tryList(preferred);
-           if (f) return f;
-         }
-         // 2. Cualquier slot oficial del torneo
-         const f2 = tryList(globalSlots);
-         if (f2) return f2;
-         // 3. Extender a horas posteriores / días posteriores
-         const lastSlot = globalSlots[globalSlots.length - 1];
-         if (lastSlot) {
-           const [lastDateLabel, lastHour] = lastSlot.split(' ');
-           const lastHourIdx = HOURS.indexOf(lastHour);
-           for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
-             const s = `${lastDateLabel} ${HOURS[h]}`;
-             if (slotMinutes(s) < earliestMinutes) continue;
-             if ((slotUsage[s] ?? 0) < getCapacity(s)) return s;
-           }
-           const [ld, lm] = lastDateLabel.split('/').map(Number);
-           const lastDateObj = new Date(new Date().getFullYear(), lm - 1, ld);
-           for (let extra = 1; extra <= 60; extra++) {
-             const next = new Date(lastDateObj);
-             next.setDate(lastDateObj.getDate() + extra);
-             const nextLabel = fmtDateLabel(next);
-             for (let h = 0; h < HOURS.length; h++) {
-               const s = `${nextLabel} ${HOURS[h]}`;
-               if (slotMinutes(s) < earliestMinutes) continue;
-               if ((slotUsage[s] ?? 0) < getCapacity(s)) return s;
-             }
-           }
-         }
-         return lastSlot || 'Sin horario';
-       };
-
-       // PASS 1: Pre-asigna slots a R1+ respetando earliestMinutes + afinidad
-       // horaria si los dos jugadores son conocidos (cuartos con seeds, etc.).
+       // PASS 1: Pre-asigna slot+pista a R1+ respetando:
+       //   - earliestMinutes (orden temporal)
+       //   - allowedCourtsForCat (pistas permitidas por categoría)
+       //   - occupied (pistas ya tomadas en cada slot, across categorías)
+       //   - afinidad de jugadores (cuando son conocidos)
        for (let r = 1; r < catRounds.length; r++) {
          catRounds[r].forEach((match, mIdx) => {
            const earliestMinutes = computeEarliestMinutes(r, mIdx);
-           // Afinidad: solo si ambos jugadores son reales (sin placeholder/bye)
            let preferred = null;
            if (match.p1?.finalSlots && match.p2?.finalSlots && !match.p1.isBye && !match.p2.isBye && !match.p1.isPlaceholder && !match.p2.isPlaceholder && !match.p1.isPrelimPlaceholder && !match.p2.isPrelimPlaceholder) {
              const common = match.p1.finalSlots.filter(s => match.p2.finalSlots.includes(s));
              if (common.length > 0) preferred = common;
            }
-           const slot = pickSlotAfter(earliestMinutes, tConfig.courtsCount, preferred);
-           slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
-           match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
+           const picked = pickSlotCourtForMatch(earliestMinutes, preferred);
+           if (picked) {
+             markOccupied(picked.slot, picked.court);
+             match.time = `${picked.slot} - Pista ${picked.court}`;
+           }
          });
        }
 
-       // PASS 2: Validación. Recorre las rondas otra vez y arregla cualquier
-       // violación que haya quedado. Hasta 3 iteraciones porque arreglar un
-       // partido puede crear nuevas violaciones aguas abajo.
+       // PASS 2: Validación. Si algún match quedó en una hora anterior a sus
+       // predecesores, lo reasignamos. Hasta 3 iteraciones para propagar.
        for (let pass = 0; pass < 3; pass++) {
          let fixed = 0;
          for (let r = 1; r < catRounds.length; r++) {
            catRounds[r].forEach((match, mIdx) => {
              if (!match.time) return;
              const earliestMinutes = computeEarliestMinutes(r, mIdx);
-             const curMinutes = slotMinutes(getSlotPart(match.time));
+             const curMinutes = slotMinutesGen(getSlotPart(match.time));
              if (curMinutes >= 0 && curMinutes < earliestMinutes) {
-               const oldSlot = getSlotPart(match.time);
-               if (slotUsage[oldSlot] > 0) slotUsage[oldSlot]--;
-               const slot = pickSlotAfter(earliestMinutes, tConfig.courtsCount);
-               slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
-               match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
-               fixed++;
+               // Liberamos la pista vieja para que pueda volver a usarse
+               const oldParts = match.time.split(' - Pista');
+               const oldSlot = oldParts[0].trim();
+               const oldCourt = parseInt(oldParts[1], 10);
+               if (occupied[oldSlot] && Number.isFinite(oldCourt)) {
+                 occupied[oldSlot].delete(oldCourt);
+                 slotUsage[oldSlot] = Math.max(0, (slotUsage[oldSlot] ?? 0) - 1);
+               }
+               const picked = pickSlotCourtForMatch(earliestMinutes);
+               if (picked) {
+                 markOccupied(picked.slot, picked.court);
+                 match.time = `${picked.slot} - Pista ${picked.court}`;
+                 fixed++;
+               }
              }
            });
          }
