@@ -2061,23 +2061,41 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        return null;
     }).filter(Boolean);
 
-    let consPlayers = [...losersR0, ...losersR1WithBye];
+    // Cálculo del NÚMERO TOTAL DE PERDEDORES ESPERADOS para que el cuadro de
+    // consolación tenga el tamaño correcto desde el principio. Sin esto, si
+    // se genera la consolación cuando solo hay perdedores de la previa, el
+    // cuadro queda dimensionado solo para esos y los perdedores futuros de
+    // cuartos no caben.
+    //   · Sin previa: matches de R0 con 2 jugadores reales (excluye bye-vs-bye)
+    //   · Con previa: matches de R0 (todos reales) + matches de R1 (todos
+    //     producen un perdedor porque eventualmente tienen 2 jugadores reales,
+    //     sea por seed directo o ganador de previa)
+    let expectedLosers = 0;
+    catRounds[0].forEach(m => {
+      if (m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) expectedLosers++;
+    });
+    if (hasPrelim && catRounds[1]) {
+      catRounds[1].forEach(m => {
+        if (m.p1 && m.p2 && !(m.p1.isBye && m.p2.isBye)) expectedLosers++;
+      });
+    }
 
-    // Si aún no hay eliminados, generar el cuadro con marcadores de posición
-    // basados en los participantes de la categoría (para poder programar horarios)
+    // Conjunto de IDs ya conocidos como perdedores
+    const knownLoserIds = new Set([...losersR0, ...losersR1WithBye].map(p => p.id));
+    // Necesitamos rellenar (expectedLosers - knownLosers) huecos con placeholders.
+    const placeholdersNeeded = Math.max(0, expectedLosers - knownLoserIds.size);
+    const placeholderList = Array.from({ length: placeholdersNeeded }, (_, i) => ({
+      id: `cons-placeholder-${cat}-${i}`,
+      name: `Perdedor por definir`,
+      isPlaceholder: true,
+    }));
+
+    let consPlayers = [...losersR0, ...losersR1WithBye, ...placeholderList];
+
+    // Fallback final: si por algún motivo no hay nada, abortar.
     if (consPlayers.length < 2) {
-      const catParticipants = participants.filter(p => p.category === cat);
-      if (catParticipants.length < 2) {
-        toast(`No hay suficientes participantes en la categoría "${cat}" para generar el cuadro de consolación.`);
-        return;
-      }
-      // Crear placeholders: "Perdedor P.X" para cada pareja esperada
-      const expectedLosers = Math.ceil(catParticipants.length / 2);
-      consPlayers = catParticipants.slice(0, expectedLosers).map((_part, i) => ({
-        id: `cons-placeholder-${cat}-${i}`,
-        name: `Perdedor P.${i + 1}`,
-        isPlaceholder: true,
-      }));
+      toast(`No hay suficientes parejas para generar el cuadro de consolación de "${cat}".`);
+      return;
     }
 
     let p = [...consPlayers];
