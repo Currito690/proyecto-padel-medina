@@ -2291,44 +2291,79 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const element = document.getElementById(elementId);
     if (!element) return;
     setIsExporting(elementId);
-    
-    // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones)
+
+    // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones).
     setTimeout(async () => {
+      // Inyectamos estilos solo durante la captura para reforzar contraste y
+      // saturación de los colores. Cuando se imprime una imagen JPEG/PNG en
+      // papel los colores claros se ven lavados; estos ajustes los hacen más
+      // legibles sin cambiar la UI normal.
+      const exportStyle = document.createElement('style');
+      exportStyle.id = 'tm-pdf-export-styles';
+      exportStyle.textContent = `
+        #${elementId} { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        #${elementId} * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        /* Refuerzo de bordes para que las cajas se distingan en papel */
+        #${elementId} [style*="border"] { border-width: 2px !important; }
+        /* Bordes y fondos de los matches: contraste más fuerte */
+        #${elementId} [style*="#E2E8F0"] { border-color: #94A3B8 !important; }
+        /* Verde ganador: saturado */
+        #${elementId} [style*="DCFCE7"] { background-color: #BBF7D0 !important; }
+        #${elementId} [style*="#16A34A"] { color: #15803D !important; }
+        /* Naranja consolación: saturado */
+        #${elementId} [style*="FEF3C7"] { background-color: #FDE68A !important; }
+        #${elementId} [style*="#D97706"] { color: #B45309 !important; }
+        /* Texto secundario más oscuro para legibilidad */
+        #${elementId} [style*="#64748B"] { color: #334155 !important; }
+        #${elementId} [style*="#94A3B8"] { color: #475569 !important; }
+      `;
+      document.head.appendChild(exportStyle);
+
       try {
-        const originalStyle = element.getAttribute('style');
-        
         // Forzar expansión para captura completa si hay scroll horizontal
         element.style.width = 'max-content';
         element.style.minWidth = '1200px';
         element.style.padding = '3rem';
         element.style.backgroundColor = '#FFFFFF';
 
-        const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false });
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
-        
+        // scale=3 para texto y bordes nítidos. backgroundColor blanco para
+        // que los fondos transparentes no salgan grises. PNG sin pérdida
+        // (JPEG con qualidad 0.95 desatura los verdes/amarillos en papel).
+        const canvas = await html2canvas(element, {
+          scale: 3,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#FFFFFF',
+          imageTimeout: 0,
+        });
+        const imgData = canvas.toDataURL('image/png');
+
         const pdf = new jsPDF({
             orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
             unit: 'mm',
-            format: 'a4'
+            format: 'a4',
+            compress: true,
         });
-        
+
         const pdfWidth = pdf.internal.pageSize.getWidth();
         const pdfHeight = pdf.internal.pageSize.getHeight();
         const imgRatio = canvas.width / canvas.height;
-        
-        let finalWidth = pdfWidth;
+
+        // Margen pequeño para que no quede pegado al borde del papel
+        const margin = 6;
+        let finalWidth = pdfWidth - margin * 2;
         let finalHeight = finalWidth / imgRatio;
-        
-        if (finalHeight > pdfHeight) {
-           finalHeight = pdfHeight;
+
+        if (finalHeight > pdfHeight - margin * 2) {
+           finalHeight = pdfHeight - margin * 2;
            finalWidth = finalHeight * imgRatio;
         }
-        
+
         const x = (pdfWidth - finalWidth) / 2;
         const y = (pdfHeight - finalHeight) / 2;
-        
-        pdf.addImage(imgData, 'JPEG', x, y, finalWidth, finalHeight);
-        
+
+        pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight, undefined, 'FAST');
+
         const safeTitle = title.replace(/[^a-zA-Z0-9]/g, '_');
         pdf.save(`Cuadro_${tConfig.name.replace(/\s+/g, '_')}_${safeTitle}.pdf`);
       } catch (err) {
@@ -2336,6 +2371,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         toast("Hubo un error al generar el PDF.", 'error');
       } finally {
         element.removeAttribute('style');
+        const injected = document.getElementById('tm-pdf-export-styles');
+        if (injected) injected.remove();
         setIsExporting(false);
       }
     }, 100);
