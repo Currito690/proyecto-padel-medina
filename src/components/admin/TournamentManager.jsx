@@ -2141,45 +2141,87 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const numRounds = Math.log2(pow);
     const newRounds = [];
 
-    // Use shared helpers to get globalSlots and reconstruct full slotUsage
-    // (accounting for ALL matches in ALL categories and existing consolation).
     // 14 días extra para que las horas extendidas más allá del endDate sigan
     // dentro de globalSlots y los comparadores de orden temporal funcionen.
     const globalSlots = buildGlobalSlots(14);
-    // Include the consolation bracket being generated in the snapshot
-    // (consRounds doesn't have this cat yet, but we pass what we have)
-    const slotUsage = buildSlotUsage(globalSlots, rounds, consRounds);
 
-    // Asignador de slots respetando horas por pista (mismo que en generateBracket)
-    const pickSlot = (candidates, usage, courts) => {
-      if (!globalSlots.length) return 'Sin horario';
-      const getCapacity = (slot) => {
-        const hourPart = slot.split(' ')[1];
-        return getAvailableCourtsForHour(hourPart, courts, tConfig.courtStartHours);
+    // Construimos `occupied` por (slot, court) a partir del estado actual.
+    // CRÍTICO: el cuadro de consolación tiene sus propias pistas permitidas
+    // (getAllowedCourts(cat, true)). Si solo Pista 2 está permitida, hay que
+    // tener tracking por pista para que un partido de cons no se cuele en P1
+    // cuando P2 está libre — y al revés.
+    const occupied = buildOccupiedCourts(rounds, consRounds);
+    const allowedCourtsForCons = getAllowedCourts(cat, true);
+    const markOccupied = (slot, court) => {
+      if (!occupied[slot]) occupied[slot] = new Set();
+      occupied[slot].add(court);
+    };
+    const isCourtFree = (slot, court) => !(occupied[slot]?.has(court));
+    const slotMinutesGen = (s) => {
+      if (!s) return -1;
+      const parts = s.split(' ');
+      if (parts.length !== 2) return -1;
+      const [d, m] = parts[0].split('/').map(Number);
+      const [h, mi] = parts[1].split(':').map(Number);
+      if (!Number.isFinite(d) || !Number.isFinite(m) || !Number.isFinite(h)) return -1;
+      return ((m - 1) * 31 + (d - 1)) * 24 * 60 + h * 60 + (mi || 0);
+    };
+    // pickSlotCourtForCons: respeta earliestMinutes + allowedCourtsForCons +
+    // courtStartHours + occupied. Igual que en generateBracket pero con las
+    // pistas de CONSOLACIÓN.
+    const pickSlotCourtForCons = (earliestMinutes, preferred = null) => {
+      const tryList = (list) => {
+        for (const s of list) {
+          if (slotMinutesGen(s) < earliestMinutes) continue;
+          const hourPart = s.split(' ')[1];
+          for (const c of allowedCourtsForCons) {
+            if (!isCourtFree(s, c)) continue;
+            const startsAt = tConfig.courtStartHours?.[c];
+            if (startsAt && hourPart < startsAt) continue;
+            return { slot: s, court: c };
+          }
+        }
+        return null;
       };
-      const free = (candidates.length ? candidates : globalSlots).find(s => (usage[s] ?? 0) < getCapacity(s));
-      if (free) return free;
-      const globalFree = globalSlots.find(s => (usage[s] ?? 0) < getCapacity(s));
-      if (globalFree) return globalFree;
-      const lastSlot = globalSlots[globalSlots.length - 1];
-      const [lastDateLabel, lastHour] = lastSlot.split(' ');
-      const lastHourIdx = HOURS.indexOf(lastHour);
-      for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
-        const s = `${lastDateLabel} ${HOURS[h]}`;
-        if ((usage[s] ?? 0) < getCapacity(s)) return s;
+      if (preferred && preferred.length > 0) {
+        const f = tryList(preferred);
+        if (f) return f;
       }
-      const [ld, lm] = lastDateLabel.split('/').map(Number);
-      const lastDateObj = new Date(new Date().getFullYear(), lm - 1, ld);
-      for (let extra = 1; extra <= 30; extra++) {
-        const next = new Date(lastDateObj);
-        next.setDate(lastDateObj.getDate() + extra);
-        const nextLabel = fmtDateLabel(next);
-        for (let h = 0; h < HOURS.length; h++) {
-          const s = `${nextLabel} ${HOURS[h]}`;
-          if ((usage[s] ?? 0) < getCapacity(s)) return s;
+      const f2 = tryList(globalSlots);
+      if (f2) return f2;
+      const lastSlot = globalSlots[globalSlots.length - 1];
+      if (lastSlot) {
+        const [lastDateLabel, lastHour] = lastSlot.split(' ');
+        const lastHourIdx = HOURS.indexOf(lastHour);
+        for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
+          const s = `${lastDateLabel} ${HOURS[h]}`;
+          if (slotMinutesGen(s) < earliestMinutes) continue;
+          for (const c of allowedCourtsForCons) {
+            if (!isCourtFree(s, c)) continue;
+            const startsAt = tConfig.courtStartHours?.[c];
+            if (startsAt && HOURS[h] < startsAt) continue;
+            return { slot: s, court: c };
+          }
+        }
+        const [ld, lm] = lastDateLabel.split('/').map(Number);
+        const lastDateObj = new Date(new Date().getFullYear(), lm - 1, ld);
+        for (let extra = 1; extra <= 60; extra++) {
+          const next = new Date(lastDateObj);
+          next.setDate(lastDateObj.getDate() + extra);
+          const nextLabel = fmtDateLabel(next);
+          for (let h = 0; h < HOURS.length; h++) {
+            const s = `${nextLabel} ${HOURS[h]}`;
+            if (slotMinutesGen(s) < earliestMinutes) continue;
+            for (const c of allowedCourtsForCons) {
+              if (!isCourtFree(s, c)) continue;
+              const startsAt = tConfig.courtStartHours?.[c];
+              if (startsAt && HOURS[h] < startsAt) continue;
+              return { slot: s, court: c };
+            }
+          }
         }
       }
-      return lastSlot;
+      return null;
     };
 
 
@@ -2201,6 +2243,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       newRounds.push(matches);
     }
 
+    // R0 (primera ronda de la consolación): scheduling con afinidad de jugadores.
     if (newRounds[0]) {
       newRounds[0].forEach(match => {
         if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
@@ -2208,65 +2251,73 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            const p2Final = match.p2.finalSlots || [];
            let common = p1Final.filter(s => p2Final.includes(s));
            if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
-           const assignedTime = pickSlot(common, slotUsage, tConfig.courtsCount);
-           slotUsage[assignedTime] = (slotUsage[assignedTime] ?? 0) + 1;
-           match.time = `${assignedTime} - Pista ${Math.min(slotUsage[assignedTime], tConfig.courtsCount)}`;
+           const picked = pickSlotCourtForCons(0, common);
+           if (picked) {
+             markOccupied(picked.slot, picked.court);
+             match.time = `${picked.slot} - Pista ${picked.court}`;
+           }
         }
       });
     }
 
-    // Pre-scheduling de R1+ con la misma lógica que generateBracket: cada match
-    // tiene que ir DESPUÉS de sus predecesores Y de cualquier match real de la
-    // ronda anterior (barrera de ronda). Sin esto, los semis con dos byes se
-    // programan al primer hueco libre y la final puede caer antes que un semi.
+    // Pre-scheduling de R1+: cada match va DESPUÉS de sus predecesores Y de
+    // cualquier match real de la ronda anterior (barrera de ronda). Respeta
+    // las pistas permitidas para CONSOLACIÓN.
     {
-      const slotIdxOf = (s) => globalSlots.indexOf(s);
       const getSlotPart = (t) => t ? t.split(' - Pista')[0].trim() : null;
       const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
       const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
       const gapSlots = Math.ceil((durationMin + restMin) / 60);
+      const gapMinutes = gapSlots * 60;
 
-      const computeEarliestIdx = (r, mIdx) => {
+      const computeEarliestMinutes = (r, mIdx) => {
         if (r === 0) return 0;
         const predA = newRounds[r - 1][mIdx * 2];
         const predB = newRounds[r - 1][mIdx * 2 + 1];
         const predTimes = [predA?.time, predB?.time];
-        const indices = predTimes.map(t => slotIdxOf(getSlotPart(t))).filter(i => i >= 0);
-        const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
-        const barrierIndices = newRounds[r - 1]
-          .map(m => slotIdxOf(getSlotPart(m.time)))
-          .filter(i => i >= 0);
-        const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
-        return Math.max(predEarliestIdx, barrierIdx);
+        const minutes = predTimes.map(t => slotMinutesGen(getSlotPart(t))).filter(m => m >= 0);
+        const predEarliest = minutes.length > 0 ? Math.max(...minutes) + gapMinutes : 0;
+        const barrierMinutes = newRounds[r - 1]
+          .map(m => slotMinutesGen(getSlotPart(m.time)))
+          .filter(m => m >= 0);
+        const barrier = barrierMinutes.length > 0 ? Math.max(...barrierMinutes) + gapMinutes : 0;
+        return Math.max(predEarliest, barrier);
       };
 
-      // PASS 1: pre-asigna
+      // PASS 1: pre-asigna respetando earliestMinutes + allowedCourtsForCons + occupied
       for (let r = 1; r < newRounds.length; r++) {
         newRounds[r].forEach((match, mIdx) => {
-          const earliestIdx = computeEarliestIdx(r, mIdx);
-          const candidates = earliestIdx > 0 ? globalSlots.slice(earliestIdx) : globalSlots;
-          const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
-          slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
-          match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
+          const earliestMinutes = computeEarliestMinutes(r, mIdx);
+          const picked = pickSlotCourtForCons(earliestMinutes);
+          if (picked) {
+            markOccupied(picked.slot, picked.court);
+            match.time = `${picked.slot} - Pista ${picked.court}`;
+          }
         });
       }
 
-      // PASS 2: validación. Repara violaciones de orden temporal.
+      // PASS 2: validación. Si algún match quedó en una hora anterior a sus
+      // predecesores, lo reasignamos liberando la pista vieja primero.
       for (let pass = 0; pass < 3; pass++) {
         let fixed = 0;
         for (let r = 1; r < newRounds.length; r++) {
           newRounds[r].forEach((match, mIdx) => {
             if (!match.time) return;
-            const earliestIdx = computeEarliestIdx(r, mIdx);
-            const curIdx = slotIdxOf(getSlotPart(match.time));
-            if (curIdx >= 0 && curIdx < earliestIdx) {
-              const oldSlot = getSlotPart(match.time);
-              if (slotUsage[oldSlot] > 0) slotUsage[oldSlot]--;
-              const candidates = globalSlots.slice(earliestIdx);
-              const slot = pickSlot(candidates, slotUsage, tConfig.courtsCount);
-              slotUsage[slot] = (slotUsage[slot] ?? 0) + 1;
-              match.time = `${slot} - Pista ${Math.min(slotUsage[slot], tConfig.courtsCount)}`;
-              fixed++;
+            const earliestMinutes = computeEarliestMinutes(r, mIdx);
+            const curMinutes = slotMinutesGen(getSlotPart(match.time));
+            if (curMinutes >= 0 && curMinutes < earliestMinutes) {
+              const oldParts = match.time.split(' - Pista');
+              const oldSlot = oldParts[0].trim();
+              const oldCourt = parseInt(oldParts[1], 10);
+              if (occupied[oldSlot] && Number.isFinite(oldCourt)) {
+                occupied[oldSlot].delete(oldCourt);
+              }
+              const picked = pickSlotCourtForCons(earliestMinutes);
+              if (picked) {
+                markOccupied(picked.slot, picked.court);
+                match.time = `${picked.slot} - Pista ${picked.court}`;
+                fixed++;
+              }
             }
           });
         }
