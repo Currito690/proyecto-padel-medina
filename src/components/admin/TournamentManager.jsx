@@ -120,6 +120,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [loadingRegs, setLoadingRegs] = useState(false);
   // Filtro de categoría en el panel de inscripciones. 'Todas' muestra todo.
   const [regsCatFilter, setRegsCatFilter] = useState('Todas');
+  // Modal de edición de disponibilidad para una inscripción online concreta.
+  // Reutiliza gridBlockedSlots / handleCellMouseDown del editor de parejas.
+  const [editingRegAvail, setEditingRegAvail] = useState(null);
+  const [savingRegAvail, setSavingRegAvail] = useState(false);
   // QR del enlace público de inscripción (data URL para mostrar y descargar)
   const [qrDataUrl, setQrDataUrl] = useState('');
   // Panel de cabezas de serie (selector por categoría)
@@ -2756,10 +2760,61 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     const filteredRegs = regsList.filter(r => matchesFilter(r.category));
 
+    // Detección de duplicados: misma pareja (nombres normalizados, indistinto
+    // el orden) inscrita >1 vez en la misma categoría. Se marca en la fila
+    // con un badge "⚠️ Duplicada".
+    const dupKey = (r) => {
+      const names = [normalizeForCompare(r.player1_name || ''), normalizeForCompare(r.player2_name || '')].sort().join('|');
+      return `${normalizeForCompare(r.category || '')}::${names}`;
+    };
+    const dupCounts = {};
+    regsList.forEach(r => { const k = dupKey(r); dupCounts[k] = (dupCounts[k] || 0) + 1; });
+
     // Parejas añadidas manualmente: están en `participants` pero no provienen
     // de una inscripción online (no figuran en regsList por id).
     const manualParticipants = participants.filter(p => !regsList.some(r => r.id === p.id));
     const filteredManual = manualParticipants.filter(p => matchesFilter(p.category));
+
+    // ── Edición de disponibilidad de una pareja online ──────────────────
+    // Abre el grid editor con los huecos bloqueados que ya tenía la pareja.
+    const openEditRegAvail = (reg) => {
+      const blocked = new Set();
+      (reg.unavailable_times || []).forEach(rule => (rule.slots || []).forEach(s => blocked.add(s)));
+      setGridBlockedSlots(blocked);
+      setEditingRegAvail(reg);
+    };
+    // Guarda los cambios en la BBDD y refresca regsList localmente.
+    const saveRegAvail = async () => {
+      if (!editingRegAvail) return;
+      setSavingRegAvail(true);
+      try {
+        const byDay = {};
+        activeDays.forEach(day => {
+          const blocked = getHoursForDay(day).filter(h => gridBlockedSlots.has(`${day} ${h}`));
+          if (blocked.length > 0) byDay[day] = blocked;
+        });
+        const unavailableTimes = Object.entries(byDay).map(([day, hours]) => ({
+          id: `${day}-${Date.now()}`,
+          day,
+          label: `${day}: ${hoursToRanges(hours).join(', ')}`,
+          slots: hours.map(h => `${day} ${h}`),
+        }));
+        const { error } = await supabase
+          .from('tournament_registrations')
+          .update({ unavailable_times: unavailableTimes })
+          .eq('id', editingRegAvail.id);
+        if (error) throw error;
+        setRegsList(prev => prev.map(r => r.id === editingRegAvail.id ? { ...r, unavailable_times: unavailableTimes } : r));
+        toast('✓ Disponibilidad actualizada.', 'success');
+        setEditingRegAvail(null);
+        setGridBlockedSlots(new Set());
+      } catch (e) {
+        console.error('saveRegAvail error:', e);
+        toast('Error al guardar disponibilidad: ' + (e.message || e), 'error');
+      } finally {
+        setSavingRegAvail(false);
+      }
+    };
     // Recuento de tallas combinando online + manuales.
     const shirtTally = (() => {
       const counts = Object.fromEntries(SHIRT_SIZES.map(s => [s, 0]));
@@ -2862,6 +2917,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       <th style={thCell}>Pareja</th>
                       <th style={thCell}>Categoría</th>
                       <th style={thCell}>Contacto</th>
+                      <th style={thCell}>Disponibilidad</th>
                       {tConfig.gift === 'shirt' && <th style={thCell}>Talla</th>}
                       {tConfig.registrationFeeEnabled && <th style={thCell}>Pago</th>}
                       {tConfig.registrationFeeEnabled && <th style={thCell}>Acción pago</th>}
@@ -2869,11 +2925,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRegs.map(r => (
-                      <tr key={`reg-${r.id}`} style={{ borderTop: '1px solid #F1F5F9' }}>
+                    {filteredRegs.map(r => {
+                      const isDup = (dupCounts[dupKey(r)] || 0) > 1;
+                      const blocks = r.unavailable_times || [];
+                      const totalBlockedHours = blocks.reduce((acc, b) => acc + (b.slots?.length || 0), 0);
+                      return (
+                      <tr key={`reg-${r.id}`} style={{ borderTop: '1px solid #F1F5F9', backgroundColor: isDup ? '#FEF2F2' : undefined }}>
                         <td style={tdCell}>
                           <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player1_name}</div>
                           <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player2_name}</div>
+                          {isDup && (
+                            <div style={{ marginTop: '0.3rem', display: 'inline-block', padding: '0.15rem 0.45rem', borderRadius: '999px', background: '#FEE2E2', color: '#B91C1C', fontSize: '0.68rem', fontWeight: 800 }} title={`Esta pareja figura ${dupCounts[dupKey(r)]} veces en ${r.category}`}>
+                              ⚠️ Duplicada ×{dupCounts[dupKey(r)]}
+                            </div>
+                          )}
                         </td>
                         <td style={tdCell}>{r.category}</td>
                         <td style={tdCell}>
@@ -2884,6 +2949,26 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                               {[r.player1_email, r.player2_email].filter(Boolean).join(' · ')}
                             </div>
                           )}
+                        </td>
+                        <td style={tdCell}>
+                          {blocks.length === 0 ? (
+                            <span style={{ fontSize: '0.74rem', color: '#16A34A', fontWeight: 600 }}>✓ Sin bloqueos</span>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#92400E', fontWeight: 700 }}>{totalBlockedHours}h bloqueadas</span>
+                              {blocks.slice(0, 3).map(b => (
+                                <span key={b.id || b.day} style={{ fontSize: '0.68rem', color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', padding: '0.1rem 0.35rem', borderRadius: '0.3rem' }}>
+                                  {b.label || b.day}
+                                </span>
+                              ))}
+                              {blocks.length > 3 && (
+                                <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>+{blocks.length - 3} más</span>
+                              )}
+                            </div>
+                          )}
+                          <button onClick={() => openEditRegAvail(r)} style={{ marginTop: '0.35rem', padding: '0.22rem 0.55rem', borderRadius: '0.35rem', border: '1px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.68rem', cursor: 'pointer' }}>
+                            ✎ Editar
+                          </button>
                         </td>
                         {tConfig.gift === 'shirt' && (
                           <td style={{ ...tdCell, fontWeight: 700, color: '#0369A1' }}>
@@ -2953,7 +3038,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           })()}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -3022,6 +3108,96 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             )}
           </div>
         </div>
+
+        {/* ── Modal de edición de disponibilidad de una inscripción ── */}
+        {editingRegAvail && (
+          <div
+            onMouseUp={() => setGridDragging(false)}
+            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+          >
+            <div style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '680px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', marginTop: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.1rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>✎ Disponibilidad de la pareja</h3>
+                  <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
+                    {editingRegAvail.player1_name} y {editingRegAvail.player2_name} · {editingRegAvail.category}
+                  </p>
+                </div>
+                <button onClick={() => { setEditingRegAvail(null); setGridBlockedSlots(new Set()); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.25rem', lineHeight: 1, padding: '0.25rem' }}>✕</button>
+              </div>
+              <div style={{ padding: '1.25rem 1.5rem' }}>
+                <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.65rem', padding: '0.7rem 0.9rem', marginBottom: '0.9rem' }}>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#92400E', lineHeight: 1.5 }}>
+                    Marca las horas en las que la pareja <strong>NO puede jugar</strong>. Puedes arrastrar para marcar/desmarcar varias. Los cambios se guardan en la inscripción.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.6rem', fontSize: '0.74rem', fontWeight: 600, color: '#64748B' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <div style={{ width: '14px', height: '14px', borderRadius: '3px', backgroundColor: '#FED7AA', border: '1px solid #F97316' }} />
+                    No puede jugar
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <div style={{ width: '14px', height: '14px', borderRadius: '3px', backgroundColor: '#DCFCE7', border: '1px solid #86EFAC' }} />
+                    Disponible
+                  </div>
+                </div>
+                <div style={{ overflowX: 'auto', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
+                  <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F8FAFC' }}>
+                        <th style={{ padding: '0.45rem 0.6rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '52px' }}>Hora</th>
+                        {activeDays.map(day => (
+                          <th key={day} style={{ padding: '0.45rem 0.45rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '76px' }}>
+                            {day}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allGridHours.map((hour, hIdx) => (
+                        <tr key={hour} style={{ backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFA' }}>
+                          <td style={{ padding: '0.18rem 0.6rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
+                          {activeDays.map(day => {
+                            const isValid = getHoursForDay(day).includes(hour);
+                            const isBlocked = gridBlockedSlots.has(`${day} ${hour}`);
+                            return (
+                              <td key={day} style={{ padding: '0.18rem 0.3rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
+                                <div
+                                  onMouseDown={isValid ? () => handleCellMouseDown(day, hour) : undefined}
+                                  onMouseEnter={isValid ? () => handleCellMouseEnter(day, hour) : undefined}
+                                  style={{
+                                    height: '24px',
+                                    borderRadius: '4px',
+                                    cursor: isValid ? 'pointer' : 'default',
+                                    backgroundColor: !isValid ? '#F1F5F9' : isBlocked ? '#FED7AA' : '#DCFCE7',
+                                    border: `1px solid ${!isValid ? '#E2E8F0' : isBlocked ? '#F97316' : '#86EFAC'}`,
+                                  }}
+                                />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {gridBlockedSlots.size > 0 && (
+                  <p style={{ margin: '0.65rem 0 0', fontSize: '0.76rem', color: '#DC2626', fontWeight: 600 }}>
+                    {gridBlockedSlots.size} hora{gridBlockedSlots.size !== 1 ? 's' : ''} bloqueada{gridBlockedSlots.size !== 1 ? 's' : ''}
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
+                  <button onClick={() => { setEditingRegAvail(null); setGridBlockedSlots(new Set()); }} disabled={savingRegAvail} style={{ padding: '0.6rem 1rem', borderRadius: '0.55rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                    Cancelar
+                  </button>
+                  <button onClick={saveRegAvail} disabled={savingRegAvail} style={{ padding: '0.6rem 1.1rem', borderRadius: '0.55rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: savingRegAvail ? 'not-allowed' : 'pointer', opacity: savingRegAvail ? 0.6 : 1 }}>
+                    {savingRegAvail ? 'Guardando…' : '💾 Guardar disponibilidad'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
