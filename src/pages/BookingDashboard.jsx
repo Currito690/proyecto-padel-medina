@@ -6,6 +6,7 @@ import DateSelector from '../components/booking/DateSelector';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
+import { serverNowMs } from '../utils/serverTime';
 
 const SCHEDULE_TIMES = [
   '09:00 - 10:30',
@@ -82,7 +83,7 @@ const BookingDashboard = () => {
       .select('id, name, status, config, created_at')
       .order('created_at', { ascending: false })
       .then(({ data }) => {
-        const now = Date.now();
+        const now = serverNowMs();
         const open = (data || []).filter(t => {
           if (t.status === 'draft') return false;
           // Cuadro publicado por el admin → ya no aparece como "abierto"

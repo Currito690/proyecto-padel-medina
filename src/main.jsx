@@ -5,6 +5,12 @@ import App from './App.jsx'
 import { MemoryRouter } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
+import { startServerTimeSync } from './utils/serverTime'
+
+// Sincroniza la hora con el servidor (Supabase Date header). Necesario para
+// que las comprobaciones de plazo, orden cronológico, etc. no dependan del
+// reloj del navegador (que el usuario puede tener mal).
+startServerTimeSync();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').then((reg) => {

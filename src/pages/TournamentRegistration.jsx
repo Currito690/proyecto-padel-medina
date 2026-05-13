@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
 import { toTitleCase, normalizeForCompare } from '../utils/names';
+import { serverNowMs } from '../utils/serverTime';
 
 const HOURS = [
   '00:00','01:00','02:00','03:00','04:00','05:00','06:00','07:00','08:00','09:00','10:00','11:00',
@@ -112,7 +113,9 @@ export default function TournamentRegistration() {
     if (tournament?.config?.registrationClosed) return true;
     if (!tournament?.config?.registrationDeadline) return false;
     const time = tournament.config.registrationDeadlineTime || '23:59';
-    return new Date() > new Date(`${tournament.config.registrationDeadline}T${time}:00`);
+    // Hora del servidor (no del reloj del navegador) para que un usuario con
+    // el reloj atrasado no pueda inscribirse fuera de plazo.
+    return serverNowMs() > new Date(`${tournament.config.registrationDeadline}T${time}:00`).getTime();
   })();
 
   const getHoursForDay = (day) => {

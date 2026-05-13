@@ -6,6 +6,7 @@ import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { toast, confirmDialog } from '../../utils/notify';
 import { toTitleCase, normalizeForCompare } from '../../utils/names';
+import { useServerTime, formatNowShort, isServerTimeSynced, serverNowMs } from '../../utils/serverTime';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -552,7 +553,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const deadlineTime = tConfig.registrationDeadlineTime || '23:59';
     if (!wasPublished && deadlineStr) {
       const deadlineMs = new Date(`${deadlineStr}T${deadlineTime}:00`).getTime();
-      if (Date.now() < deadlineMs) {
+      // Hora del servidor (no del navegador del admin) para que un reloj
+      // mal puesto no salte el aviso de "plazo aún abierto".
+      if (serverNowMs() < deadlineMs) {
         const fmtDay = new Date(deadlineStr + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
         const fmt = `${fmtDay} a las ${deadlineTime}`;
         const ok = await confirmDialog(
@@ -4593,6 +4596,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             ← Volver al panel de Todos los Torneos
          </button>
       </div>
+      <ServerClockBanner />
       <div className="tm-header-row">
         <div className="tm-header-info">
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>Torneo: {tConfig.name}</h2>
@@ -5346,6 +5350,29 @@ const TournamentManager = () => {
              })}
           </div>
        )}
+    </div>
+  );
+};
+
+// Banner con la fecha y hora "oficial" del sistema (sincronizada con el
+// servidor de Supabase). Se actualiza cada 30s. Si la sync con servidor
+// falló, muestra la hora del navegador con un aviso.
+const ServerClockBanner = () => {
+  const now = useServerTime(30000);
+  const synced = isServerTimeSynced();
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+      padding: '0.4rem 0.85rem', marginBottom: '0.75rem',
+      background: synced ? '#F0FDF4' : '#FFFBEB',
+      border: synced ? '1px solid #BBF7D0' : '1px solid #FDE68A',
+      borderRadius: '999px',
+      fontSize: '0.78rem', fontWeight: 700,
+      color: synced ? '#15803D' : '#92400E',
+    }} title={synced ? 'Hora sincronizada con el servidor' : 'No se ha podido sincronizar con el servidor; mostrando hora del dispositivo'}>
+      <span style={{ fontSize: '0.9rem' }}>🕒</span>
+      <span>{formatNowShort(now)}</span>
+      {!synced && <span style={{ fontSize: '0.68rem', opacity: 0.8 }}>(reloj local)</span>}
     </div>
   );
 };

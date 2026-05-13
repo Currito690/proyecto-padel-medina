@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
+import { serverNowMs } from '../utils/serverTime';
 
 const fmtDate = (iso) => {
   if (!iso) return null;
@@ -62,7 +63,7 @@ const Tournaments = () => {
   const deadlinePassed = (t) => {
     if (!t.config?.registrationDeadline) return false;
     const time = t.config.registrationDeadlineTime || '23:59';
-    return new Date() > new Date(`${t.config.registrationDeadline}T${time}:00`);
+    return serverNowMs() > new Date(`${t.config.registrationDeadline}T${time}:00`).getTime();
   };
 
   const isOpen = (t) => t.status === 'open' || t.status == null;
