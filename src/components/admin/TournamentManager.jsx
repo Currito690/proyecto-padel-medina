@@ -145,6 +145,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Si true, al generar el cuadro NO se auto-asignan horarios a la primera
   // ronda. El admin los pone a mano viendo la disponibilidad de los jugadores.
   const [pickerManualR0, setPickerManualR0] = useState(false);
+  // Selección de qué categorías regenerar (de uno en uno o todas a la vez).
+  // Por defecto se marcan las que NO tienen rounds aún. El admin puede
+  // marcar/desmarcar para regenerar solo las que quiera y conservar las demás.
+  const [pickerSelectedCats, setPickerSelectedCats] = useState({});
 
   // Genera el QR del enlace público cada vez que cambia publishedId.
   // Usa la lib qrcode local — no depende de servicios externos.
@@ -789,10 +793,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
     const cats = (tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean);
     const initial = {};
+    const initialSel = {};
     cats.forEach(c => {
       initial[c] = tConfig.formatByCategory?.[c] || 'eliminatoria';
+      // Por defecto marcamos solo las que NO tienen cuadro generado todavía,
+      // así si ya hay un cuadro hecho para Masculino y vamos a generar
+      // Femenino, no se re-genera Masculino sin querer.
+      const alreadyHas = !!(rounds && rounds[c] && rounds[c].length > 0);
+      initialSel[c] = !alreadyHas;
     });
     setPickerFormats(initial);
+    setPickerSelectedCats(initialSel);
     setPickerManualR0(false); // por defecto auto-schedule completo
     setShowFormatPicker(true);
   };
@@ -807,8 +818,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setTConfig(prev => ({ ...prev, formatByCategory: newFormats }));
     setShowFormatPicker(false);
     const manualR0 = pickerManualR0;
+    // Lista de categorías a regenerar EN ESTA pasada. Si ninguna está
+    // marcada, asumimos "todas" (compatibilidad con el botón directo).
+    const onlyCats = Object.entries(pickerSelectedCats).filter(([, v]) => v).map(([c]) => c);
+    if (onlyCats.length === 0) {
+      toast('Marca al menos una categoría para generar.', 'error');
+      return;
+    }
     // Pequeño delay para que el setState se aplique antes de generar
-    setTimeout(() => generateBracket(newFormats, { manualR0 }), 50);
+    setTimeout(() => generateBracket(newFormats, { manualR0, onlyCats }), 50);
   };
 
   const generateBracket = (overrideFormats, opts = {}) => {
@@ -974,6 +992,27 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
 
     catList.forEach(cat => {
+       // Modo "regenerar solo algunas categorías": si opts.onlyCats está
+       // definido y esta cat no está en él, conservamos su cuadro actual
+       // (si lo tiene). Así el admin puede generar de uno en uno sin
+       // perder los cuadros ya hechos.
+       if (opts.onlyCats && !opts.onlyCats.includes(cat)) {
+         if (rounds && rounds[cat] && rounds[cat].length > 0) {
+           newAllRounds[cat] = rounds[cat];
+           // También marcamos sus slots como ocupados para que las cats
+           // que SÍ se regeneran no pisen los horarios existentes.
+           rounds[cat].forEach(round => round.forEach(m => {
+             if (!m.time || m.time === 'A convenir') return;
+             const parts = m.time.split(' - Pista');
+             const slot = parts[0].trim();
+             const court = parseInt(parts[1], 10);
+             if (Number.isFinite(court)) markOccupied(slot, court);
+             markPlayerSlot(slot, m.p1, m.p2);
+           }));
+         }
+         return;
+       }
+
        // Una pareja con categoría "Masculino C y Masculino D" debe aparecer
        // en AMBAS catList (cuadro de C y cuadro de D). El scheduler enforce
        // que no se solapen sus partidos vía playerSlots.
@@ -1414,7 +1453,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
 
     setRounds(newAllRounds);
-    setConsRounds({});
+    // Si estamos regenerando solo algunas categorías, conservamos las
+    // consolaciones de las que NO se regeneran.
+    if (opts.onlyCats && Array.isArray(opts.onlyCats)) {
+      setConsRounds(prev => {
+        const next = {};
+        Object.entries(prev || {}).forEach(([cat, val]) => {
+          if (!opts.onlyCats.includes(cat)) next[cat] = val;
+        });
+        return next;
+      });
+    } else {
+      setConsRounds({});
+    }
     setPhase('bracket');
     } catch (err) {
       console.error('generateBracket error:', err);
@@ -4482,8 +4533,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             onClick={openFormatPicker}
             style={{ width: '100%', padding: '1rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 800, fontSize: '1.05rem', cursor: 'pointer', opacity: participants.length < 2 ? 0.5 : 1 }}
           >
-            Sortear y Generar Cuadro
+            🎲 Sortear y Generar Cuadro
           </button>
+          {/* Si YA hay un cuadro generado, atajo para entrar en él SIN
+              re-generar (sin re-sortear). Útil para volver a ver/seguir
+              jugando sin perder los emparejamientos ni los horarios. */}
+          {Object.keys(rounds || {}).length > 0 && (
+            <button
+              onClick={() => setPhase('bracket')}
+              style={{ width: '100%', padding: '0.85rem 1rem', marginTop: '0.6rem', borderRadius: '0.75rem', border: '1.5px solid #BFDBFE', backgroundColor: '#EFF6FF', color: '#1D4ED8', fontWeight: 800, fontSize: '0.95rem', cursor: 'pointer' }}
+            >
+              ➡️ Continuar al cuadro existente (sin re-sortear)
+            </button>
+          )}
           <button onClick={() => setPhase('config')} style={{ border: 'none', background: 'none', color: '#64748B', cursor: 'pointer', padding: '1rem 0 0 0', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', margin: '0 auto' }}>
             ← Atrás a Configuración
           </button>
@@ -4505,18 +4567,54 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <button onClick={() => setShowFormatPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
             </div>
             <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <p style={{ margin: '0 0 0.25rem', fontSize: '0.74rem', color: '#475569', fontWeight: 700 }}>
+                Marca qué categorías quieres generar/regenerar. Las desmarcadas conservan su cuadro actual intacto.
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem', marginBottom: '0.25rem' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const all = {};
+                    (tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean).forEach(c => { all[c] = true; });
+                    setPickerSelectedCats(all);
+                  }}
+                  style={{ padding: '0.3rem 0.6rem', borderRadius: '0.35rem', border: '1px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                >
+                  Marcar todas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPickerSelectedCats({})}
+                  style={{ padding: '0.3rem 0.6rem', borderRadius: '0.35rem', border: '1px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                >
+                  Desmarcar todas
+                </button>
+              </div>
               {(tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean).map(cat => {
                 const partsInCat = participants.filter(p => p.category === cat).length;
+                const checked = !!pickerSelectedCats[cat];
+                const alreadyHas = !!(rounds && rounds[cat] && rounds[cat].length > 0);
                 return (
-                  <div key={cat} style={{ padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <div key={cat} style={{ padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: checked ? '#F8FAFC' : '#FAFAFA', border: `1px solid ${checked ? '#E2E8F0' : '#F1F5F9'}`, display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', opacity: checked ? 1 : 0.55 }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={e => setPickerSelectedCats(prev => ({ ...prev, [cat]: e.target.checked }))}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#16A34A', flexShrink: 0 }}
+                      title={checked ? 'Generar/regenerar esta categoría ahora' : 'Conservar el cuadro actual de esta categoría'}
+                    />
                     <div style={{ flex: 1, minWidth: '120px' }}>
                       <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0F172A' }}>{cat}</div>
-                      <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.15rem' }}>{partsInCat} pareja{partsInCat === 1 ? '' : 's'}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.15rem' }}>
+                        {partsInCat} pareja{partsInCat === 1 ? '' : 's'}
+                        {alreadyHas && <span style={{ marginLeft: '0.4rem', color: '#16A34A', fontWeight: 700 }}>· cuadro generado</span>}
+                      </div>
                     </div>
                     <select
                       value={pickerFormats[cat] || 'eliminatoria'}
                       onChange={e => setPickerFormats(prev => ({ ...prev, [cat]: e.target.value }))}
-                      style={{ flex: '0 1 240px', minWidth: '180px', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', fontWeight: 600, color: '#0F172A', background: 'white', cursor: 'pointer' }}
+                      disabled={!checked}
+                      style={{ flex: '0 1 240px', minWidth: '180px', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', fontWeight: 600, color: '#0F172A', background: checked ? 'white' : '#F1F5F9', cursor: checked ? 'pointer' : 'not-allowed' }}
                     >
                       <option value="eliminatoria">Eliminatoria (cuadro)</option>
                       <option value="liguilla">Liguilla (todos contra todos)</option>
