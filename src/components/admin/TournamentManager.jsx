@@ -119,6 +119,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showRegistrations, setShowRegistrations] = useState(false);
   const [regsList, setRegsList] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
+  // Reservas externas (gente que reservó pista normal) en el rango de
+  // fechas del torneo. El scheduler las trata como slots ocupados, así
+  // ningún partido del torneo cae sobre una reserva.
+  // Formato: { 'DD/MM HH:MM': Set<court_id> }
+  const [externalBookings, setExternalBookings] = useState({});
   // Filtro de categoría en el panel de inscripciones. 'Todas' muestra todo.
   const [regsCatFilter, setRegsCatFilter] = useState('Todas');
   // Modal de edición de disponibilidad para una inscripción online concreta.
@@ -211,6 +216,41 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }, 1200);
     return () => clearTimeout(timer);
   }, [dbLoaded, tournamentKey, tConfig, rounds, consRounds, participants, phase]);
+
+  // Carga las reservas externas (gente que ha reservado pista normal) en
+  // el rango de fechas del torneo. Las usa el scheduler para no pisar
+  // huecos ya reservados por otros usuarios. También las usa el editor
+  // de horario manual para mostrar esos slots como ocupados.
+  const loadExternalBookings = async () => {
+    if (!tConfig.startDate || !tConfig.endDate) return {};
+    try {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('date, time_slot, court_id, status')
+        .gte('date', tConfig.startDate)
+        .lte('date', tConfig.endDate)
+        .eq('status', 'confirmed');
+      if (error) throw error;
+      const map = {};
+      (data || []).forEach(b => {
+        const [y, m, d] = b.date.split('-');
+        const slot = `${d}/${m} ${b.time_slot}`;
+        if (!map[slot]) map[slot] = new Set();
+        map[slot].add(b.court_id);
+      });
+      setExternalBookings(map);
+      return map;
+    } catch (e) {
+      console.warn('No se pudieron cargar las reservas externas:', e?.message || e);
+      return {};
+    }
+  };
+  // Cargar al montar / cuando cambian las fechas del torneo
+  useEffect(() => {
+    if (!dbLoaded) return;
+    loadExternalBookings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbLoaded, tConfig.startDate, tConfig.endDate]);
 
   // Helper: get available courts count for a given slot hour
   // Devuelve el nombre legible de una pista. Si tConfig.courtNames[N] está
@@ -841,7 +881,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // dos partidos al mismo slot+pista (porque Pista 1 sigue libre y la
     // capacidad del slot total es 2). Con `occupied[slot]` (Set de
     // pistas tomadas) lo evitamos.
+    // Pre-poblamos con las reservas externas (gente que reservó pista
+    // normal): el scheduler trata esos slots+pista como ocupados, así no
+    // se cuela un partido del torneo encima de una reserva ya hecha.
     const occupied = {};
+    Object.entries(externalBookings).forEach(([slot, courts]) => {
+      occupied[slot] = new Set(courts);
+      slotUsage[slot] = (slotUsage[slot] ?? 0) + courts.size;
+    });
     const markOccupied = (slot, court) => {
       if (!occupied[slot]) occupied[slot] = new Set();
       occupied[slot].add(court);
@@ -1423,6 +1470,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   //   occupancy[slot (dd/mm HH:00)][court (1..N)] = { matchId, cat, isCons, label } | undefined
   const buildOccupancyMap = () => {
     const map = {};
+    // Pre-poblamos con reservas externas: aparecen en el editor de horario
+    // como ocupadas por "Reserva de pista" — el admin las ve y no puede
+    // pisarlas con un partido del torneo.
+    Object.entries(externalBookings).forEach(([slot, courts]) => {
+      if (!map[slot]) map[slot] = {};
+      courts.forEach(c => {
+        map[slot][c] = {
+          matchId: `booking-${slot}-${c}`,
+          cat: null,
+          isCons: false,
+          label: '🔒 Reserva de pista',
+        };
+      });
+    });
     const addRounds = (roundsObj, isCons) => {
       Object.entries(roundsObj).forEach(([ct, catR]) => {
         catR.forEach(round => round.forEach(m => {
@@ -1771,9 +1832,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   // occupiedCourts[slot] = Set(court) — qué pistas están YA ocupadas en cada
-  // slot a partir de los matches programados (rounds + consRounds).
+  // slot a partir de los matches programados (rounds + consRounds) Y de las
+  // reservas externas (gente que reservó pista normal). El scheduler usa
+  // este map para no pisar slots ya ocupados.
   const buildOccupiedCourts = (mainRounds, consRoundsSnap) => {
     const map = {};
+    // Pre-poblamos con reservas externas
+    Object.entries(externalBookings).forEach(([slot, courts]) => {
+      map[slot] = new Set(courts);
+    });
     const add = (roundsObj) => {
       Object.values(roundsObj).forEach(catR => {
         catR.forEach(round => round.forEach(m => {
