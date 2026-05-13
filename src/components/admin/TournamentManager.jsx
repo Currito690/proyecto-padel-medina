@@ -1225,55 +1225,62 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          return Math.max(predEarliest, barrier);
        };
 
-       // PASS 1: Pre-asigna slot+pista a R1+ respetando:
-       //   - earliestMinutes (orden temporal)
-       //   - allowedCourtsForCat (pistas permitidas por categoría)
-       //   - occupied (pistas ya tomadas en cada slot, across categorías)
-       //   - afinidad de jugadores (cuando son conocidos)
-       for (let r = 1; r < catRounds.length; r++) {
-         catRounds[r].forEach((match, mIdx) => {
-           const earliestMinutes = computeEarliestMinutes(r, mIdx);
-           let preferred = null;
-           if (match.p1?.finalSlots && match.p2?.finalSlots && !match.p1.isBye && !match.p2.isBye && !match.p1.isPlaceholder && !match.p2.isPlaceholder && !match.p1.isPrelimPlaceholder && !match.p2.isPrelimPlaceholder) {
-             const common = match.p1.finalSlots.filter(s => match.p2.finalSlots.includes(s));
-             if (common.length > 0) preferred = common;
-           }
-           const picked = pickSlotCourtForMatch(earliestMinutes, preferred);
-           if (picked) {
-             markOccupied(picked.slot, picked.court);
-             match.time = `${picked.slot} - Pista ${picked.court}`;
-           }
-         });
-       }
-
-       // PASS 2: Validación. Si algún match quedó en una hora anterior a sus
-       // predecesores, lo reasignamos. Hasta 3 iteraciones para propagar.
-       for (let pass = 0; pass < 3; pass++) {
-         let fixed = 0;
+       // Si manualR0=true, NO programamos R1+ tampoco. El admin pone las
+       // horas de la primera ronda viendo la disponibilidad de los jugadores,
+       // y después pulsa "Recalcular horarios" para auto-asignar R1+ usando
+       // como base las horas manuales que ha fijado. Sin esto, el R1+ se
+       // queda con horas auto-asignadas y ocupando pistas que el admin ve
+       // como "ocupadas" al ir a poner el R0.
+       if (!opts.manualR0) {
+         // PASS 1: Pre-asigna slot+pista a R1+ respetando:
+         //   - earliestMinutes (orden temporal)
+         //   - allowedCourtsForCat (pistas permitidas por categoría)
+         //   - occupied (pistas ya tomadas en cada slot, across categorías)
+         //   - afinidad de jugadores (cuando son conocidos)
          for (let r = 1; r < catRounds.length; r++) {
            catRounds[r].forEach((match, mIdx) => {
-             if (!match.time) return;
              const earliestMinutes = computeEarliestMinutes(r, mIdx);
-             const curMinutes = slotMinutesGen(getSlotPart(match.time));
-             if (curMinutes >= 0 && curMinutes < earliestMinutes) {
-               // Liberamos la pista vieja para que pueda volver a usarse
-               const oldParts = match.time.split(' - Pista');
-               const oldSlot = oldParts[0].trim();
-               const oldCourt = parseInt(oldParts[1], 10);
-               if (occupied[oldSlot] && Number.isFinite(oldCourt)) {
-                 occupied[oldSlot].delete(oldCourt);
-                 slotUsage[oldSlot] = Math.max(0, (slotUsage[oldSlot] ?? 0) - 1);
-               }
-               const picked = pickSlotCourtForMatch(earliestMinutes);
-               if (picked) {
-                 markOccupied(picked.slot, picked.court);
-                 match.time = `${picked.slot} - Pista ${picked.court}`;
-                 fixed++;
-               }
+             let preferred = null;
+             if (match.p1?.finalSlots && match.p2?.finalSlots && !match.p1.isBye && !match.p2.isBye && !match.p1.isPlaceholder && !match.p2.isPlaceholder && !match.p1.isPrelimPlaceholder && !match.p2.isPrelimPlaceholder) {
+               const common = match.p1.finalSlots.filter(s => match.p2.finalSlots.includes(s));
+               if (common.length > 0) preferred = common;
+             }
+             const picked = pickSlotCourtForMatch(earliestMinutes, preferred);
+             if (picked) {
+               markOccupied(picked.slot, picked.court);
+               match.time = `${picked.slot} - Pista ${picked.court}`;
              }
            });
          }
-         if (fixed === 0) break;
+
+         // PASS 2: Validación. Si algún match quedó en una hora anterior a sus
+         // predecesores, lo reasignamos. Hasta 3 iteraciones para propagar.
+         for (let pass = 0; pass < 3; pass++) {
+           let fixed = 0;
+           for (let r = 1; r < catRounds.length; r++) {
+             catRounds[r].forEach((match, mIdx) => {
+               if (!match.time) return;
+               const earliestMinutes = computeEarliestMinutes(r, mIdx);
+               const curMinutes = slotMinutesGen(getSlotPart(match.time));
+               if (curMinutes >= 0 && curMinutes < earliestMinutes) {
+                 const oldParts = match.time.split(' - Pista');
+                 const oldSlot = oldParts[0].trim();
+                 const oldCourt = parseInt(oldParts[1], 10);
+                 if (occupied[oldSlot] && Number.isFinite(oldCourt)) {
+                   occupied[oldSlot].delete(oldCourt);
+                   slotUsage[oldSlot] = Math.max(0, (slotUsage[oldSlot] ?? 0) - 1);
+                 }
+                 const picked = pickSlotCourtForMatch(earliestMinutes);
+                 if (picked) {
+                   markOccupied(picked.slot, picked.court);
+                   match.time = `${picked.slot} - Pista ${picked.court}`;
+                   fixed++;
+                 }
+               }
+             });
+           }
+           if (fixed === 0) break;
+         }
        }
 
        if (catRounds[0]) {
