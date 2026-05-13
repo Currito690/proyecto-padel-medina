@@ -137,6 +137,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // aplicará a tConfig.formatByCategory al pulsar "Generar".
   const [showFormatPicker, setShowFormatPicker] = useState(false);
   const [pickerFormats, setPickerFormats] = useState({});
+  // Si true, al generar el cuadro NO se auto-asignan horarios a la primera
+  // ronda. El admin los pone a mano viendo la disponibilidad de los jugadores.
+  const [pickerManualR0, setPickerManualR0] = useState(false);
 
   // Genera el QR del enlace público cada vez que cambia publishedId.
   // Usa la lib qrcode local — no depende de servicios externos.
@@ -750,6 +753,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       initial[c] = tConfig.formatByCategory?.[c] || 'eliminatoria';
     });
     setPickerFormats(initial);
+    setPickerManualR0(false); // por defecto auto-schedule completo
     setShowFormatPicker(true);
   };
 
@@ -762,11 +766,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const newFormats = { ...(tConfig.formatByCategory || {}), ...pickerFormats };
     setTConfig(prev => ({ ...prev, formatByCategory: newFormats }));
     setShowFormatPicker(false);
+    const manualR0 = pickerManualR0;
     // Pequeño delay para que el setState se aplique antes de generar
-    setTimeout(() => generateBracket(newFormats), 50);
+    setTimeout(() => generateBracket(newFormats, { manualR0 }), 50);
   };
 
-  const generateBracket = (overrideFormats) => {
+  const generateBracket = (overrideFormats, opts = {}) => {
     if (participants.length < 2) {
       toast("Añade al menos 2 parejas para crear un torneo.");
       return;
@@ -1159,7 +1164,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          catRounds = [prelimMatches, ...mainRounds];
        }
 
-       if (catRounds[0]) {
+       // Si opts.manualR0 está activo, NO programamos horarios para R0.
+       // El admin pondrá cada hora del primer partido a mano (con el editor
+       // de horario que ya tiene cada match). El resto de rondas se siguen
+       // programando con barrera de ronda — al asignar manualmente la hora
+       // de R0 podrá pulsar "Recalcular horarios" para que las siguientes
+       // se reorganicen respetando la elección manual.
+       if (catRounds[0] && !opts.manualR0) {
          catRounds[0].forEach(match => {
            if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
               const p1Final = match.p1.finalSlots || [];
@@ -2778,6 +2789,54 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const manualParticipants = participants.filter(p => !regsList.some(r => r.id === p.id));
     const filteredManual = manualParticipants.filter(p => matchesFilter(p.category));
 
+    // ── Cambiar la categoría de una inscripción ────────────────────────
+    // Útil cuando un jugador se equivocó al inscribirse. Actualiza la BBDD
+    // y refresca la lista. La disponibilidad va con la fila → "se mueve"
+    // sola a la nueva categoría.
+    const changeRegCategory = async (reg, newCat) => {
+      if (!newCat || newCat === reg.category) return;
+      const ok = await confirmDialog(
+        `¿Mover la pareja "${reg.player1_name} y ${reg.player2_name}" de "${reg.category}" a "${newCat}"?\n\nSu disponibilidad horaria se mantiene tal cual.`,
+        { title: 'Cambiar categoría', okText: 'Cambiar' }
+      );
+      if (!ok) return;
+      try {
+        const { error } = await supabase
+          .from('tournament_registrations')
+          .update({ category: newCat })
+          .eq('id', reg.id);
+        if (error) throw error;
+        setRegsList(prev => prev.map(r => r.id === reg.id ? { ...r, category: newCat } : r));
+        toast(`✓ Pareja movida a ${newCat}.`, 'success');
+      } catch (e) {
+        console.error('changeRegCategory error:', e);
+        toast('Error al cambiar la categoría: ' + (e.message || e), 'error');
+      }
+    };
+
+    // ── Borrar una inscripción duplicada ────────────────────────────────
+    // Elimina la fila (incluyendo sus tallas) para que no se cuente doble
+    // en el recuento de camisetas ni se entrene a generar el cuadro.
+    const deleteRegistration = async (reg) => {
+      const ok = await confirmDialog(
+        `¿Borrar definitivamente la inscripción de "${reg.player1_name} y ${reg.player2_name}" en "${reg.category}"?\n\nSe eliminan también sus tallas de camiseta y su disponibilidad. Esta acción no se puede deshacer.`,
+        { title: 'Borrar inscripción', okText: 'Borrar', danger: true }
+      );
+      if (!ok) return;
+      try {
+        const { error } = await supabase
+          .from('tournament_registrations')
+          .delete()
+          .eq('id', reg.id);
+        if (error) throw error;
+        setRegsList(prev => prev.filter(r => r.id !== reg.id));
+        toast('🗑️ Inscripción borrada.', 'success');
+      } catch (e) {
+        console.error('deleteRegistration error:', e);
+        toast('Error al borrar la inscripción: ' + (e.message || e), 'error');
+      }
+    };
+
     // ── Edición de disponibilidad de una pareja online ──────────────────
     // Abre el grid editor con los huecos bloqueados que ya tenía la pareja.
     const openEditRegAvail = (reg) => {
@@ -2819,6 +2878,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       }
     };
     // Recuento de tallas combinando online + manuales.
+    // IMPORTANTE: deduplicamos por (categoría, nombres normalizados). Si una
+    // pareja figura dos veces como duplicada, sus tallas SOLO cuentan una vez
+    // — si no, el club encargaría/contaría el doble de camisetas.
     const shirtTally = (() => {
       const counts = Object.fromEntries(SHIRT_SIZES.map(s => [s, 0]));
       let unassigned = 0;
@@ -2828,7 +2890,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         if (s && counts[s] !== undefined) counts[s]++;
         else unassigned++;
       };
+      const seen = new Set();
       regsList.forEach(r => {
+        const k = dupKey(r);
+        if (seen.has(k)) return; // duplicado: ya contado
+        seen.add(k);
         push(r.player1_shirt_size || r.shirt_size);
         push(r.player2_shirt_size);
       });
@@ -2938,12 +3004,35 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player1_name}</div>
                           <div style={{ fontWeight: 700, color: '#0F172A' }}>{r.player2_name}</div>
                           {isDup && (
-                            <div style={{ marginTop: '0.3rem', display: 'inline-block', padding: '0.15rem 0.45rem', borderRadius: '999px', background: '#FEE2E2', color: '#B91C1C', fontSize: '0.68rem', fontWeight: 800 }} title={`Esta pareja figura ${dupCounts[dupKey(r)]} veces en ${r.category}`}>
-                              ⚠️ Duplicada ×{dupCounts[dupKey(r)]}
+                            <div style={{ marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                              <span style={{ display: 'inline-block', padding: '0.15rem 0.45rem', borderRadius: '999px', background: '#FEE2E2', color: '#B91C1C', fontSize: '0.68rem', fontWeight: 800 }} title={`Esta pareja figura ${dupCounts[dupKey(r)]} veces en ${r.category}`}>
+                                ⚠️ Duplicada ×{dupCounts[dupKey(r)]}
+                              </span>
+                              <button onClick={() => deleteRegistration(r)} style={{ padding: '0.15rem 0.45rem', borderRadius: '0.3rem', border: '1px solid #FCA5A5', background: 'white', color: '#B91C1C', fontWeight: 700, fontSize: '0.65rem', cursor: 'pointer' }} title="Borrar esta inscripción duplicada (también sus tallas)">
+                                🗑️ Borrar
+                              </button>
                             </div>
                           )}
                         </td>
-                        <td style={tdCell}>{r.category}</td>
+                        <td style={tdCell}>
+                          {tournamentCategories.length > 1 ? (
+                            <select
+                              value={r.category}
+                              onChange={e => changeRegCategory(r, e.target.value)}
+                              style={{ padding: '0.3rem 0.45rem', borderRadius: '0.4rem', border: '1.5px solid #CBD5E1', background: 'white', fontSize: '0.78rem', fontWeight: 700, color: '#0F172A', cursor: 'pointer' }}
+                              title="Cambiar categoría de esta pareja"
+                            >
+                              {!tournamentCategories.includes(r.category) && (
+                                <option value={r.category}>{r.category}</option>
+                              )}
+                              {tournamentCategories.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            r.category
+                          )}
+                        </td>
                         <td style={tdCell}>
                           <div style={{ fontSize: '0.78rem', color: '#475569' }}>{r.player1_phone}</div>
                           <div style={{ fontSize: '0.78rem', color: '#475569' }}>{r.player2_phone}</div>
@@ -4285,6 +4374,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   </select>
                 </div>
               )}
+
+              <div style={{ marginTop: '0.25rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={pickerManualR0}
+                    onChange={e => setPickerManualR0(e.target.checked)}
+                    style={{ width: '16px', height: '16px', marginTop: '0.15rem', cursor: 'pointer', accentColor: '#0EA5E9' }}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: '#075985', lineHeight: 1.5 }}>
+                    <strong>Pongo yo los horarios del primer partido a mano.</strong><br/>
+                    <span style={{ color: '#0369A1', fontSize: '0.72rem' }}>
+                      Útil para coordinar manualmente la primera ronda con la disponibilidad de los jugadores. La primera ronda se generará SIN horario — usa el icono ✎ de cada match para fijar la hora. Después pulsa "🔄 Recalcular horarios" para que el resto del cuadro se acomode a tu elección.
+                    </span>
+                  </span>
+                </label>
+              </div>
 
               {(rounds && Object.keys(rounds).length > 0) && (
                 <div style={{ marginTop: '0.5rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FEF2F2', border: '1px solid #FECACA' }}>
