@@ -149,6 +149,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Por defecto se marcan las que NO tienen rounds aún. El admin puede
   // marcar/desmarcar para regenerar solo las que quiera y conservar las demás.
   const [pickerSelectedCats, setPickerSelectedCats] = useState({});
+  // Estructura del cuadro cuando el nº de parejas no es potencia de 2:
+  //   false (default) → Ronda Previa (cuadro principal más pequeño)
+  //   true            → Octavos con byes (cuadro principal más grande)
+  const [pickerUseByes, setPickerUseByes] = useState(false);
 
   // Genera el QR del enlace público cada vez que cambia publishedId.
   // Usa la lib qrcode local — no depende de servicios externos.
@@ -805,6 +809,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setPickerFormats(initial);
     setPickerSelectedCats(initialSel);
     setPickerManualR0(false); // por defecto auto-schedule completo
+    setPickerUseByes(false); // por defecto: ronda previa
     setShowFormatPicker(true);
   };
 
@@ -818,6 +823,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setTConfig(prev => ({ ...prev, formatByCategory: newFormats }));
     setShowFormatPicker(false);
     const manualR0 = pickerManualR0;
+    const useByes = pickerUseByes;
     // Lista de categorías a regenerar EN ESTA pasada. Si ninguna está
     // marcada, asumimos "todas" (compatibilidad con el botón directo).
     const onlyCats = Object.entries(pickerSelectedCats).filter(([, v]) => v).map(([c]) => c);
@@ -826,7 +832,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       return;
     }
     // Pequeño delay para que el setState se aplique antes de generar
-    setTimeout(() => generateBracket(newFormats, { manualR0, onlyCats }), 50);
+    setTimeout(() => generateBracket(newFormats, { manualR0, onlyCats, useByes }), 50);
   };
 
   const generateBracket = (overrideFormats, opts = {}) => {
@@ -1142,17 +1148,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          return;
        }
 
-       // ── Cuadro eliminatoria con RONDA PREVIA ──────────────────────────
-       // Estrategia: se usa la mayor potencia de 2 ≤ totalParejas como
-       // tamaño del cuadro principal. El sobrante de parejas juega una
-       // ronda PREVIA (corta) y los ganadores entran al cuadro principal
-       // sustituyendo a los placeholders. Así se evitan brackets inflados
-       // a la siguiente potencia de 2 con muchísimos byes (problema típico
-       // cuando hay 17, 18, 20… parejas).
+       // ── Cuadro eliminatoria — dos estrategias posibles ──────────────────
+       // a) RONDA PREVIA (default): mayor potencia de 2 ≤ totalParejas como
+       //    tamaño del cuadro principal. El sobrante juega una ronda PREVIA
+       //    corta y los ganadores entran al cuadro principal.
+       // b) OCTAVOS CON BYES (opts.useByes): siguiente potencia de 2 ≥ total
+       //    como tamaño del cuadro principal, con byes para rellenar. Estructura
+       //    clásica con todos los partidos en R1 (octavos) y algunas parejas
+       //    pasan directas a cuartos por bye.
        let floorPow = 1;
        while (floorPow * 2 <= catParts.length) floorPow *= 2;
-       const prelimMatchCount = catParts.length - floorPow;
-       const directCount = floorPow - prelimMatchCount; // plazas directas en main
+       let ceilPow = 1;
+       while (ceilPow < catParts.length) ceilPow *= 2;
+       const useByesMode = !!opts.useByes && catParts.length > 1;
+       const mainBracketSize = useByesMode ? ceilPow : floorPow;
+       const prelimMatchCount = useByesMode ? 0 : (catParts.length - floorPow);
+       const directCount = mainBracketSize - prelimMatchCount; // plazas directas en main
 
        const seedPositions = (n) => {
          if (n === 1) return [1];
@@ -1161,7 +1172,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          for (const s of half) { out.push(s); out.push(n + 1 - s); }
          return out;
        };
-       const positions = seedPositions(floorPow);
+       const positions = seedPositions(mainBracketSize);
 
        const seededHere = catParts
          .filter(p => Number.isFinite(p.seed) && p.seed > 0)
@@ -1173,30 +1184,73 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          [unseededAll[i], unseededAll[j]] = [unseededAll[j], unseededAll[i]];
        }
 
-       const slot = new Array(floorPow).fill(null);
+       const slot = new Array(mainBracketSize).fill(null);
        // 1) Coloca los seeds en sus posiciones estándar (#1 y #2 en lados
        //    opuestos del cuadro, etc.)
        seededHere.forEach(p => {
          const idx = positions.indexOf(p.seed);
-         if (idx >= 0 && idx < floorPow) slot[idx] = p;
+         if (idx >= 0 && idx < mainBracketSize) slot[idx] = p;
        });
 
        let catRounds;
 
        if (prelimMatchCount === 0) {
-         // El nº de parejas es ya potencia de 2 → cuadro estándar sin previa
-         // ni byes. Rellenamos slots libres con unseeded en el orden mezclado.
-         let ui = 0;
-         for (let i = 0; i < floorPow; i++) {
-           if (slot[i]) continue;
-           slot[i] = unseededAll[ui++];
+         // El nº de parejas es ya potencia de 2 (o useByes=true → relleno con
+         // byes). Rellenamos slots libres con unseeded en el orden mezclado;
+         // si faltan, rellenamos con BYEs distribuidos para no juntar dos byes
+         // en el mismo R1 (regla: máx 1 bye por partido de R1).
+         const byesNeededHere = Math.max(0, mainBracketSize - catParts.length);
+         if (byesNeededHere === 0) {
+           let ui = 0;
+           for (let i = 0; i < mainBracketSize; i++) {
+             if (slot[i]) continue;
+             slot[i] = unseededAll[ui++];
+           }
+         } else {
+           // useByes mode con sobrantes: distribuye byes inteligentemente.
+           // 1) Cada seed prefiere bye en SU partido de R1 (sortea ventaja).
+           // 2) Byes restantes: uno por R1 sin bye todavía.
+           const byeSlots = new Set();
+           const matchesWithBye = new Set();
+           let byesAllocated = 0;
+           const seedSlotsSorted = seededHere
+             .map(p => positions.indexOf(p.seed))
+             .filter(i => i >= 0 && i < mainBracketSize)
+             .sort((a, b) => slot[a].seed - slot[b].seed);
+           for (const sIdx of seedSlotsSorted) {
+             if (byesAllocated >= byesNeededHere) break;
+             const matchIdx = Math.floor(sIdx / 2);
+             if (matchesWithBye.has(matchIdx)) continue;
+             byeSlots.add(sIdx ^ 1);
+             matchesWithBye.add(matchIdx);
+             byesAllocated++;
+           }
+           for (let m = 0; m < mainBracketSize / 2 && byesAllocated < byesNeededHere; m++) {
+             if (matchesWithBye.has(m)) continue;
+             const s1 = m * 2, s2 = m * 2 + 1;
+             const target = slot[s1] ? s2 : (slot[s2] ? s1 : s2);
+             byeSlots.add(target);
+             matchesWithBye.add(m);
+             byesAllocated++;
+           }
+           let ui = 0;
+           for (let i = 0; i < mainBracketSize; i++) {
+             if (slot[i]) continue;
+             if (byeSlots.has(i)) {
+               slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
+             } else if (ui < unseededAll.length) {
+               slot[i] = unseededAll[ui++];
+             } else {
+               slot[i] = { id: `bye-${cat}-${i}`, name: '---', isBye: true };
+             }
+           }
          }
          catParts = slot;
 
-         const numRounds = Math.log2(floorPow);
+         const numRounds = Math.log2(mainBracketSize);
          catRounds = [];
          for (let r = 0; r < numRounds; r++) {
-           const numMatchesInRound = floorPow / Math.pow(2, r + 1);
+           const numMatchesInRound = mainBracketSize / Math.pow(2, r + 1);
            const matches = [];
            for (let m = 0; m < numMatchesInRound; m++) {
              matches.push({
@@ -4638,6 +4692,32 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   </select>
                 </div>
               )}
+
+              <div style={{ marginTop: '0.25rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#FFF7ED', border: '1px solid #FED7AA' }}>
+                <p style={{ margin: '0 0 0.4rem', fontSize: '0.72rem', fontWeight: 800, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Estructura del cuadro</p>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', cursor: 'pointer', marginBottom: '0.4rem' }}>
+                  <input
+                    type="radio"
+                    checked={!pickerUseByes}
+                    onChange={() => setPickerUseByes(false)}
+                    style={{ width: '16px', height: '16px', marginTop: '0.15rem', cursor: 'pointer', accentColor: '#F97316' }}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: '#9A3412', lineHeight: 1.5 }}>
+                    <strong>Ronda Previa</strong> — cuadro principal pequeño, sobrantes juegan una previa corta antes de cuartos. <span style={{ color: '#C2410C', fontSize: '0.7rem' }}>(Por defecto, menos byes)</span>
+                  </span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={pickerUseByes}
+                    onChange={() => setPickerUseByes(true)}
+                    style={{ width: '16px', height: '16px', marginTop: '0.15rem', cursor: 'pointer', accentColor: '#F97316' }}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: '#9A3412', lineHeight: 1.5 }}>
+                    <strong>Octavos con byes</strong> — cuadro principal grande (siguiente potencia de 2), parejas de más entran como byes. <span style={{ color: '#C2410C', fontSize: '0.7rem' }}>(Estructura clásica)</span>
+                  </span>
+                </label>
+              </div>
 
               <div style={{ marginTop: '0.25rem', padding: '0.75rem 0.85rem', borderRadius: '0.6rem', background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', cursor: 'pointer' }}>
