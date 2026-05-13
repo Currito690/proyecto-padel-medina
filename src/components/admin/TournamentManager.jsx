@@ -849,6 +849,26 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     };
     const isCourtFree = (slot, court) => !(occupied[slot]?.has(court));
 
+    // Tracking POR PAREJA: en qué slots ya está jugando cada pareja. Si
+    // una pareja está inscrita en DOS categorías (Masculino C y Masculino D),
+    // sus partidos no pueden coincidir en la misma franja horaria. Sin esto
+    // el scheduler le pone dos partidos a la misma hora en distinta pista.
+    const playerSlots = {}; // { participantId: Set<slot> }
+    const markPlayerSlot = (slot, p1, p2) => {
+      [p1, p2].forEach(p => {
+        if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return;
+        if (!playerSlots[p.id]) playerSlots[p.id] = new Set();
+        playerSlots[p.id].add(slot);
+      });
+    };
+    const arePlayersFree = (slot, p1, p2) => {
+      for (const p of [p1, p2]) {
+        if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) continue;
+        if (playerSlots[p.id]?.has(slot)) return false;
+      }
+      return true;
+    };
+
     // Expandir disponibilidad de TODOS los participantes (excluyendo sus horas bloqueadas)
     const expandedParticipants = p.map(part => {
        if (part.isBye) return part;
@@ -893,17 +913,27 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const catList = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
     const newAllRounds = {};
 
-    // If only one category exists, assign all participants to it regardless of stored category
+    // Normaliza la categoría preservando el formato dual ("A y B"). Si la
+    // categoría guardada no coincide con ninguna del torneo en absoluto,
+    // fallback a la primera. Si es dual con al menos una válida, se mantiene.
+    const splitCatStr = (raw) => (raw || '').split(/\s+y\s+|\s+\+\s+/).map(s => s.trim()).filter(Boolean);
     const normalizedParticipants = expandedParticipants.map(exp => {
       if (exp.isBye) return exp;
       if (catList.length === 1) return { ...exp, category: catList[0] };
-      const match = catList.find(c => c.toLowerCase() === (exp.category || '').toLowerCase());
-      if (!match) return { ...exp, category: catList[0] }; // fallback to first category
-      return { ...exp, category: match };
+      const parts = splitCatStr(exp.category);
+      const anyValid = parts.some(p => catList.some(c => c.toLowerCase() === p.toLowerCase()));
+      if (!anyValid) return { ...exp, category: catList[0] };
+      return exp; // mantener tal cual (puede ser "A y B")
     });
 
     catList.forEach(cat => {
-       let catParts = normalizedParticipants.filter(exp => exp.category === cat);
+       // Una pareja con categoría "Masculino C y Masculino D" debe aparecer
+       // en AMBAS catList (cuadro de C y cuadro de D). El scheduler enforce
+       // que no se solapen sus partidos vía playerSlots.
+       let catParts = normalizedParticipants.filter(exp => {
+         const parts = splitCatStr(exp.category);
+         return parts.some(p => p.toLowerCase() === cat.toLowerCase()) || exp.category === cat;
+       });
        if (catParts.length < 2) return;
 
        // overrideFormats viene del modal de "Generar Cuadro" — lo aplicamos
@@ -927,10 +957,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        //   - occupied (qué pistas ya están tomadas en cada slot — across cats)
        //   - tConfig.courtStartHours (a partir de qué hora abre cada pista)
        //   - preferred (afinidad horaria de los jugadores; preferencia)
-       const pickSlotCourtForMatch = (earliestMinutes, preferred = null) => {
+       //   - p1, p2: para evitar que la misma pareja juegue 2 partidos a la
+       //     vez en categorías distintas (caso doble inscripción).
+       const pickSlotCourtForMatch = (earliestMinutes, preferred = null, p1 = null, p2 = null) => {
          const tryList = (list) => {
            for (const s of list) {
              if (slotMinutesGen(s) < earliestMinutes) continue;
+             if (!arePlayersFree(s, p1, p2)) continue; // anti-solape
              const hourPart = s.split(' ')[1];
              for (const c of allowedCourtsForCat) {
                if (!isCourtFree(s, c)) continue;
@@ -948,12 +981,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          const f2 = tryList(globalSlots);
          if (f2) return f2;
          const lastSlot = globalSlots[globalSlots.length - 1];
-         if (lastSlot) {
+        if (lastSlot) {
            const [lastDateLabel, lastHour] = lastSlot.split(' ');
            const lastHourIdx = HOURS.indexOf(lastHour);
            for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
              const s = `${lastDateLabel} ${HOURS[h]}`;
              if (slotMinutesGen(s) < earliestMinutes) continue;
+             if (!arePlayersFree(s, p1, p2)) continue;
              for (const c of allowedCourtsForCat) {
                if (!isCourtFree(s, c)) continue;
                const startsAt = tConfig.courtStartHours?.[c];
@@ -970,6 +1004,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              for (let h = 0; h < HOURS.length; h++) {
                const s = `${nextLabel} ${HOURS[h]}`;
                if (slotMinutesGen(s) < earliestMinutes) continue;
+               if (!arePlayersFree(s, p1, p2)) continue;
                for (const c of allowedCourtsForCat) {
                  if (!isCourtFree(s, c)) continue;
                  const startsAt = tConfig.courtStartHours?.[c];
@@ -998,11 +1033,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              const p2Slots = t2.finalSlots?.length ? t2.finalSlots : globalSlots;
              let common = p1Slots.filter(s => p2Slots.includes(s));
              if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-             const picked = pickSlotCourtForMatch(0, common);
+             const picked = pickSlotCourtForMatch(0, common, t1, t2);
              const time = picked
                ? `${picked.slot} - Pista ${picked.court}`
                : 'Sin horario';
-             if (picked) markOccupied(picked.slot, picked.court);
+             if (picked) {
+               markOccupied(picked.slot, picked.court);
+               markPlayerSlot(picked.slot, t1, t2);
+             }
              roundMatches.push({
                id: `rr-${cat}-r${r}-m${roundMatches.length}`,
                round: r, matchIndex: roundMatches.length,
@@ -1177,9 +1215,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               const p2Final = match.p2.finalSlots || [];
               let common = p1Final.filter(s => p2Final.includes(s));
               if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
-              const picked = pickSlotCourtForMatch(0, common);
+              const picked = pickSlotCourtForMatch(0, common, match.p1, match.p2);
               if (picked) {
                 markOccupied(picked.slot, picked.court);
+                markPlayerSlot(picked.slot, match.p1, match.p2);
                 match.time = `${picked.slot} - Pista ${picked.court}`;
               }
            }
@@ -1265,9 +1304,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                const common = match.p1.finalSlots.filter(s => match.p2.finalSlots.includes(s));
                if (common.length > 0) preferred = common;
              }
-             const picked = pickSlotCourtForMatch(earliestMinutes, preferred);
+             const picked = pickSlotCourtForMatch(earliestMinutes, preferred, match.p1, match.p2);
              if (picked) {
                markOccupied(picked.slot, picked.court);
+               markPlayerSlot(picked.slot, match.p1, match.p2);
                match.time = `${picked.slot} - Pista ${picked.court}`;
              }
            });
@@ -1290,9 +1330,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                    occupied[oldSlot].delete(oldCourt);
                    slotUsage[oldSlot] = Math.max(0, (slotUsage[oldSlot] ?? 0) - 1);
                  }
-                 const picked = pickSlotCourtForMatch(earliestMinutes);
+                 // También liberamos el slot viejo del tracking por jugador
+                 [match.p1, match.p2].forEach(p => {
+                   if (p && playerSlots[p.id]) playerSlots[p.id].delete(oldSlot);
+                 });
+                 const picked = pickSlotCourtForMatch(earliestMinutes, null, match.p1, match.p2);
                  if (picked) {
                    markOccupied(picked.slot, picked.court);
+                   markPlayerSlot(picked.slot, match.p1, match.p2);
                    match.time = `${picked.slot} - Pista ${picked.court}`;
                    fixed++;
                  }
