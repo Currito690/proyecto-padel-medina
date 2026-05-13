@@ -4497,26 +4497,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const { match, isCons, cat } = editingTime;
         const currentSlot = match.time ? match.time.split(' - Pista')[0].trim() : null;
         const currentCourt = match.time ? parseInt(match.time.split(' - Pista')[1]) : null;
-        // Slots en los que ALGUNA de las dos parejas ha dicho que no puede
-        // jugar (afinidad horaria). Lo usamos para marcar visualmente esas
-        // celdas como 'No disponible para la pareja' — el admin sigue
-        // pudiendo asignarlas pero se le avisa.
-        const blockedForPair = new Set();
-        const addBlocks = (p) => {
-          if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return;
-          (p.prefRules || []).forEach(rule => (rule.slots || []).forEach(s => blockedForPair.add(s)));
+        // Construimos un set por cada pareja con los slots que marcó como
+        // no disponibles. Así en la grid podemos mostrar QUIÉN bloquea cada
+        // celda (🅰️ = pareja 1, 🅱️ = pareja 2, 🅰🅱 = las dos).
+        const blocksFor = (p) => {
+          if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return new Set();
+          const out = new Set();
+          (p.prefRules || []).forEach(rule => (rule.slots || []).forEach(s => out.add(s)));
+          return out;
         };
-        addBlocks(match.p1);
-        addBlocks(match.p2);
-        const blockedLabels = {};
-        const addLabels = (p, who) => {
-          if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return;
-          (p.prefRules || []).forEach(rule => (rule.slots || []).forEach(s => {
-            blockedLabels[s] = (blockedLabels[s] ? blockedLabels[s] + ' + ' : '') + who;
-          }));
-        };
-        addLabels(match.p1, match.p1?.name || 'J1');
-        addLabels(match.p2, match.p2?.name || 'J2');
+        const blockedByP1 = blocksFor(match.p1);
+        const blockedByP2 = blocksFor(match.p2);
 
         return (
           <div
@@ -4547,6 +4538,40 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   ))}
                 </div>
 
+                {/* Resumen de disponibilidad de cada pareja por separado.
+                    🅰 = pareja 1, 🅱 = pareja 2 — los mismos iconos aparecen
+                    en las celdas de la grid indicando QUIÉN bloquea cada hora. */}
+                {[
+                  { p: match.p1, badge: '🅰' },
+                  { p: match.p2, badge: '🅱' },
+                ].map(({ p, badge }, idx) => {
+                  if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return null;
+                  const rules = p.prefRules || [];
+                  return (
+                    <div key={`avail-${idx}`} style={{ padding: '0.6rem 0.85rem', borderRadius: '0.6rem', background: rules.length === 0 ? '#F0FDF4' : '#FFF7ED', border: `1px solid ${rules.length === 0 ? '#BBF7D0' : '#FED7AA'}` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0F172A' }}>
+                          {badge} <span style={{ marginLeft: '0.2rem' }}>{p.name}</span>
+                        </span>
+                        {rules.length === 0 ? (
+                          <span style={{ fontSize: '0.72rem', color: '#15803D', fontWeight: 700 }}>✓ Sin bloqueos — siempre disponible</span>
+                        ) : (
+                          <span style={{ fontSize: '0.72rem', color: '#9A3412', fontWeight: 700 }}>⚠ NO disponible en:</span>
+                        )}
+                      </div>
+                      {rules.length > 0 && (
+                        <div style={{ marginTop: '0.35rem', display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                          {rules.map(r => (
+                            <span key={r.id || r.day} style={{ fontSize: '0.7rem', color: '#9A3412', background: 'white', border: '1px solid #FED7AA', padding: '0.15rem 0.45rem', borderRadius: '0.3rem' }}>
+                              {r.label || r.day}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
                 <div style={{ display: 'flex', gap: '1.25rem', fontSize: '0.72rem', color: '#64748B', fontWeight: 600, flexWrap: 'wrap' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
                     <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#F0FDF4', border: '1.5px solid #BBF7D0' }} /> Libre
@@ -4558,7 +4583,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#DBEAFE', border: '1.5px solid #93C5FD' }} /> Selección actual
                   </span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                    <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#FED7AA', border: '1.5px solid #F97316' }} /> No disponible para la pareja
+                    <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#FED7AA', border: '1.5px solid #F97316' }} /> 🅰 o 🅱 bloquea
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#FB923C', border: '1.5px solid #C2410C' }} /> 🅰🅱 ambas bloquean
                   </span>
                 </div>
 
@@ -4584,18 +4612,38 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             const isCurrent = currentSlot === slot && currentCourt === c;
                             const isThisMatch = info?.matchId === match.id;
                             const occupied = !!info && !isThisMatch;
-                            const pairBlocked = blockedForPair.has(slot) && !occupied && !isCurrent;
-                            // Prioridad de color: ocupada > selección actual > no disponible pareja > libre
-                            const bg = occupied ? '#FEE2E2' : isCurrent ? '#DBEAFE' : pairBlocked ? '#FED7AA' : '#F0FDF4';
-                            const border = occupied ? '1.5px solid #FECACA' : isCurrent ? '1.5px solid #93C5FD' : pairBlocked ? '1.5px solid #F97316' : '1.5px solid #BBF7D0';
-                            const textColor = occupied ? '#B91C1C' : isCurrent ? '#1D4ED8' : pairBlocked ? '#9A3412' : '#15803D';
+                            const byP1 = blockedByP1.has(slot);
+                            const byP2 = blockedByP2.has(slot);
+                            const pairBlocked = (byP1 || byP2) && !occupied && !isCurrent;
+                            // Color más fuerte si ambas parejas bloquean ese slot
+                            const bothBlocked = byP1 && byP2 && pairBlocked;
+                            const bg = occupied ? '#FEE2E2'
+                              : isCurrent ? '#DBEAFE'
+                              : bothBlocked ? '#FB923C'
+                              : pairBlocked ? '#FED7AA'
+                              : '#F0FDF4';
+                            const border = occupied ? '1.5px solid #FECACA'
+                              : isCurrent ? '1.5px solid #93C5FD'
+                              : bothBlocked ? '1.5px solid #C2410C'
+                              : pairBlocked ? '1.5px solid #F97316'
+                              : '1.5px solid #BBF7D0';
+                            const textColor = occupied ? '#B91C1C'
+                              : isCurrent ? '#1D4ED8'
+                              : bothBlocked ? '#7C2D12'
+                              : pairBlocked ? '#9A3412'
+                              : '#15803D';
+                            // Etiqueta visual: indica QUIÉN bloquea
+                            //   🅰 = solo pareja 1, 🅱 = solo pareja 2, 🅰🅱 = las dos
+                            const blockBadge = bothBlocked ? '🅰🅱' : byP1 ? '🅰' : byP2 ? '🅱' : '';
                             const label = occupied ? info.label
                               : isCurrent ? 'Actual'
-                              : pairBlocked ? '⚠ No disp.'
+                              : pairBlocked ? `${blockBadge} No disp.`
                               : 'Libre';
                             const tooltip = occupied ? `Ocupada: ${info.label}`
                               : isCurrent ? 'Asignada a este partido'
-                              : pairBlocked ? `No disponible para: ${blockedLabels[slot] || 'pareja'}`
+                              : bothBlocked ? `Ambas parejas marcaron esta hora como NO disponible (${match.p1?.name || '🅰'} + ${match.p2?.name || '🅱'})`
+                              : byP1 ? `🅰 ${match.p1?.name || 'Pareja 1'} marcó esta hora como NO disponible`
+                              : byP2 ? `🅱 ${match.p2?.name || 'Pareja 2'} marcó esta hora como NO disponible`
                               : 'Libre — pulsa para asignar';
                             return (
                               <td key={c} style={{ padding: '0.25rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
