@@ -3215,6 +3215,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                     {cs === 'confirmed' ? 'Cambiar a rechazada' : 'Cambiar a confirmada'}
                                   </button>
                                 )}
+                                {/* Botón borrar siempre visible — útil tanto para
+                                    duplicados como para inscripciones erróneas */}
+                                <button
+                                  onClick={() => deleteRegistration(r)}
+                                  title="Borrar esta inscripción (también sus tallas y disponibilidad)"
+                                  style={{ marginTop: '0.15rem', padding: '0.25rem 0.55rem', borderRadius: '0.4rem', border: '1px solid #FCA5A5', background: 'white', color: '#B91C1C', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                                >
+                                  🗑️ Borrar
+                                </button>
                               </div>
                             );
                           })()}
