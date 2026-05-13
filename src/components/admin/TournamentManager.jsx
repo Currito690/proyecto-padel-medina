@@ -1199,10 +1199,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        const gapMinutes = gapSlots * 60;
        const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
 
+       // Distribución por días: si el torneo dura varios días, NO queremos
+       // que la final caiga el día 1. Asignamos cada ronda a un día mínimo
+       // proporcional: r=0 → día 0, r=última (final) → último día, el resto
+       // repartidos linealmente. Si el torneo es de 1 solo día, sin efecto.
+       const numRoundsTotal = catRounds.length;
+       const numDaysTotal = activeDateList.length;
+       const minDayForRound = (r) => {
+         if (numDaysTotal <= 1 || numRoundsTotal <= 1) return 0;
+         return Math.round((r * (numDaysTotal - 1)) / (numRoundsTotal - 1));
+       };
+       const minDayMinutesForRound = (r) => {
+         const idx = minDayForRound(r);
+         const dateLabel = activeDateList[idx];
+         if (!dateLabel) return 0;
+         const startH = idx === 0 ? (tConfig.firstDayStartHour || tConfig.startHour) : tConfig.startHour;
+         return slotMinutesGen(`${dateLabel} ${startH}`);
+       };
+
        // computeEarliestMinutes: timestamp mínimo permitido (en minutos absolutos)
        // para un partido de ronda r, partido mIdx. Combina:
        //   - predecesores específicos (con previa: nextSlot routing; sino m/2)
        //   - barrera de ronda: max time de cualquier partido real en r-1
+       //   - día mínimo asignado a la ronda (la final cae el último día)
        const computeEarliestMinutes = (r, mIdx) => {
          if (r === 0) return 0;
          let predTimes = [];
@@ -1222,7 +1241,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            .map(m => slotMinutesGen(getSlotPart(m.time)))
            .filter(m => m >= 0);
          const barrier = barrierMinutes.length > 0 ? Math.max(...barrierMinutes) + gapMinutes : 0;
-         return Math.max(predEarliest, barrier);
+         const minDay = minDayMinutesForRound(r);
+         return Math.max(predEarliest, barrier, minDay);
        };
 
        // Si manualR0=true, NO programamos R1+ tampoco. El admin pone las
@@ -1463,6 +1483,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const gapSlots = Math.ceil((durationMin + restMin) / 60);
         const allowedCourts = getAllowedCourts(cat, isCons);
         const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
+        // Día mínimo para cada ronda: spread proporcional a lo largo del
+        // torneo (R0 → día 1, final → último día, intermedias repartidas).
+        const activeDatesArr = getActiveDates(tConfig.startDate, tConfig.endDate);
+        const numDays = activeDatesArr.length;
+        const numRounds = catRounds.length;
+        const minDayIdxForRound = (r) => {
+          if (numDays <= 1 || numRounds <= 1) return 0;
+          return Math.round((r * (numDays - 1)) / (numRounds - 1));
+        };
+        const minDayIdxToSlotIdx = (dayIdx) => {
+          const dateLabel = activeDatesArr[dayIdx];
+          if (!dateLabel) return 0;
+          const startH = dayIdx === 0 ? (tConfig.firstDayStartHour || tConfig.startHour) : tConfig.startHour;
+          const slot = `${dateLabel} ${startH}`;
+          const idx = globalSlots.indexOf(slot);
+          return idx >= 0 ? idx : 0;
+        };
         for (let r = 0; r < catRounds.length; r++) {
           // Barrera de ronda: ningún match de r puede ir antes que el último
           // match real de r-1 (también si los predecesores específicos son byes
@@ -1471,6 +1508,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             ? catRounds[r - 1].map(pm => slotIdx(getSlot(pm.time))).filter(i => i >= 0)
             : [];
           const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
+          const minDaySlot = r > 0 ? minDayIdxToSlotIdx(minDayIdxForRound(r)) : 0;
 
           catRounds[r].forEach((m, mIdx) => {
             if (m.timeManual && m.time) return; // respeta lo puesto por admin
@@ -1494,7 +1532,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               }
               const indices = predTimes.map(t => slotIdx(getSlot(t))).filter(i => i >= 0);
               const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
-              earliestIdx = Math.max(predEarliestIdx, barrierIdx);
+              earliestIdx = Math.max(predEarliestIdx, barrierIdx, minDaySlot);
             }
 
             const occupied = buildOccupiedCourts(nextMain, nextCons);
