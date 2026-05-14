@@ -2350,6 +2350,48 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
+  // Mueve el partido entero (ambas parejas) a la siguiente ronda de
+  // consolación, sin jugarse en esta ronda. Útil cuando no hay rivales
+  // suficientes en la siguiente ronda y el admin prefiere que las dos parejas
+  // se enfrenten una ronda más adelante (p.ej. mover un cuartos a semis).
+  const handleAdvanceMatchWhole = (match, cat) => {
+    if (!match.p1 || !match.p2) return;
+    if (match.p1.isBye || match.p2.isBye) return;
+    if (match.p1.isPlaceholder || match.p2.isPlaceholder) return;
+    if (match.p1.isPrelimPlaceholder || match.p2.isPrelimPlaceholder) return;
+    if (!window.confirm(`¿Pasar el partido completo a la siguiente ronda?\n\n${match.p1.name}\nvs\n${match.p2.name}\n\nLas dos parejas se enfrentarán en la ronda siguiente sin jugar este partido.`)) return;
+
+    setConsRounds(prev => {
+      const targetRounds = prev[cat];
+      if (!targetRounds || match.round + 1 >= targetRounds.length) {
+        toast('No hay siguiente ronda a la que avanzar.');
+        return prev;
+      }
+      const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+      const cur = nextRounds[match.round][match.matchIndex];
+      const nextIdx = Math.floor(match.matchIndex / 2);
+      const next = nextRounds[match.round + 1][nextIdx];
+      if (!next) return prev;
+
+      // Colocar ambas parejas en el partido siguiente.
+      next.p1 = cur.p1;
+      next.p2 = cur.p2;
+      if (!next.timeManual) next.time = null;
+
+      // Marcar el partido actual como movido — se vacían parejas, ganador,
+      // marcador y hora para que no acepte resultado y muestre un aviso.
+      cur.p1 = { id: `moved-${cur.id}-p1`, name: '↗ Movido a siguiente ronda', isBye: true };
+      cur.p2 = { id: `moved-${cur.id}-p2`, name: '↗ Movido a siguiente ronda', isBye: true };
+      cur.winner = null;
+      cur.score = null;
+      if (!cur.timeManual) cur.time = null;
+      cur.movedUp = true;
+
+      return { ...prev, [cat]: nextRounds };
+    });
+    toast('Partido movido a la siguiente ronda');
+  };
+
 
   // Genera el cuadro de eliminatorias finales tras una liguilla.
   // Toma los top N (configurable) de la clasificación de la categoría y los
@@ -5914,39 +5956,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         // y deshabilitamos la edición.
                         const ready = match.p1 && match.p2 && !match.p1.isPlaceholder && !match.p2.isPlaceholder;
                         if (!ready) {
-                          // En consolación, si AL MENOS UN jugador es real (la pareja
-                          // que ya estaba esperando), permitimos decidir manualmente
-                          // que avance ella sin partido. Útil cuando el placeholder
-                          // no se va a llenar y queremos mover el cuadro a mano.
-                          const p1Real = match.p1 && !match.p1.isBye && !match.p1.isPlaceholder && !match.p1.isPrelimPlaceholder;
-                          const p2Real = match.p2 && !match.p2.isBye && !match.p2.isPlaceholder && !match.p2.isPrelimPlaceholder;
-                          if (bracket.isCons && (p1Real || p2Real)) {
-                            return (
-                              <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                <div style={{ width: '100%', textAlign: 'center', color: '#94A3B8', fontSize: '0.65rem', fontWeight: 700, padding: '0.25rem 0.5rem', background: '#F8FAFC', borderRadius: '0.4rem' }}>
-                                  ⏳ Sin rival aún
-                                </div>
-                                {p1Real && (
-                                  <button
-                                    onClick={() => handleSetWinner(match, match.p1, true, cat)}
-                                    title="Pasar esta pareja a la siguiente ronda sin partido"
-                                    style={{ width: '100%', padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#15803D', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
-                                  >
-                                    ✋ Avanza {match.p1.name}
-                                  </button>
-                                )}
-                                {p2Real && (
-                                  <button
-                                    onClick={() => handleSetWinner(match, match.p2, true, cat)}
-                                    title="Pasar esta pareja a la siguiente ronda sin partido"
-                                    style={{ width: '100%', padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#15803D', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
-                                  >
-                                    ✋ Avanza {match.p2.name}
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          }
                           return (
                             <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
                               <div style={{ width: '100%', textAlign: 'center', color: '#94A3B8', fontSize: '0.7rem', fontWeight: 700, padding: '0.35rem 0.5rem', background: '#F8FAFC', borderRadius: '0.4rem' }}>
@@ -5980,9 +5989,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                 </p>
                               </>
                             ) : (
-                              <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: '0.35rem 0.5rem' }}>
-                                {match.score ? `✎ ${match.score}` : '+ Introducir resultado (auto-detecta ganador)'}
-                              </button>
+                              <>
+                                <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: '0.35rem 0.5rem' }}>
+                                  {match.score ? `✎ ${match.score}` : '+ Introducir resultado (auto-detecta ganador)'}
+                                </button>
+                                {bracket.isCons && !match.score && match.round + 1 < catCons.length && (
+                                  <button
+                                    onClick={() => handleAdvanceMatchWhole(match, cat)}
+                                    title="Mueve el partido entero a la siguiente ronda sin jugarlo aquí"
+                                    style={{ width: '100%', marginTop: '0.3rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '0.4rem', cursor: 'pointer', color: '#B45309', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: '0.3rem 0.5rem' }}
+                                  >
+                                    ↗ Pasar partido completo a siguiente ronda
+                                  </button>
+                                )}
+                              </>
                             )}
                           </div>
                         );
