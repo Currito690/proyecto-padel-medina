@@ -2392,14 +2392,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }).filter(Boolean);
 
     // Cálculo del NÚMERO TOTAL DE PERDEDORES ESPERADOS para que el cuadro de
-    // consolación tenga el tamaño correcto desde el principio. Sin esto, si
-    // se genera la consolación cuando solo hay perdedores de la previa, el
-    // cuadro queda dimensionado solo para esos y los perdedores futuros de
-    // cuartos no caben.
-    //   · Sin previa: matches de R0 con 2 jugadores reales (excluye bye-vs-bye)
-    //   · Con previa: matches de R0 (todos reales) + matches de R1 (todos
-    //     producen un perdedor porque eventualmente tienen 2 jugadores reales,
-    //     sea por seed directo o ganador de previa)
+    // consolación tenga el tamaño correcto desde el principio.
+    // REGLA: todo jugador debe jugar mínimo 2 partidos (jugando cuadro o cons).
+    //   · Perdedor de R0 (real) → 1 partido jugado → cons (1 más).
+    //   · Perdedor de R1 con BYE en R0 → 1 partido jugado → cons (1 más).
+    //   · Perdedor de R1 sin bye en R0 → 2 partidos ya jugados → no cons.
+    //   · Con previa: todos los perdedores de R1 van a cons (la previa cuenta
+    //     como su 1er partido — los que perdieron previa van a cons como R0).
     let expectedLosers = 0;
     catRounds[0].forEach(m => {
       if (m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) expectedLosers++;
@@ -2407,6 +2406,24 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (hasPrelim && catRounds[1]) {
       catRounds[1].forEach(m => {
         if (m.p1 && m.p2 && !(m.p1.isBye && m.p2.isBye)) expectedLosers++;
+      });
+    } else if (catRounds[1]) {
+      // Sin previa: identificamos parejas que pasaron a R1 vía BYE en R0.
+      // Cuando alguno de esos pierda R1, irá a consolación (solo habrá
+      // jugado 1 partido — necesita el 2º). Reservamos slots para ellos.
+      const byeWinnerIds = new Set();
+      catRounds[0].forEach(r0m => {
+        if (!r0m.p1 || !r0m.p2) return;
+        if (r0m.p1.isBye && r0m.p2 && !r0m.p2.isBye) byeWinnerIds.add(r0m.p2.id);
+        if (r0m.p2.isBye && r0m.p1 && !r0m.p1.isBye) byeWinnerIds.add(r0m.p1.id);
+      });
+      // Worst case: todos los R1 que tienen al menos un bye-winner producen
+      // un cons-eligible loser. Aproximación segura: cuenta cuartos donde
+      // p1 o p2 (o ambos) viene de bye.
+      catRounds[1].forEach(r1m => {
+        const p1FromBye = r1m.p1 && byeWinnerIds.has(r1m.p1.id);
+        const p2FromBye = r1m.p2 && byeWinnerIds.has(r1m.p2.id);
+        if (p1FromBye || p2FromBye) expectedLosers++;
       });
     }
 
