@@ -5600,6 +5600,39 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 Re-sortear Cuadro
               </button>
               <button
+                onClick={async () => {
+                  const ok = await confirmDialog(
+                    '¿Deshacer el sorteo? Se borrarán TODOS los cuadros (principal y consolación) y el cuadro dejará de ser público. Las parejas inscritas y la configuración del torneo se conservan.',
+                    { title: 'Deshacer sorteo', okText: 'Deshacer sorteo', danger: true }
+                  );
+                  if (!ok) return;
+                  const newTConfig = { ...tConfig, bracketPublished: false };
+                  setRounds({});
+                  setConsRounds({});
+                  setTConfig(newTConfig);
+                  setPhase('setup');
+                  if (publishedId) {
+                    try {
+                      const config = { ...newTConfig, rounds: {}, consRounds: {}, participants, phase: 'setup' };
+                      const { error } = await supabase.from('tournaments')
+                        .update({ config })
+                        .eq('id', publishedId);
+                      if (error) throw error;
+                      toast('Sorteo deshecho. Las parejas siguen inscritas y puedes volver a sortear cuando quieras.', 'success');
+                    } catch (e) {
+                      console.error(e);
+                      toast('Error al guardar en la base de datos: ' + (e.message || e), 'error');
+                    }
+                  } else {
+                    toast('Sorteo deshecho.', 'success');
+                  }
+                }}
+                title="Vacía los cuadros principal y de consolación, deja de publicarlo, pero mantiene las parejas y la configuración intactas."
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: 'white', color: '#B91C1C', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+              >
+                🗑️ Deshacer Sorteo
+              </button>
+              <button
                 onClick={handlePublishBracket}
                 title={tConfig.bracketPublished ? 'Avisar a los jugadores de que el cuadro se ha actualizado' : 'Publicar el cuadro y avisar a los jugadores por correo'}
                 style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: tConfig.bracketPublished ? '1.5px solid #BFDBFE' : '1.5px solid #DCFCE7', backgroundColor: tConfig.bracketPublished ? '#EFF6FF' : '#F0FDF4', color: tConfig.bracketPublished ? '#1D4ED8' : '#16A34A', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
