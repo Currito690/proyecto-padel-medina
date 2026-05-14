@@ -5704,13 +5704,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       </div>
                     )}
             
-            {/* Si es el cuadro de consolación, lo pintamos invertido (Final a la
-                izquierda, R0 a la derecha) para distinguirlo del principal.
-                Conservamos originalIdx para que getRoundName y la lógica de
-                swap (rIdx === 0) sigan funcionando con el índice real. */}
+            {/* Render izquierda → derecha (R0 → Final) tanto en principal
+                como en consolación. La distinción visual entre ambos cuadros
+                ya se hace con colores (naranja para cons, verde para principal)
+                y con el header "🥈 Consolación · …" vs "🥇 Principal · …". */}
             {(() => {
               const indexedRounds = bracket.data.map((round, originalIdx) => ({ round, originalIdx }));
-              const renderedRounds = bracket.isCons ? [...indexedRounds].reverse() : indexedRounds;
+              const renderedRounds = indexedRounds;
               return (
             <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'stretch' }}>
               {renderedRounds.map(({ round: roundMatches, originalIdx: rIdx }) => (
@@ -5822,34 +5822,21 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </div>
               ))}
 
-              {/* "Campeón" siempre al final del flujo visual: si es consolación
-                  la columna del trofeo va a la IZQUIERDA (porque ya invertimos
-                  el orden de las rondas, así queda al lado de la final). */}
-              {!bracket.isCons && (
-                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
-                  <h4 style={{ textAlign: 'center', color: '#F59E0B', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
-                    Campeón Absoluto
-                  </h4>
-                  <div style={{ backgroundColor: '#FEF3C7', border: `2px solid #F59E0B`, borderRadius: '0.75rem', padding: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(245, 158, 11, 0.2)' }}>
-                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#D97706' }}>
-                      {bracket.data[bracket.data.length - 1]?.[0]?.winner?.name || 'TBD'}
-                    </span>
-                  </div>
+              {/* Trofeo de campeón siempre a la DERECHA, después de la final.
+                  Verde dorado para principal, naranja dorado para consolación. */}
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
+                <h4 style={{ textAlign: 'center', color: bracket.isCons ? '#D97706' : '#F59E0B', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
+                  {bracket.isCons ? '🏆 Campeón Consolación' : 'Campeón Absoluto'}
+                </h4>
+                <div style={{ backgroundColor: bracket.isCons ? '#FFFBEB' : '#FEF3C7', border: `2px solid ${bracket.isCons ? '#FDE68A' : '#F59E0B'}`, borderRadius: '0.75rem', padding: '1.5rem', textAlign: 'center', boxShadow: bracket.isCons ? '0 10px 15px -3px rgba(217, 119, 6, 0.2)' : '0 10px 15px -3px rgba(245, 158, 11, 0.2)' }}>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#D97706' }}>
+                    {bracket.data[bracket.data.length - 1]?.[0]?.winner?.name || 'TBD'}
+                  </span>
                 </div>
-              )}
+              </div>
             </div>
               );
             })()}
-            {/* Trofeo a la izquierda en consolación, fuera del scroll wrapper para
-                que aparezca antes visualmente (en columnas) */}
-            {bracket.isCons && (
-              <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', backgroundColor: '#FFFBEB', border: '2px solid #FDE68A', borderRadius: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
-                <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.06em' }}>🏆 Campeón Consolación</span>
-                <span style={{ fontSize: '1rem', fontWeight: 900, color: '#D97706' }}>
-                  {bracket.data[bracket.data.length - 1]?.[0]?.winner?.name || 'TBD'}
-                </span>
-              </div>
-            )}
           </div>
         );
       })}
