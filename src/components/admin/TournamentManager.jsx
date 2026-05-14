@@ -2762,21 +2762,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
         pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight, undefined, 'FAST');
 
-        // Logo en la esquina SUPERIOR DERECHA (encima del cuadro).
-        // Tamaño 22mm × 22mm, margen de 8mm desde arriba y derecha.
+        // Logo en la esquina SUPERIOR DERECHA. Lee la proporción real de
+        // la imagen (no asumir cuadrado) para no aplastarla. El logo de
+        // padelmedina es horizontal (~1.83:1), así que con 45mm de ancho
+        // queda en ~24.5mm de alto — bien visible sin invadir el cuadro.
         if (logoDataUrl) {
-          const logoSize = 22;
-          const logoMargin = 8;
-          pdf.addImage(
-            logoDataUrl,
-            'PNG',
-            pdfWidth - logoSize - logoMargin,
-            logoMargin,
-            logoSize,
-            logoSize,
-            undefined,
-            'FAST'
-          );
+          try {
+            const props = pdf.getImageProperties(logoDataUrl);
+            const aspect = props.width / props.height; // ej. 1.83 para padelmedina
+            const logoWidth = 45; // mm
+            const logoHeight = logoWidth / aspect;
+            const logoMargin = 8;
+            pdf.addImage(
+              logoDataUrl,
+              'PNG',
+              pdfWidth - logoWidth - logoMargin,
+              logoMargin,
+              logoWidth,
+              logoHeight,
+              undefined,
+              'FAST'
+            );
+          } catch (e) {
+            console.warn('No se pudo añadir el logo al PDF:', e);
+          }
         }
 
         const safeTitle = title.replace(/[^a-zA-Z0-9]/g, '_');
