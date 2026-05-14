@@ -136,6 +136,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showSeedsPanel, setShowSeedsPanel] = useState(false);
   // Editor de pistas durante el torneo (panel modal)
   const [showCourtsEditor, setShowCourtsEditor] = useState(false);
+  // Modal/panel admin-only con el listado de TODOS los partidos del torneo
+  // agrupados por día y ordenados por hora. Útil para imprimir el "parte del
+  // día" o llamar a las parejas en orden.
+  const [showMatchesList, setShowMatchesList] = useState(false);
   // Modal pre-generación: deja al admin elegir/confirmar el formato
   // (eliminatoria, liguilla, liguilla+KO) por cada categoría antes de
   // generar el cuadro. Estado pickerFormats es la copia editable que se
@@ -5072,6 +5076,135 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       })()}
 
       {/* ── Editor de pistas durante el torneo ── */}
+      {/* ── Modal admin: listado de partidos por día ─────────────────────── */}
+      {showMatchesList && (() => {
+        // Recolectamos todos los matches (rounds + consRounds) con time set,
+        // los agrupamos por día y los ordenamos por hora.
+        const items = [];
+        const collect = (roundsObj, isCons) => {
+          Object.entries(roundsObj || {}).forEach(([cat, catRs]) => {
+            (catRs || []).forEach((round, rIdx) => {
+              (round || []).forEach(m => {
+                if (!m.time || m.time === 'A convenir') return;
+                if (m.p1?.isBye && m.p2?.isBye) return; // skip bye-vs-bye
+                const parts = m.time.split(' - Pista');
+                const slot = parts[0]?.trim();
+                const court = parseInt(parts[1], 10);
+                if (!slot) return;
+                const [day, hour] = slot.split(' ');
+                items.push({
+                  day, hour, court,
+                  cat, isCons,
+                  round: rIdx,
+                  isPrelim: !!m.p1?.isPrelim || !!m.isPrelim || !!round[0]?.isPrelim,
+                  p1: m.p1?.name || (m.p1?.isBye ? 'BYE' : (m.p1?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
+                  p2: m.p2?.name || (m.p2?.isBye ? 'BYE' : (m.p2?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
+                  winner: m.winner?.name || null,
+                  score: m.score || null,
+                  matchId: m.id,
+                });
+              });
+            });
+          });
+        };
+        collect(rounds, false);
+        collect(consRounds, true);
+
+        // Agrupar por día
+        const byDay = {};
+        items.forEach(it => {
+          if (!byDay[it.day]) byDay[it.day] = [];
+          byDay[it.day].push(it);
+        });
+        // Orden de días: por fecha real (DD/MM)
+        const dayKeys = Object.keys(byDay).sort((a, b) => {
+          const [da, ma] = a.split('/').map(Number);
+          const [db, mb] = b.split('/').map(Number);
+          return (ma * 31 + da) - (mb * 31 + db);
+        });
+        // Dentro de cada día: orden por hora, luego por pista
+        dayKeys.forEach(d => {
+          byDay[d].sort((a, b) => {
+            if (a.hour !== b.hour) return a.hour < b.hour ? -1 : 1;
+            return (a.court || 0) - (b.court || 0);
+          });
+        });
+
+        return (
+          <div onClick={() => setShowMatchesList(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '900px', marginTop: '2rem', marginBottom: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+              <div style={{ padding: '1.1rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>📅 Partidos por día · {tConfig.name}</h3>
+                  <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
+                    {items.length} partido{items.length === 1 ? '' : 's'} programado{items.length === 1 ? '' : 's'} en {dayKeys.length} día{dayKeys.length === 1 ? '' : 's'}.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    onClick={() => window.print()}
+                    title="Abre el diálogo de imprimir del navegador"
+                    style={{ padding: '0.5rem 0.85rem', borderRadius: '0.5rem', border: '1.5px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
+                  >
+                    🖨️ Imprimir
+                  </button>
+                  <button onClick={() => setShowMatchesList(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+                </div>
+              </div>
+              <div style={{ padding: '1rem 1.5rem 1.5rem', maxHeight: '70vh', overflowY: 'auto' }}>
+                {dayKeys.length === 0 ? (
+                  <p style={{ margin: 0, color: '#94A3B8', fontStyle: 'italic', textAlign: 'center', padding: '2rem' }}>
+                    Aún no hay partidos con horario asignado. Genera el cuadro o usa "Recalcular horarios" para asignar tiempos.
+                  </p>
+                ) : (
+                  dayKeys.map(d => (
+                    <div key={d} style={{ marginBottom: '1.25rem' }}>
+                      <h4 style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.85rem', fontSize: '0.85rem', fontWeight: 800, color: 'white', background: 'linear-gradient(135deg,#1E293B,#334155)', borderRadius: '0.5rem', display: 'inline-block' }}>
+                        📅 {d} · {byDay[d].length} partido{byDay[d].length === 1 ? '' : 's'}
+                      </h4>
+                      <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.6rem' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                              <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', width: '70px' }}>Hora</th>
+                              <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', width: '90px' }}>Pista</th>
+                              <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Categoría · Ronda</th>
+                              <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pareja 1</th>
+                              <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pareja 2</th>
+                              <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Resultado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {byDay[d].map((it, i) => {
+                              const isP1Win = it.winner && it.winner === it.p1;
+                              const isP2Win = it.winner && it.winner === it.p2;
+                              const roundName = it.isCons ? 'Cons.' : (it.isPrelim ? 'Previa' : `R${it.round}`);
+                              return (
+                                <tr key={i} style={{ borderTop: '1px solid #F1F5F9', backgroundColor: it.winner ? '#F0FDF4' : 'white' }}>
+                                  <td style={{ padding: '0.5rem 0.6rem', fontWeight: 800, color: '#0F172A' }}>{it.hour}</td>
+                                  <td style={{ padding: '0.5rem 0.6rem', color: '#475569', fontWeight: 600 }}>{getCourtName(it.court)}</td>
+                                  <td style={{ padding: '0.5rem 0.6rem' }}>
+                                    <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.78rem' }}>{it.cat}</div>
+                                    <div style={{ fontSize: '0.7rem', color: it.isCons ? '#D97706' : '#64748B', fontWeight: 600 }}>{it.isCons ? '🥈 Consolación' : ''} {roundName}</div>
+                                  </td>
+                                  <td style={{ padding: '0.5rem 0.6rem', fontWeight: isP1Win ? 800 : 600, color: isP1Win ? '#15803D' : '#0F172A' }}>{it.p1} {isP1Win && '🏆'}</td>
+                                  <td style={{ padding: '0.5rem 0.6rem', fontWeight: isP2Win ? 800 : 600, color: isP2Win ? '#15803D' : '#0F172A' }}>{it.p2} {isP2Win && '🏆'}</td>
+                                  <td style={{ padding: '0.5rem 0.6rem', color: it.score ? '#15803D' : '#CBD5E1', fontWeight: 700, fontSize: '0.78rem' }}>{it.score || '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showCourtsEditor && (
         <div onClick={() => setShowCourtsEditor(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
@@ -5270,6 +5403,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FED7AA', backgroundColor: '#FFF7ED', color: '#9A3412', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
                 🏟️ Pistas
+              </button>
+              <button
+                onClick={() => setShowMatchesList(true)}
+                title="Listado de TODOS los partidos agrupados por día y ordenados por hora."
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #C4B5FD', backgroundColor: '#F5F3FF', color: '#6D28D9', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+              >
+                📅 Partidos por día
               </button>
               <button
                 onClick={async () => {
