@@ -800,11 +800,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const initialSel = {};
     cats.forEach(c => {
       initial[c] = tConfig.formatByCategory?.[c] || 'eliminatoria';
-      // Por defecto marcamos solo las que NO tienen cuadro generado todavía,
-      // así si ya hay un cuadro hecho para Masculino y vamos a generar
-      // Femenino, no se re-genera Masculino sin querer.
-      const alreadyHas = !!(rounds && rounds[c] && rounds[c].length > 0);
-      initialSel[c] = !alreadyHas;
+      // Por defecto NO marcamos ninguna: el admin elige explícitamente
+      // qué categoría/s regenerar. Sin esto, si abre el modal y pulsa
+      // Generar sin pensarlo, podría regenerar varias categorías a la vez
+      // (incluyendo las que ya tenía hechas o las que no quería tocar).
+      initialSel[c] = false;
     });
     setPickerFormats(initial);
     setPickerSelectedCats(initialSel);
