@@ -2146,6 +2146,37 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   //   · Cambio de winner   → swap oldLoser por newLoser en consolación.
   //   · Sin cambio         → no toca nada.
   // Aplica solo a matches R0 (siempre) o R1 cuyo perdedor tuvo BYE en R0.
+  // Cuando un placeholder de cons no se va a llenar (porque el cuarto que
+  // se reservó para él produjo un loser que ya jugó 2 partidos y no aplica),
+  // convertimos el primer placeholder libre en BYE y auto-advance al rival.
+  // Así la pareja que estaba esperando no se queda sin partido.
+  const releaseConsPlaceholderAsBye = (cat) => {
+    setConsRounds(prev => {
+      const catCons = prev[cat];
+      if (!catCons || catCons.length === 0) return prev;
+      const next = catCons.map(r => r.map(m => ({ ...m })));
+      // Buscar primer R0 con un placeholder y un rival real
+      for (const m of next[0]) {
+        let placeholderSide = null;
+        let realSide = null;
+        if (m.p1?.isPlaceholder && m.p2 && !m.p2.isBye && !m.p2.isPlaceholder) {
+          placeholderSide = 'p1'; realSide = 'p2';
+        } else if (m.p2?.isPlaceholder && m.p1 && !m.p1.isBye && !m.p1.isPlaceholder) {
+          placeholderSide = 'p2'; realSide = 'p1';
+        }
+        if (!placeholderSide) continue;
+        // Convertir placeholder a BYE
+        m[placeholderSide] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true };
+        // Auto-advance al rival a la siguiente ronda
+        if (m[realSide]) {
+          advanceWinnerMut(next, 0, m.matchIndex, m[realSide]);
+        }
+        return { ...prev, [cat]: next };
+      }
+      return prev;
+    });
+  };
+
   const syncConsOnMainWinner = (cat, match, oldWinner, newWinner) => {
     if (!match.p1 || !match.p2 || match.p1.isBye || match.p2.isBye) return;
     if (!newWinner) return;
@@ -2171,7 +2202,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) sendToCons = true;
       }
     }
-    if (!sendToCons) return;
+    if (!sendToCons) {
+      // El loser de R1 no es cons-eligible (ya jugó 2 partidos). Si la cons
+      // tenía un placeholder reservado para este cuarto, lo liberamos como
+      // BYE para que el rival que estaba esperando avance.
+      if (match.round === 1 && !hasPrelim) {
+        releaseConsPlaceholderAsBye(cat);
+      }
+      return;
+    }
 
     const oldLoser = oldWinner ? (oldWinner.id === match.p1.id ? match.p2 : match.p1) : null;
     if (oldLoser && oldLoser.id === newLoser.id) return;
