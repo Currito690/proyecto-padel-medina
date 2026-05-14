@@ -30,6 +30,14 @@ export default function EventsManager() {
   const [linkedTournamentId, setLinkedTournamentId] = useState('');
   const [posterFile, setPosterFile] = useState(null);
   const [posterPreview, setPosterPreview] = useState(null);
+  // Encuadre del cartel: focal point (X/Y en %) + zoom (1 = sin zoom).
+  // Se persisten en la fila del evento y se aplican como object-position +
+  // transform: scale en todas las superficies donde se muestra el cartel.
+  const [posterPosX, setPosterPosX] = useState(50);
+  const [posterPosY, setPosterPosY] = useState(50);
+  const [posterZoom, setPosterZoom] = useState(1);
+  const dragStateRef = useRef(null);
+  const previewRef = useRef(null);
 
   useEffect(() => {
     loadEvents();
@@ -50,6 +58,7 @@ export default function EventsManager() {
     setTitle(''); setDescription(''); setEventDate(''); setEndDate('');
     setRegistrationUrl(''); setLinkedTournamentId('');
     setPosterFile(null); setPosterPreview(null); setEditingEvent(null);
+    setPosterPosX(50); setPosterPosY(50); setPosterZoom(1);
   };
 
   const openCreate = () => { resetForm(); setShowForm(true); };
@@ -61,6 +70,9 @@ export default function EventsManager() {
     const match = ev.registration_url?.match(/\/torneos\/([^/?]+)/);
     setLinkedTournamentId(match ? match[1] : '');
     setPosterPreview(ev.poster_url || null); setPosterFile(null);
+    setPosterPosX(ev.poster_pos_x ?? 50);
+    setPosterPosY(ev.poster_pos_y ?? 50);
+    setPosterZoom(ev.poster_zoom ?? 1);
     setEditingEvent(ev); setShowForm(true);
   };
 
@@ -74,6 +86,51 @@ export default function EventsManager() {
     if (!file) return;
     setPosterFile(file);
     setPosterPreview(URL.createObjectURL(file));
+    // Reset encuadre al cambiar de imagen — la posición de la anterior no
+    // tiene sentido sobre una foto nueva.
+    setPosterPosX(50); setPosterPosY(50); setPosterZoom(1);
+  };
+
+  // Arrastre del cartel: el admin "agarra" la foto y la mueve para elegir el
+  // encuadre. La traducción se convierte a porcentaje del recuadro y se
+  // suma/resta al focal point (X/Y) que luego usa object-position. El signo
+  // es invertido — arrastrar a la derecha mueve la foto a la derecha → foco
+  // se desplaza a la izquierda.
+  const handlePosterPointerDown = (e) => {
+    if (!posterPreview) return;
+    e.preventDefault();
+    const rect = previewRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPosX: posterPosX,
+      startPosY: posterPosY,
+      width: rect.width,
+      height: rect.height,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const handlePosterPointerMove = (e) => {
+    const st = dragStateRef.current;
+    if (!st) return;
+    const dx = e.clientX - st.startX;
+    const dy = e.clientY - st.startY;
+    // Sensibilidad: el rango útil de pos depende del zoom. A mayor zoom,
+    // un pixel de drag mueve menos % de la imagen visible.
+    const zoom = Math.max(1, posterZoom);
+    const sensitivity = 100 / (zoom * Math.max(st.width, 1));
+    const sensitivityY = 100 / (zoom * Math.max(st.height, 1));
+    const nextX = Math.max(0, Math.min(100, st.startPosX - dx * sensitivity));
+    const nextY = Math.max(0, Math.min(100, st.startPosY - dy * sensitivityY));
+    setPosterPosX(nextX);
+    setPosterPosY(nextY);
+  };
+
+  const handlePosterPointerUp = (e) => {
+    dragStateRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
   };
 
   const uploadPoster = async (eventId) => {
@@ -99,6 +156,9 @@ export default function EventsManager() {
       event_date: eventDate || null,
       end_date: endDate || null,
       registration_url: registrationUrl.trim() || null,
+      poster_pos_x: Number(posterPosX.toFixed(2)),
+      poster_pos_y: Number(posterPosY.toFixed(2)),
+      poster_zoom:  Number(posterZoom.toFixed(3)),
     };
 
     if (editingEvent) {
@@ -213,27 +273,23 @@ export default function EventsManager() {
 
             <form onSubmit={handleSave} style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
 
-              {/* Poster upload */}
+              {/* Poster upload + encuadre (drag para mover, slider para zoom) */}
               <div>
                 <label style={labelStyle}>Cartel / Imagen</label>
-                <div
-                  onClick={() => fileRef.current?.click()}
-                  style={{
-                    border: `2px dashed ${posterPreview ? '#16A34A' : '#CBD5E1'}`,
-                    borderRadius: '1rem',
-                    cursor: 'pointer',
-                    overflow: 'hidden',
-                    backgroundColor: '#F8FAFC',
-                    position: 'relative',
-                    minHeight: posterPreview ? 'auto' : '120px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  {posterPreview ? (
-                    <img src={posterPreview} alt="Cartel" style={{ width: '100%', maxHeight: '240px', objectFit: 'cover', display: 'block' }} />
-                  ) : (
+                {!posterPreview ? (
+                  <div
+                    onClick={() => fileRef.current?.click()}
+                    style={{
+                      border: '2px dashed #CBD5E1',
+                      borderRadius: '1rem',
+                      cursor: 'pointer',
+                      backgroundColor: '#F8FAFC',
+                      minHeight: '120px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
                     <div style={{ textAlign: 'center', padding: '1.5rem', color: '#94A3B8' }}>
                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 0.5rem', display: 'block' }}>
                         <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
@@ -241,16 +297,78 @@ export default function EventsManager() {
                       <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600 }}>Subir cartel del evento</p>
                       <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem' }}>JPG, PNG, WebP — máx. 5 MB</p>
                     </div>
-                  )}
-                  {posterPreview && (
-                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0, transition: 'all 0.2s' }}
-                      onMouseOver={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.3)'; e.currentTarget.style.opacity = 1; }}
-                      onMouseOut={e => { e.currentTarget.style.background = 'rgba(0,0,0,0)'; e.currentTarget.style.opacity = 0; }}
+                  </div>
+                ) : (
+                  <>
+                    <div
+                      ref={previewRef}
+                      onPointerDown={handlePosterPointerDown}
+                      onPointerMove={handlePosterPointerMove}
+                      onPointerUp={handlePosterPointerUp}
+                      onPointerCancel={handlePosterPointerUp}
+                      style={{
+                        position: 'relative',
+                        width: '100%',
+                        aspectRatio: '220 / 130',
+                        borderRadius: '1rem',
+                        overflow: 'hidden',
+                        backgroundColor: '#0F172A',
+                        cursor: dragStateRef.current ? 'grabbing' : 'grab',
+                        touchAction: 'none',
+                        userSelect: 'none',
+                        border: '2px solid #16A34A',
+                      }}
                     >
-                      <span style={{ color: 'white', fontWeight: 700, fontSize: '0.85rem', background: 'rgba(0,0,0,0.5)', padding: '0.4rem 0.9rem', borderRadius: '2rem' }}>Cambiar imagen</span>
+                      <img
+                        src={posterPreview}
+                        alt="Cartel"
+                        draggable={false}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          objectPosition: `${posterPosX}% ${posterPosY}%`,
+                          transform: `scale(${posterZoom})`,
+                          transformOrigin: `${posterPosX}% ${posterPosY}%`,
+                          pointerEvents: 'none',
+                          display: 'block',
+                        }}
+                      />
+                      <div style={{ position: 'absolute', top: '0.5rem', left: '0.5rem', background: 'rgba(15,23,42,0.7)', color: 'white', fontSize: '0.65rem', fontWeight: 700, padding: '0.25rem 0.55rem', borderRadius: '0.4rem', pointerEvents: 'none' }}>
+                        Arrastra para encuadrar
+                      </div>
                     </div>
-                  )}
-                </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.6rem' }}>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', minWidth: '46px' }}>Zoom</span>
+                      <input
+                        type="range"
+                        min="1"
+                        max="3"
+                        step="0.05"
+                        value={posterZoom}
+                        onChange={e => setPosterZoom(parseFloat(e.target.value))}
+                        style={{ flex: 1 }}
+                      />
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', minWidth: '38px', textAlign: 'right' }}>{Math.round(posterZoom * 100)}%</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => fileRef.current?.click()}
+                        style={{ padding: '0.4rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
+                      >
+                        ✎ Cambiar imagen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPosterPosX(50); setPosterPosY(50); setPosterZoom(1); }}
+                        style={{ padding: '0.4rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', background: '#F8FAFC', color: '#64748B', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
+                      >
+                        ↺ Restablecer encuadre
+                      </button>
+                    </div>
+                  </>
+                )}
                 <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" style={{ display: 'none' }} onChange={handlePosterChange} />
               </div>
 
@@ -338,9 +456,25 @@ export default function EventsManager() {
           {events.map(ev => (
             <div key={ev.id} style={{ backgroundColor: 'white', borderRadius: '1.25rem', border: `1.5px solid ${ev.published ? '#BBF7D0' : '#E2E8F0'}`, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
               <div style={{ display: 'flex', gap: 0 }}>
-                {/* Poster thumbnail */}
-                <div style={{ width: '110px', flexShrink: 0, background: ev.poster_url ? `url(${ev.poster_url}) center/cover` : 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {!ev.poster_url && <span style={{ fontSize: '2.5rem' }}>🎾</span>}
+                {/* Poster thumbnail (respeta encuadre del admin) */}
+                <div style={{ width: '110px', flexShrink: 0, position: 'relative', overflow: 'hidden', background: ev.poster_url ? '#0F172A' : 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {ev.poster_url ? (
+                    <img
+                      src={ev.poster_url}
+                      alt={ev.title}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        objectPosition: `${ev.poster_pos_x ?? 50}% ${ev.poster_pos_y ?? 50}%`,
+                        transform: `scale(${ev.poster_zoom ?? 1})`,
+                        transformOrigin: `${ev.poster_pos_x ?? 50}% ${ev.poster_pos_y ?? 50}%`,
+                        display: 'block',
+                      }}
+                    />
+                  ) : (
+                    <span style={{ fontSize: '2.5rem' }}>🎾</span>
+                  )}
                 </div>
                 {/* Content */}
                 <div style={{ flex: 1, padding: '1rem 1.1rem' }}>

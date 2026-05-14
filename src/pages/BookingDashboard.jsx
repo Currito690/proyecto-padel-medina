@@ -519,7 +519,21 @@ const BookingDashboard = () => {
                     style={{ flexShrink: 0, width: '220px', borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.10)', cursor: ev.registration_url ? 'pointer' : 'default', border: '1px solid #E2E8F0', transition: 'transform 0.2s, box-shadow 0.2s' }}
                   >
                     {ev.poster_url ? (
-                      <img src={ev.poster_url} alt={ev.title} style={{ width: '100%', height: '130px', objectFit: 'cover', display: 'block' }} />
+                      <div style={{ width: '100%', height: '130px', overflow: 'hidden', position: 'relative', background: '#0F172A' }}>
+                        <img
+                          src={ev.poster_url}
+                          alt={ev.title}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            objectPosition: `${ev.poster_pos_x ?? 50}% ${ev.poster_pos_y ?? 50}%`,
+                            transform: `scale(${ev.poster_zoom ?? 1})`,
+                            transformOrigin: `${ev.poster_pos_x ?? 50}% ${ev.poster_pos_y ?? 50}%`,
+                            display: 'block',
+                          }}
+                        />
+                      </div>
                     ) : (
                       <div style={{ height: '130px', background: 'linear-gradient(135deg, #1B3A6E, #0F2550)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

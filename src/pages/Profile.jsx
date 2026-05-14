@@ -135,7 +135,23 @@ const Profile = () => {
                     : null;
                   return (
                     <div key={ev.id} style={{ borderRadius: '1rem', overflow: 'hidden', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-                      {ev.poster_url && <img src={ev.poster_url} alt={ev.title} style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', display: 'block' }} />}
+                      {ev.poster_url && (
+                        <div style={{ width: '100%', height: '180px', overflow: 'hidden', position: 'relative', background: '#0F172A' }}>
+                          <img
+                            src={ev.poster_url}
+                            alt={ev.title}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              objectPosition: `${ev.poster_pos_x ?? 50}% ${ev.poster_pos_y ?? 50}%`,
+                              transform: `scale(${ev.poster_zoom ?? 1})`,
+                              transformOrigin: `${ev.poster_pos_x ?? 50}% ${ev.poster_pos_y ?? 50}%`,
+                              display: 'block',
+                            }}
+                          />
+                        </div>
+                      )}
                       <div style={{ padding: '0.875rem 1rem', backgroundColor: 'white' }}>
                         {dateStr && <p style={{ margin: '0 0 0.2rem', fontSize: '0.72rem', fontWeight: 700, color: '#16A34A', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{dateStr}</p>}
                         <p style={{ margin: '0 0 0.35rem', fontSize: '0.95rem', fontWeight: 800, color: '#0F172A' }}>{ev.title}</p>
