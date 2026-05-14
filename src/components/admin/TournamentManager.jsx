@@ -5704,15 +5704,31 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       </div>
                     )}
             
-            {/* Render izquierda → derecha (R0 → Final) tanto en principal
-                como en consolación. La distinción visual entre ambos cuadros
-                ya se hace con colores (naranja para cons, verde para principal)
-                y con el header "🥈 Consolación · …" vs "🥇 Principal · …". */}
+            {/* Principal: izquierda → derecha (R0 → Final).
+                Consolación: derecha → izquierda (Final → R0) para distinguir
+                visualmente del principal. Conservamos originalIdx para que
+                getRoundName y la lógica de swap (rIdx === 0) sigan
+                funcionando con el índice real. */}
             {(() => {
               const indexedRounds = bracket.data.map((round, originalIdx) => ({ round, originalIdx }));
-              const renderedRounds = indexedRounds;
+              const renderedRounds = bracket.isCons ? [...indexedRounds].reverse() : indexedRounds;
               return (
             <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'stretch' }}>
+              {/* En consolación, trofeo a la IZQUIERDA (al lado de la final
+                  que ya está a la izquierda por el reverse). En principal
+                  va a la derecha (al final del recorrido visual). */}
+              {bracket.isCons && (
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
+                  <h4 style={{ textAlign: 'center', color: '#D97706', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
+                    🏆 Campeón Consolación
+                  </h4>
+                  <div style={{ backgroundColor: '#FFFBEB', border: `2px solid #FDE68A`, borderRadius: '0.75rem', padding: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(217, 119, 6, 0.2)' }}>
+                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#D97706' }}>
+                      {bracket.data[bracket.data.length - 1]?.[0]?.winner?.name || 'TBD'}
+                    </span>
+                  </div>
+                </div>
+              )}
               {renderedRounds.map(({ round: roundMatches, originalIdx: rIdx }) => (
                 <div key={`round-${rIdx}`} style={{ display: 'flex', flexDirection: 'column', minWidth: '220px' }}>
                   <h4 style={{ textAlign: 'center', color: bracket.isCons ? '#D97706' : '#16A34A', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 0.5rem 0', padding: '0.35rem 0.75rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#F0FDF4', borderRadius: '0.5rem', border: `1px solid ${bracket.isCons ? '#FDE68A' : '#DCFCE7'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -5720,21 +5736,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   </h4>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around' }}>
                   {roundMatches.map(match => {
-                    // Casos en los que no hay un partido real:
-                    //   - bye-vs-bye: ningún jugador
-                    //   - placeholder + bye: el placeholder se auto-resuelve
-                    //     (esperará un perdedor que pasa directo a la siguiente
-                    //     ronda). Estos boxes solo ensucian el cuadro — los
-                    //     ocultamos. Mantenemos un spacer invisible para no
-                    //     romper la alineación vertical.
+                    // Saltamos boxes sin partido real: bye-vs-bye o
+                    // placeholder + bye (el placeholder se auto-resuelve a
+                    // la siguiente ronda — no hay que mostrarlo aquí).
+                    // Devolvemos null y dejamos que el flexbox redistribuya
+                    // las cajas reales con justify-content: space-around.
                     const isBoth = (a, b) => a?.isBye && b?.isPlaceholder;
                     const isPlaceholderBye = isBoth(match.p1, match.p2) || isBoth(match.p2, match.p1);
                     const isBothBye = match.p1?.isBye && match.p2?.isBye;
-                    if (isPlaceholderBye || isBothBye) {
-                      return (
-                        <div key={match.id} style={{ margin: '1rem 0', minHeight: '80px', visibility: 'hidden' }} aria-hidden="true" />
-                      );
-                    }
+                    if (isPlaceholderBye || isBothBye) return null;
                     return (
                     <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', margin: '1rem 0' }}>
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
@@ -5839,18 +5849,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </div>
               ))}
 
-              {/* Trofeo de campeón siempre a la DERECHA, después de la final.
-                  Verde dorado para principal, naranja dorado para consolación. */}
-              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
-                <h4 style={{ textAlign: 'center', color: bracket.isCons ? '#D97706' : '#F59E0B', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
-                  {bracket.isCons ? '🏆 Campeón Consolación' : 'Campeón Absoluto'}
-                </h4>
-                <div style={{ backgroundColor: bracket.isCons ? '#FFFBEB' : '#FEF3C7', border: `2px solid ${bracket.isCons ? '#FDE68A' : '#F59E0B'}`, borderRadius: '0.75rem', padding: '1.5rem', textAlign: 'center', boxShadow: bracket.isCons ? '0 10px 15px -3px rgba(217, 119, 6, 0.2)' : '0 10px 15px -3px rgba(245, 158, 11, 0.2)' }}>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#D97706' }}>
-                    {bracket.data[bracket.data.length - 1]?.[0]?.winner?.name || 'TBD'}
-                  </span>
+              {/* En principal, trofeo a la DERECHA (al final del recorrido). */}
+              {!bracket.isCons && (
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
+                  <h4 style={{ textAlign: 'center', color: '#F59E0B', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
+                    Campeón Absoluto
+                  </h4>
+                  <div style={{ backgroundColor: '#FEF3C7', border: `2px solid #F59E0B`, borderRadius: '0.75rem', padding: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(245, 158, 11, 0.2)' }}>
+                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#D97706' }}>
+                      {bracket.data[bracket.data.length - 1]?.[0]?.winner?.name || 'TBD'}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
               );
             })()}
