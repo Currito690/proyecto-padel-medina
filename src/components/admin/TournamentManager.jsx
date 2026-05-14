@@ -5719,8 +5719,24 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     {getRoundName(rIdx, bracket.data)}
                   </h4>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around' }}>
-                  {roundMatches.map(match => (
-                    <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', margin: '1rem 0', opacity: match.p1?.isBye && match.p2?.isBye ? 0.3 : 1 }}>
+                  {roundMatches.map(match => {
+                    // Casos en los que no hay un partido real:
+                    //   - bye-vs-bye: ningún jugador
+                    //   - placeholder + bye: el placeholder se auto-resuelve
+                    //     (esperará un perdedor que pasa directo a la siguiente
+                    //     ronda). Estos boxes solo ensucian el cuadro — los
+                    //     ocultamos. Mantenemos un spacer invisible para no
+                    //     romper la alineación vertical.
+                    const isBoth = (a, b) => a?.isBye && b?.isPlaceholder;
+                    const isPlaceholderBye = isBoth(match.p1, match.p2) || isBoth(match.p2, match.p1);
+                    const isBothBye = match.p1?.isBye && match.p2?.isBye;
+                    if (isPlaceholderBye || isBothBye) {
+                      return (
+                        <div key={match.id} style={{ margin: '1rem 0', minHeight: '80px', visibility: 'hidden' }} aria-hidden="true" />
+                      );
+                    }
+                    return (
+                    <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', margin: '1rem 0' }}>
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
                         <div style={{ backgroundColor: '#F8FAFC', padding: '0.4rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           {(() => {
@@ -5817,7 +5833,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         );
                       })()}
                     </div>
-                  ))}
+                    );
+                  })}
                   </div>
                 </div>
               ))}
