@@ -1208,11 +1208,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            }
          } else {
            // useByes mode con sobrantes: distribuye byes inteligentemente.
-           // 1) Cada seed prefiere bye en SU partido de R1 (sortea ventaja).
-           // 2) Byes restantes: uno por R1 sin bye todavía.
+           // Reglas:
+           //  1) Cada seed prefiere bye en SU partido de R1 (ventaja).
+           //  2) Los byes restantes se reparten entre cuartos DIFERENTES
+           //     (no dos byes en partidos R1 que alimentan el mismo cuarto)
+           //     hasta que cada cuarto tenga 1, luego 2, etc. — round-robin.
+           //  3) Sin esto, dos byes adyacentes feeding el mismo cuarto
+           //     producen un cuarto donde ambas parejas pasan directas
+           //     (ej. "Miguel y Juanan vs Fabián" antes de jugar nada).
            const byeSlots = new Set();
            const matchesWithBye = new Set();
            let byesAllocated = 0;
+           // 1) Seeds primero
            const seedSlotsSorted = seededHere
              .map(p => positions.indexOf(p.seed))
              .filter(i => i >= 0 && i < mainBracketSize)
@@ -1225,7 +1232,46 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              matchesWithBye.add(matchIdx);
              byesAllocated++;
            }
-           for (let m = 0; m < mainBracketSize / 2 && byesAllocated < byesNeededHere; m++) {
+           // 2) Byes restantes round-robin por cuartos (mainBracketSize/4
+           //    cuartos; cada cuarto = 2 R1 matches consecutivos).
+           //    Buscamos siempre el cuarto con menos byes y le metemos uno.
+           const numR1 = mainBracketSize / 2;
+           const numCuartos = Math.max(1, Math.floor(mainBracketSize / 4));
+           const cuartoByeCount = new Array(numCuartos).fill(0);
+           // Cuenta los byes ya colocados (de los seeds) por cuarto
+           matchesWithBye.forEach(m => {
+             const c = Math.floor(m / 2);
+             if (c < numCuartos) cuartoByeCount[c]++;
+           });
+           while (byesAllocated < byesNeededHere) {
+             // Encuentra cuarto con menos byes que tenga al menos un R1 libre
+             let pick = -1;
+             let minCount = Infinity;
+             for (let c = 0; c < numCuartos; c++) {
+               if (cuartoByeCount[c] >= 2) continue; // cuarto ya saturado
+               // Comprueba si hay R1 libre en este cuarto
+               const m1 = c * 2, m2 = c * 2 + 1;
+               const m1Free = !matchesWithBye.has(m1);
+               const m2Free = !matchesWithBye.has(m2);
+               if (!m1Free && !m2Free) continue;
+               if (cuartoByeCount[c] < minCount) {
+                 minCount = cuartoByeCount[c];
+                 pick = c;
+               }
+             }
+             if (pick < 0) break; // no más sitio
+             // Dentro del cuarto elegido, escoge un R1 libre
+             const m1 = pick * 2, m2 = pick * 2 + 1;
+             const chosenM = !matchesWithBye.has(m1) ? m1 : m2;
+             const s1 = chosenM * 2, s2 = chosenM * 2 + 1;
+             const target = slot[s1] ? s2 : (slot[s2] ? s1 : s2);
+             byeSlots.add(target);
+             matchesWithBye.add(chosenM);
+             cuartoByeCount[pick]++;
+             byesAllocated++;
+           }
+           // Fallback si quedó algún bye por colocar
+           for (let m = 0; m < numR1 && byesAllocated < byesNeededHere; m++) {
              if (matchesWithBye.has(m)) continue;
              const s1 = m * 2, s2 = m * 2 + 1;
              const target = slot[s1] ? s2 : (slot[s2] ? s1 : s2);
