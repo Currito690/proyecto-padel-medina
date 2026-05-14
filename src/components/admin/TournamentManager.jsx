@@ -5914,6 +5914,39 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         // y deshabilitamos la edición.
                         const ready = match.p1 && match.p2 && !match.p1.isPlaceholder && !match.p2.isPlaceholder;
                         if (!ready) {
+                          // En consolación, si AL MENOS UN jugador es real (la pareja
+                          // que ya estaba esperando), permitimos decidir manualmente
+                          // que avance ella sin partido. Útil cuando el placeholder
+                          // no se va a llenar y queremos mover el cuadro a mano.
+                          const p1Real = match.p1 && !match.p1.isBye && !match.p1.isPlaceholder && !match.p1.isPrelimPlaceholder;
+                          const p2Real = match.p2 && !match.p2.isBye && !match.p2.isPlaceholder && !match.p2.isPrelimPlaceholder;
+                          if (bracket.isCons && (p1Real || p2Real)) {
+                            return (
+                              <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                <div style={{ width: '100%', textAlign: 'center', color: '#94A3B8', fontSize: '0.65rem', fontWeight: 700, padding: '0.25rem 0.5rem', background: '#F8FAFC', borderRadius: '0.4rem' }}>
+                                  ⏳ Sin rival aún
+                                </div>
+                                {p1Real && (
+                                  <button
+                                    onClick={() => handleSetWinner(match, match.p1, true, cat)}
+                                    title="Pasar esta pareja a la siguiente ronda sin partido"
+                                    style={{ width: '100%', padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#15803D', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                                  >
+                                    ✋ Avanza {match.p1.name}
+                                  </button>
+                                )}
+                                {p2Real && (
+                                  <button
+                                    onClick={() => handleSetWinner(match, match.p2, true, cat)}
+                                    title="Pasar esta pareja a la siguiente ronda sin partido"
+                                    style={{ width: '100%', padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#15803D', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+                                  >
+                                    ✋ Avanza {match.p2.name}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          }
                           return (
                             <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
                               <div style={{ width: '100%', textAlign: 'center', color: '#94A3B8', fontSize: '0.7rem', fontWeight: 700, padding: '0.35rem 0.5rem', background: '#F8FAFC', borderRadius: '0.4rem' }}>
