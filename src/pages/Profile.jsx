@@ -28,7 +28,21 @@ const Profile = () => {
       .select('*')
       .eq('published', true)
       .order('event_date', { ascending: true });
-    setEvents(data || []);
+    const list = data || [];
+    // Enriquecer con estado del cuadro del torneo vinculado.
+    const tIds = list
+      .map(ev => ev.registration_url?.match(/\/torneos\/([^/?]+)/)?.[1])
+      .filter(Boolean);
+    if (tIds.length > 0) {
+      const { data: tdata } = await supabase.from('tournaments').select('id, config').in('id', tIds);
+      const publishedSet = new Set((tdata || []).filter(t => t.config?.bracketPublished === true).map(t => t.id));
+      setEvents(list.map(ev => {
+        const tid = ev.registration_url?.match(/\/torneos\/([^/?]+)/)?.[1];
+        return { ...ev, _tournamentId: tid || null, _bracketPublished: tid ? publishedSet.has(tid) : false };
+      }));
+    } else {
+      setEvents(list);
+    }
     setEventsLoading(false);
   };
 
@@ -157,8 +171,19 @@ const Profile = () => {
                         <p style={{ margin: '0 0 0.35rem', fontSize: '0.95rem', fontWeight: 800, color: '#0F172A' }}>{ev.title}</p>
                         {ev.description && <p style={{ margin: '0 0 0.5rem', fontSize: '0.82rem', color: '#64748B', lineHeight: 1.5 }}>{ev.description}</p>}
                         {ev.registration_url && (
-                          <button onClick={() => { setNotifOpen(false); try { navigate(new URL(ev.registration_url).pathname); } catch { navigate(ev.registration_url); } }} style={{ marginTop: '0.25rem', padding: '0.5rem 1rem', backgroundColor: '#16A34A', color: 'white', borderRadius: '0.625rem', fontWeight: 700, fontSize: '0.82rem', border: 'none', cursor: 'pointer' }}>
-                            Inscribirse →
+                          <button
+                            onClick={() => {
+                              setNotifOpen(false);
+                              if (ev._bracketPublished && ev._tournamentId) {
+                                navigate(`/torneos/${ev._tournamentId}/cuadro`);
+                                return;
+                              }
+                              try { navigate(new URL(ev.registration_url).pathname); }
+                              catch { navigate(ev.registration_url); }
+                            }}
+                            style={{ marginTop: '0.25rem', padding: '0.5rem 1rem', backgroundColor: ev._bracketPublished ? '#D97706' : '#16A34A', color: 'white', borderRadius: '0.625rem', fontWeight: 700, fontSize: '0.82rem', border: 'none', cursor: 'pointer' }}
+                          >
+                            {ev._bracketPublished ? '🏆 Ver cuadro →' : 'Inscribirse →'}
                           </button>
                         )}
                       </div>

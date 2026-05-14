@@ -77,7 +77,22 @@ const BookingDashboard = () => {
 
   useEffect(() => {
     loadCourts();
-    supabase.from('events').select('*').eq('published', true).order('event_date', { ascending: true }).then(({ data }) => setEvents(data || []));
+    // Eventos publicados + estado del cuadro del torneo vinculado: si el
+    // admin ya publicó el cuadro, el evento debe llevar al cuadro en vez del
+    // formulario de inscripción.
+    supabase.from('events').select('*').eq('published', true).order('event_date', { ascending: true }).then(async ({ data }) => {
+      const list = data || [];
+      const tIds = list
+        .map(ev => ev.registration_url?.match(/\/torneos\/([^/?]+)/)?.[1])
+        .filter(Boolean);
+      if (tIds.length === 0) { setEvents(list); return; }
+      const { data: tdata } = await supabase.from('tournaments').select('id, config').in('id', tIds);
+      const publishedSet = new Set((tdata || []).filter(t => t.config?.bracketPublished === true).map(t => t.id));
+      setEvents(list.map(ev => {
+        const tid = ev.registration_url?.match(/\/torneos\/([^/?]+)/)?.[1];
+        return { ...ev, _tournamentId: tid || null, _bracketPublished: tid ? publishedSet.has(tid) : false };
+      }));
+    });
     // Torneos públicos abiertos a inscripción (status no 'draft', plazo no pasado, sin cuadro generado todavía).
     supabase.from('tournaments')
       .select('id, name, status, config, created_at')
@@ -506,6 +521,13 @@ const BookingDashboard = () => {
                   <div
                     key={ev.id}
                     onClick={() => {
+                      // Si el cuadro está publicado, ir directo al cuadro
+                      // (la página de inscripción redirigiría igualmente,
+                      // pero saltarse el rebote es más rápido y claro).
+                      if (ev._bracketPublished && ev._tournamentId) {
+                        navigate(`/torneos/${ev._tournamentId}/cuadro`);
+                        return;
+                      }
                       if (!ev.registration_url) return;
                       try {
                         const path = new URL(ev.registration_url).pathname;
@@ -546,7 +568,11 @@ const BookingDashboard = () => {
                     <div style={{ padding: '0.7rem 0.875rem', backgroundColor: 'white' }}>
                       {dateStr && <p style={{ margin: '0 0 0.2rem', fontSize: '0.65rem', fontWeight: 800, color: '#16A34A', letterSpacing: '0.05em' }}>{dateStr}</p>}
                       <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 800, color: '#0F172A', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{ev.title}</p>
-                      {ev.registration_url && <p style={{ margin: '0.35rem 0 0', fontSize: '0.7rem', fontWeight: 700, color: '#2563EB' }}>Inscribirse →</p>}
+                      {ev.registration_url && (
+                        <p style={{ margin: '0.35rem 0 0', fontSize: '0.7rem', fontWeight: 700, color: ev._bracketPublished ? '#D97706' : '#2563EB' }}>
+                          {ev._bracketPublished ? '🏆 Ver cuadro →' : 'Inscribirse →'}
+                        </p>
+                      )}
                     </div>
                   </div>
                 );
