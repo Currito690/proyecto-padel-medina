@@ -2177,6 +2177,53 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
   };
 
+  // Resuelve TODOS los placeholders pendientes de una vez. Útil cuando el
+  // admin sabe que ya no van a llegar más perdedores (porque los cuartos
+  // del principal ya están todos resueltos o no se va a esperar más).
+  // Convierte cada placeholder huérfano en BYE y avanza a su rival.
+  const resolveAllConsPlaceholders = async (cat) => {
+    const catCons = consRounds[cat];
+    if (!catCons || catCons.length === 0) {
+      toast('No hay cuadro de consolación que resolver.', 'error');
+      return;
+    }
+    const pending = catCons[0].filter(m => {
+      const p1Place = m.p1?.isPlaceholder;
+      const p2Place = m.p2?.isPlaceholder;
+      const p1Real = m.p1 && !m.p1.isBye && !m.p1.isPlaceholder;
+      const p2Real = m.p2 && !m.p2.isBye && !m.p2.isPlaceholder;
+      return (p1Place && p2Real) || (p2Place && p1Real);
+    });
+    if (pending.length === 0) {
+      toast('No hay placeholders pendientes que resolver.', 'success');
+      return;
+    }
+    const ok = await confirmDialog(
+      `Hay ${pending.length} pareja${pending.length === 1 ? '' : 's'} esperando rival que no va a llegar. ¿Las pasamos directo a la siguiente ronda con BYE?`,
+      { title: 'Resolver placeholders pendientes', okText: 'Sí, avanzar' }
+    );
+    if (!ok) return;
+    setConsRounds(prev => {
+      const cc = prev[cat];
+      if (!cc || cc.length === 0) return prev;
+      const next = cc.map(r => r.map(m => ({ ...m })));
+      next[0].forEach(m => {
+        let placeholderSide = null;
+        let realSide = null;
+        if (m.p1?.isPlaceholder && m.p2 && !m.p2.isBye && !m.p2.isPlaceholder) {
+          placeholderSide = 'p1'; realSide = 'p2';
+        } else if (m.p2?.isPlaceholder && m.p1 && !m.p1.isBye && !m.p1.isPlaceholder) {
+          placeholderSide = 'p2'; realSide = 'p1';
+        }
+        if (!placeholderSide) return;
+        m[placeholderSide] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true };
+        if (m[realSide]) advanceWinnerMut(next, 0, m.matchIndex, m[realSide]);
+      });
+      return { ...prev, [cat]: next };
+    });
+    toast(`✓ ${pending.length} pareja${pending.length === 1 ? '' : 's'} avanzada${pending.length === 1 ? '' : 's'} a la siguiente ronda.`, 'success');
+  };
+
   const syncConsOnMainWinner = (cat, match, oldWinner, newWinner) => {
     if (!match.p1 || !match.p2 || match.p1.isBye || match.p2.isBye) return;
     if (!newWinner) return;
@@ -5750,7 +5797,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           </>
                         )}
                         {bracket.isCons && !isExporting && (
-                           <button onClick={() => setConsRounds(prev => ({...prev, [cat]: []}))} style={{ background: 'none', border: 'none', color: '#EF4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Restaurar Consolación</button>
+                           <>
+                             <button
+                               onClick={() => resolveAllConsPlaceholders(cat)}
+                               title="Pasa a la siguiente ronda las parejas que están esperando un rival que no va a llegar"
+                               style={{ background: 'none', border: 'none', color: '#0EA5E9', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                             >
+                               ⏭️ Pasar parejas en espera
+                             </button>
+                             <button onClick={() => setConsRounds(prev => ({...prev, [cat]: []}))} style={{ background: 'none', border: 'none', color: '#EF4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Restaurar Consolación</button>
+                           </>
                         )}
                       </div>
                     </div>
