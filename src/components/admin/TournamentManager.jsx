@@ -5344,17 +5344,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              }
            }));
            const standings = Object.values(standingsMap).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
+           const liguillaExportId = `export-liguilla-${cat.replace(/\s+/g, '_')}`;
+           const liguillaTitle = `${tConfig.formatByCategory?.[cat] === 'liguilla_ko' ? 'Liguilla + KO' : 'Liguilla'} · ${cat}`;
            return (
-             <div key={cat} style={{ marginBottom: '4rem' }}>
+             <div key={cat} id={liguillaExportId} style={{ marginBottom: '4rem', backgroundColor: isExporting === liguillaExportId ? '#FFFFFF' : 'transparent' }}>
                <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', borderRadius: '1rem', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'white' }}>
-                   Categoría: {cat} — {tConfig.formatByCategory?.[cat] === 'liguilla_ko' ? 'Liguilla + KO' : 'Liguilla'}
+                   {isExporting === liguillaExportId
+                     ? `${tConfig.name} - ${liguillaTitle}`
+                     : `Categoría: ${cat} — ${tConfig.formatByCategory?.[cat] === 'liguilla_ko' ? 'Liguilla + KO' : 'Liguilla'}`}
                  </h2>
-                 {!isExporting && tConfig.formatByCategory?.[cat] === 'liguilla_ko' && (!consRounds[cat] || consRounds[cat].length === 0) && (
-                   <button onClick={() => generateLiguillaKO(cat)} style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>
-                     🏆 Generar Eliminatorias Finales
-                   </button>
-                 )}
+                 <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                   {!isExporting && (
+                     <button onClick={() => handleDownloadPDF(liguillaExportId, liguillaTitle)} style={{ background: 'none', border: 'none', color: '#93C5FD', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                       Exportar PDF
+                     </button>
+                   )}
+                   {!isExporting && tConfig.formatByCategory?.[cat] === 'liguilla_ko' && (!consRounds[cat] || consRounds[cat].length === 0) && (
+                     <button onClick={() => generateLiguillaKO(cat)} style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>
+                       🏆 Generar Eliminatorias Finales
+                     </button>
+                   )}
+                 </div>
                </div>
                {/* Standings */}
                <div style={{ backgroundColor: 'white', borderRadius: '1rem', border: '1px solid #E2E8F0', overflow: 'hidden', marginBottom: '2rem' }}>
