@@ -2678,12 +2678,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const exportStyle = document.createElement('style');
       exportStyle.id = 'tm-pdf-export-styles';
       exportStyle.textContent = `
-        #${elementId} { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-        #${elementId} * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        #${elementId} { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; -webkit-font-smoothing: antialiased !important; -moz-osx-font-smoothing: grayscale !important; text-rendering: geometricPrecision !important; }
+        #${elementId} * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; -webkit-font-smoothing: antialiased !important; }
+        /* Texto un punto más grueso y oscuro para que se lea mejor en papel */
+        #${elementId} { color: #0F172A !important; }
         /* Refuerzo de bordes para que las cajas se distingan en papel */
         #${elementId} [style*="border"] { border-width: 2px !important; }
         /* Bordes y fondos de los matches: contraste más fuerte */
-        #${elementId} [style*="#E2E8F0"] { border-color: #94A3B8 !important; }
+        #${elementId} [style*="#E2E8F0"] { border-color: #64748B !important; }
         /* Verde ganador: saturado */
         #${elementId} [style*="DCFCE7"] { background-color: #BBF7D0 !important; }
         #${elementId} [style*="#16A34A"] { color: #15803D !important; }
@@ -2691,27 +2693,46 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         #${elementId} [style*="FEF3C7"] { background-color: #FDE68A !important; }
         #${elementId} [style*="#D97706"] { color: #B45309 !important; }
         /* Texto secundario más oscuro para legibilidad */
-        #${elementId} [style*="#64748B"] { color: #334155 !important; }
-        #${elementId} [style*="#94A3B8"] { color: #475569 !important; }
+        #${elementId} [style*="#64748B"] { color: #1E293B !important; }
+        #${elementId} [style*="#94A3B8"] { color: #334155 !important; }
+        #${elementId} [style*="#475569"] { color: #1E293B !important; }
+        /* Nombres de pareja en negrita más fuerte */
+        #${elementId} span[style*="font-weight: 600"] { font-weight: 700 !important; }
+        #${elementId} span[style*="font-weight: 700"] { font-weight: 800 !important; }
       `;
       document.head.appendChild(exportStyle);
 
+      // Pre-cargamos el logo. Si el fetch falla simplemente no se añade
+      // (no rompe la exportación).
+      let logoDataUrl = null;
       try {
-        // Forzar expansión para captura completa si hay scroll horizontal
+        const logoRes = await fetch('/logo.png');
+        const blob = await logoRes.blob();
+        logoDataUrl = await new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        console.warn('No se pudo cargar el logo para el PDF:', e);
+      }
+
+      try {
+        // Forzar expansión para captura completa si hay scroll horizontal.
+        // Reservo padding-top extra para el logo y el título.
         element.style.width = 'max-content';
         element.style.minWidth = '1200px';
-        element.style.padding = '3rem';
+        element.style.padding = '5rem 3rem 3rem 3rem';
         element.style.backgroundColor = '#FFFFFF';
 
-        // scale=3 para texto y bordes nítidos. backgroundColor blanco para
-        // que los fondos transparentes no salgan grises. PNG sin pérdida
-        // (JPEG con qualidad 0.95 desatura los verdes/amarillos en papel).
+        // scale=4 para texto extra-nítido en papel (antes 3). PNG sin pérdida.
         const canvas = await html2canvas(element, {
-          scale: 3,
+          scale: 4,
           useCORS: true,
           logging: false,
           backgroundColor: '#FFFFFF',
           imageTimeout: 0,
+          letterRendering: true,
         });
         const imgData = canvas.toDataURL('image/png');
 
@@ -2740,6 +2761,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const y = (pdfHeight - finalHeight) / 2;
 
         pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight, undefined, 'FAST');
+
+        // Logo en la esquina SUPERIOR DERECHA (encima del cuadro).
+        // Tamaño 22mm × 22mm, margen de 8mm desde arriba y derecha.
+        if (logoDataUrl) {
+          const logoSize = 22;
+          const logoMargin = 8;
+          pdf.addImage(
+            logoDataUrl,
+            'PNG',
+            pdfWidth - logoSize - logoMargin,
+            logoMargin,
+            logoSize,
+            logoSize,
+            undefined,
+            'FAST'
+          );
+        }
 
         const safeTitle = title.replace(/[^a-zA-Z0-9]/g, '_');
         pdf.save(`Cuadro_${tConfig.name.replace(/\s+/g, '_')}_${safeTitle}.pdf`);
