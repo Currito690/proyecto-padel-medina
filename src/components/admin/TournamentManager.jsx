@@ -146,6 +146,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // aplicará a tConfig.formatByCategory al pulsar "Generar".
   const [showFormatPicker, setShowFormatPicker] = useState(false);
   const [pickerFormats, setPickerFormats] = useState({});
+  // Selector de destinatarios para el correo de "cuadro publicado/actualizado".
+  // Permite al admin elegir qué parejas reciben el aviso (por defecto todas
+  // las confirmadas con correo válido). Útil para reenviar solo a las que
+  // se quedaron fuera por rate-limit en envíos previos.
+  const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
+  const [recipientPickerData, setRecipientPickerData] = useState([]);
+  const [recipientPickerSelected, setRecipientPickerSelected] = useState(() => new Set());
+  const [recipientPickerKind, setRecipientPickerKind] = useState('published');
+  const [recipientPickerSending, setRecipientPickerSending] = useState(false);
   // Si true, al generar el cuadro NO se auto-asignan horarios a la primera
   // ronda. El admin los pone a mano viendo la disponibilidad de los jugadores.
   const [pickerManualR0, setPickerManualR0] = useState(false);
@@ -622,80 +631,100 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         if (!ok) return;
       }
     }
-    // Re-publicación: confirmar antes de spamear a todos los jugadores con
-    // un correo de "cuadro actualizado".
-    if (wasPublished) {
-      const ok = await confirmDialog(
-        'El cuadro ya está publicado. ¿Quieres reenviar un correo a todos los jugadores avisando de que se ha actualizado?',
-        { title: 'Notificar actualización', okText: 'Notificar a jugadores', danger: false }
-      );
-      if (!ok) return;
-    }
     try {
-      // bracketPublished=true marca el cuadro como visible al público.
-      // Mientras esto sea false (o ausente), el enlace /torneos/:id sigue
-      // mostrando el formulario de inscripción aunque haya rounds generadas
-      // (las rounds se generan localmente con "Generar Cuadro" en admin).
-      const tConfigWithFlag = { ...tConfig, bracketPublished: true };
-      const config = { ...tConfigWithFlag, rounds, consRounds, participants, phase };
-      const { error } = await supabase.from('tournaments')
-        .update({ config, status: 'open' })
-        .eq('id', publishedId);
-      if (error) throw error;
-      setTConfig(tConfigWithFlag);
-      toast(
-        wasPublished
-          ? '🔄 Cuadro actualizado. Avisando a los jugadores por correo…'
-          : '🏆 Cuadro publicado. Avisando a los jugadores por correo…',
-        'success'
-      );
-
-      // Notificación por correo a todos los jugadores confirmados con el
-      // enlace al cuadro. No bloquea el flujo principal: si el envío falla
-      // se avisa pero el cuadro ya está publicado.
-      try {
-        const { data: regs, error: regsErr } = await supabase
-          .from('tournament_registrations')
-          .select('player1_email, player2_email')
-          .eq('tournament_id', publishedId)
-          .eq('confirmation_status', 'confirmed');
-        if (regsErr) throw regsErr;
-
-        const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        const emails = Array.from(new Set(
-          (regs || [])
-            .flatMap(r => [r.player1_email, r.player2_email])
-            .map(e => (e || '').trim().toLowerCase())
-            .filter(e => emailRe.test(e))
-        ));
-        if (emails.length === 0) {
-          toast('Cuadro publicado, pero no había correos válidos en las parejas confirmadas.', 'warning');
-        } else {
-          const tournamentUrl = `${window.location.origin}/torneos/${publishedId}/cuadro`;
-          const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bracket-published', {
-            body: {
-              emails,
-              tournamentName: tConfig.name || 'Torneo',
-              tournamentUrl,
-              kind: wasPublished ? 'updated' : 'published',
-            },
-          });
-          if (fnErr || (fnData && fnData.error)) {
-            console.error('send-bracket-published failed', fnErr || fnData?.error);
-            toast(`Cuadro publicado, pero el correo a jugadores falló: ${fnErr?.message || fnData?.error || 'desconocido'}`, 'error');
-          } else {
-            const sent = fnData?.sent ?? emails.length;
-            const failed = fnData?.failed ?? 0;
-            toast(`📧 Correo enviado a ${sent} jugador${sent === 1 ? '' : 'es'}${failed > 0 ? ` (${failed} fallido${failed === 1 ? '' : 's'})` : ''}`, 'success');
-          }
-        }
-      } catch (mailErr) {
-        console.error('No se pudo enviar el correo del cuadro:', mailErr);
-        toast('Cuadro publicado, pero no se pudo enviar el correo de aviso a los jugadores.', 'error');
+      // En la primera publicación, marcamos bracketPublished=true en DB.
+      // Si ya estaba publicado (re-publicar = solo notificar), saltamos
+      // este paso porque la flag y el config ya están actualizados.
+      if (!wasPublished) {
+        const tConfigWithFlag = { ...tConfig, bracketPublished: true };
+        const config = { ...tConfigWithFlag, rounds, consRounds, participants, phase };
+        const { error } = await supabase.from('tournaments')
+          .update({ config, status: 'open' })
+          .eq('id', publishedId);
+        if (error) throw error;
+        setTConfig(tConfigWithFlag);
+        toast('🏆 Cuadro publicado. Elige a qué parejas avisar por correo.', 'success');
       }
+
+      // Abrir el selector de destinatarios. El admin elige qué parejas
+      // reciben el correo (por defecto todas las confirmadas con correo
+      // válido). Esto evita el problema del rate-limit de Resend cuando
+      // antes se mandaba todo de golpe.
+      await openRecipientPicker(wasPublished ? 'updated' : 'published');
     } catch (e) {
       console.error(e);
       toast('Error al publicar el cuadro: ' + (e.message || e), 'error');
+    }
+  };
+
+  // Abre el modal con la lista de parejas confirmadas + correo válido.
+  // El admin marca/desmarca y al pulsar "Enviar" llama a la edge function
+  // solo con los seleccionados.
+  const openRecipientPicker = async (kind) => {
+    if (!publishedId) return;
+    try {
+      const { data: regs, error } = await supabase
+        .from('tournament_registrations')
+        .select('id, category, player1_name, player2_name, player1_email, player2_email')
+        .eq('tournament_id', publishedId)
+        .eq('confirmation_status', 'confirmed')
+        .order('category', { ascending: true })
+        .order('player1_name', { ascending: true });
+      if (error) throw error;
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const withEmails = (regs || []).filter(r =>
+        emailRe.test((r.player1_email || '').trim()) ||
+        emailRe.test((r.player2_email || '').trim())
+      );
+      if (withEmails.length === 0) {
+        toast('No hay parejas confirmadas con correo válido a las que avisar.', 'warning');
+        return;
+      }
+      setRecipientPickerKind(kind);
+      setRecipientPickerData(withEmails);
+      setRecipientPickerSelected(new Set(withEmails.map(r => r.id)));
+      setRecipientPickerOpen(true);
+    } catch (e) {
+      toast('Error al cargar parejas: ' + (e.message || e), 'error');
+    }
+  };
+
+  const sendBracketEmailsToSelected = async () => {
+    if (recipientPickerSending) return;
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const selectedRegs = recipientPickerData.filter(r => recipientPickerSelected.has(r.id));
+    const emails = Array.from(new Set(
+      selectedRegs.flatMap(r => [r.player1_email, r.player2_email])
+        .map(e => (e || '').trim().toLowerCase())
+        .filter(e => emailRe.test(e))
+    ));
+    if (emails.length === 0) {
+      toast('Marca al menos una pareja con correo válido.', 'warning');
+      return;
+    }
+    setRecipientPickerSending(true);
+    try {
+      const tournamentUrl = `${window.location.origin}/torneos/${publishedId}/cuadro`;
+      const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bracket-published', {
+        body: {
+          emails,
+          tournamentName: tConfig.name || 'Torneo',
+          tournamentUrl,
+          kind: recipientPickerKind,
+        },
+      });
+      if (fnErr || (fnData && fnData.error)) {
+        toast(`Error al enviar correos: ${fnErr?.message || fnData?.error || 'desconocido'}`, 'error');
+      } else {
+        const sent = fnData?.sent ?? emails.length;
+        const failed = fnData?.failed ?? 0;
+        toast(`📧 Enviado a ${sent} jugador${sent === 1 ? '' : 'es'}${failed > 0 ? ` (${failed} fallido${failed === 1 ? '' : 's'})` : ''}`, 'success');
+        setRecipientPickerOpen(false);
+      }
+    } catch (e) {
+      toast('Error al enviar correos: ' + (e.message || e), 'error');
+    } finally {
+      setRecipientPickerSending(false);
     }
   };
 
@@ -6069,6 +6098,128 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             </div>
          );
       })}
+
+      {/* ── Selector de destinatarios para el correo del cuadro ── */}
+      {recipientPickerOpen && (() => {
+        const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const validEmailsOf = (r) => [r.player1_email, r.player2_email]
+          .map(e => (e || '').trim().toLowerCase())
+          .filter(e => emailRe.test(e));
+        const byCat = recipientPickerData.reduce((acc, r) => {
+          const c = r.category || 'Sin categoría';
+          (acc[c] = acc[c] || []).push(r);
+          return acc;
+        }, {});
+        const allIds = recipientPickerData.map(r => r.id);
+        const selectAll = () => setRecipientPickerSelected(new Set(allIds));
+        const selectNone = () => setRecipientPickerSelected(new Set());
+        const toggle = (id) => setRecipientPickerSelected(prev => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id); else next.add(id);
+          return next;
+        });
+        const toggleCategory = (cat) => {
+          const ids = byCat[cat].map(r => r.id);
+          const allOn = ids.every(id => recipientPickerSelected.has(id));
+          setRecipientPickerSelected(prev => {
+            const next = new Set(prev);
+            if (allOn) ids.forEach(id => next.delete(id));
+            else ids.forEach(id => next.add(id));
+            return next;
+          });
+        };
+        const selectedCount = recipientPickerSelected.size;
+        const emailCount = recipientPickerData
+          .filter(r => recipientPickerSelected.has(r.id))
+          .reduce((acc, r) => acc + validEmailsOf(r).length, 0);
+        const isUpdate = recipientPickerKind === 'updated';
+        return (
+          <div onClick={() => !recipientPickerSending && setRecipientPickerOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '620px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 4rem)' }}>
+              <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>
+                    {isUpdate ? '🔄 Notificar cuadro actualizado' : '📧 Avisar parejas del cuadro'}
+                  </h3>
+                  <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
+                    Marca las parejas que deben recibir el correo. Se mandan en tandas para no saltarse el límite de Resend.
+                  </p>
+                </div>
+                <button onClick={() => !recipientPickerSending && setRecipientPickerOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+              </div>
+              <div style={{ padding: '0.75rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', background: '#F8FAFC' }}>
+                <button onClick={selectAll} style={{ padding: '0.35rem 0.8rem', borderRadius: '0.5rem', border: '1.5px solid #BBF7D0', background: '#F0FDF4', color: '#15803D', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>
+                  ✓ Marcar todas
+                </button>
+                <button onClick={selectNone} style={{ padding: '0.35rem 0.8rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#64748B', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>
+                  ✕ Desmarcar todas
+                </button>
+                <div style={{ flex: 1 }} />
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0F172A' }}>
+                  {selectedCount} de {recipientPickerData.length} parejas · {emailCount} correos
+                </span>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1.5rem' }}>
+                {Object.entries(byCat).map(([cat, list]) => {
+                  const ids = list.map(r => r.id);
+                  const allOn = ids.every(id => recipientPickerSelected.has(id));
+                  const someOn = !allOn && ids.some(id => recipientPickerSelected.has(id));
+                  return (
+                    <div key={cat} style={{ marginBottom: '1rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleCategory(cat)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', textAlign: 'left', padding: '0.5rem 0.6rem', borderRadius: '0.5rem', border: 'none', background: '#F1F5F9', cursor: 'pointer', marginBottom: '0.4rem' }}
+                      >
+                        <span style={{ fontSize: '0.95rem' }}>{allOn ? '☑️' : (someOn ? '◼️' : '⬜')}</span>
+                        <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.85rem' }}>{cat}</span>
+                        <span style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>· {list.length} parejas</span>
+                      </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', paddingLeft: '0.4rem' }}>
+                        {list.map(r => {
+                          const checked = recipientPickerSelected.has(r.id);
+                          const valid = validEmailsOf(r);
+                          return (
+                            <label key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.45rem 0.6rem', borderRadius: '0.5rem', cursor: 'pointer', background: checked ? '#F0FDF4' : 'transparent', border: `1px solid ${checked ? '#BBF7D0' : '#E2E8F0'}` }}>
+                              <input type="checkbox" checked={checked} onChange={() => toggle(r.id)} style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#16A34A' }} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
+                                  {r.player1_name} y {r.player2_name}
+                                </div>
+                                <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '0.15rem', wordBreak: 'break-all' }}>
+                                  {valid.length > 0 ? valid.join(' · ') : <em style={{ color: '#DC2626' }}>sin correo válido</em>}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #E2E8F0', display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', background: '#F8FAFC' }}>
+                <button
+                  type="button"
+                  disabled={recipientPickerSending}
+                  onClick={() => setRecipientPickerOpen(false)}
+                  style={{ padding: '0.65rem 1.2rem', borderRadius: '0.65rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.85rem', cursor: recipientPickerSending ? 'not-allowed' : 'pointer', opacity: recipientPickerSending ? 0.6 : 1 }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={recipientPickerSending || selectedCount === 0}
+                  onClick={sendBracketEmailsToSelected}
+                  style={{ padding: '0.65rem 1.4rem', borderRadius: '0.65rem', border: 'none', background: selectedCount === 0 ? '#CBD5E1' : (isUpdate ? '#2563EB' : '#16A34A'), color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: (recipientPickerSending || selectedCount === 0) ? 'not-allowed' : 'pointer', opacity: recipientPickerSending ? 0.7 : 1 }}
+                >
+                  {recipientPickerSending ? 'Enviando…' : `📧 Enviar a ${selectedCount} pareja${selectedCount === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
