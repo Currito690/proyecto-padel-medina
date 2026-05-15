@@ -113,10 +113,16 @@ Deno.serve(async (req: Request) => {
       : `🏆 Cuadro publicado — ${tournamentName}`;
     const html = bracketHtml(tournamentName, tournamentUrl, isUpdate);
 
-    // Envío individual por cada destinatario para preservar privacidad
-    // (no se ven los demás correos en el "To"). En paralelo con allSettled
-    // para no parar el resto si uno falla.
-    const sends = cleanEmails.map(email =>
+    // Resend free tier limita a 2 req/s. Si mandamos todos en paralelo, los
+    // últimos rebotan con 429 y solo llegan a las primeras parejas. Solución:
+    // tandas de BATCH_SIZE en paralelo con espera entre tandas. Cada envío
+    // individual conserva privacidad (sin "To" compartido) y errores
+    // puntuales no paran el resto.
+    const BATCH_SIZE = 5;
+    const BATCH_DELAY_MS = 3000; // 5 envíos cada 3s ≈ 1,67 req/s, bajo el límite
+    const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
+
+    const sendOne = (email: string) =>
       fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -124,23 +130,38 @@ Deno.serve(async (req: Request) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ from: FROM_EMAIL, reply_to: REPLY_TO, to: [email], subject, html }),
-      }).then(async (res) => ({ email, ok: res.ok, status: res.status, body: res.ok ? null : await res.text() }))
-    );
-    const results = await Promise.allSettled(sends);
+      }).then(async (res) => ({ email, ok: res.ok, status: res.status, body: res.ok ? null : await res.text() }));
 
     let success = 0; let failed = 0;
     const failures: { email: string; reason: string }[] = [];
-    for (const r of results) {
-      if (r.status === 'fulfilled' && r.value.ok) success++;
-      else {
-        failed++;
-        const reason = r.status === 'rejected' ? String(r.reason) : `HTTP ${r.value.status}: ${r.value.body}`;
-        failures.push({ email: r.status === 'fulfilled' ? r.value.email : 'unknown', reason });
+    const batches: string[][] = [];
+    for (let i = 0; i < cleanEmails.length; i += BATCH_SIZE) {
+      batches.push(cleanEmails.slice(i, i + BATCH_SIZE));
+    }
+    for (let b = 0; b < batches.length; b++) {
+      const results = await Promise.allSettled(batches[b].map(sendOne));
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value.ok) success++;
+        else {
+          failed++;
+          const reason = r.status === 'rejected' ? String(r.reason) : `HTTP ${r.value.status}: ${r.value.body}`;
+          failures.push({ email: r.status === 'fulfilled' ? r.value.email : 'unknown', reason });
+        }
       }
+      // Pausa entre tandas para respetar el rate limit. No esperamos tras la
+      // última.
+      if (b < batches.length - 1) await sleep(BATCH_DELAY_MS);
     }
     if (failures.length > 0) console.warn('send-bracket-published failures:', failures);
 
-    return new Response(JSON.stringify({ success: true, sent: success, failed, total: cleanEmails.length }), {
+    return new Response(JSON.stringify({
+      success: true,
+      sent: success,
+      failed,
+      total: cleanEmails.length,
+      batches: batches.length,
+      batchSize: BATCH_SIZE,
+    }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
