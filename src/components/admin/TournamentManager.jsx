@@ -140,6 +140,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // agrupados por día y ordenados por hora. Útil para imprimir el "parte del
   // día" o llamar a las parejas en orden.
   const [showMatchesList, setShowMatchesList] = useState(false);
+  const [matchesListDayFilter, setMatchesListDayFilter] = useState('all');
+  const [matchesListPdfLoading, setMatchesListPdfLoading] = useState(false);
   // Modal pre-generación: deja al admin elegir/confirmar el formato
   // (eliminatoria, liguilla, liguilla+KO) por cada categoría antes de
   // generar el cuadro. Estado pickerFormats es la copia editable que se
@@ -2877,6 +2879,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         /* Nombres de pareja en negrita más fuerte */
         #${elementId} span[style*="font-weight: 600"] { font-weight: 700 !important; }
         #${elementId} span[style*="font-weight: 700"] { font-weight: 800 !important; }
+        /* Fuentes ~25% más grandes solo en el PDF para que se lean en papel.
+           Se bumpean los tamaños relativos más usados en el render del cuadro.
+           No afecta a la UI normal porque solo se inyecta durante la captura. */
+        #${elementId} [style*="font-size: 0.62rem"] { font-size: 0.85rem !important; }
+        #${elementId} [style*="font-size: 0.65rem"] { font-size: 0.88rem !important; }
+        #${elementId} [style*="font-size: 0.68rem"] { font-size: 0.9rem !important; }
+        #${elementId} [style*="font-size: 0.7rem"]  { font-size: 0.92rem !important; }
+        #${elementId} [style*="font-size: 0.72rem"] { font-size: 0.95rem !important; }
+        #${elementId} [style*="font-size: 0.75rem"] { font-size: 0.98rem !important; }
+        #${elementId} [style*="font-size: 0.78rem"] { font-size: 1rem !important; }
+        #${elementId} [style*="font-size: 0.8rem"]  { font-size: 1.02rem !important; }
+        #${elementId} [style*="font-size: 0.82rem"] { font-size: 1.05rem !important; }
+        #${elementId} [style*="font-size: 0.85rem"] { font-size: 1.08rem !important; }
+        #${elementId} [style*="font-size: 0.9rem"]  { font-size: 1.12rem !important; }
+        #${elementId} [style*="font-size: 0.95rem"] { font-size: 1.18rem !important; }
+        #${elementId} [style*="font-size: 1rem"]    { font-size: 1.22rem !important; }
+        #${elementId} [style*="font-size: 1.05rem"] { font-size: 1.28rem !important; }
+        #${elementId} [style*="font-size: 1.1rem"]  { font-size: 1.35rem !important; }
+        #${elementId} [style*="font-size: 1.25rem"] { font-size: 1.55rem !important; }
       `;
       document.head.appendChild(exportStyle);
 
@@ -2899,7 +2920,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         // Forzar expansión para captura completa si hay scroll horizontal.
         // Reservo padding-top extra para el logo y el título.
         element.style.width = 'max-content';
-        element.style.minWidth = '1200px';
+        // Más ancho que antes (1600 vs 1200) para que los nombres de pareja
+        // tengan espacio cuando se aplique el bump de tamaño de fuente y no
+        // se trunquen con ellipsis.
+        element.style.minWidth = '1600px';
         element.style.padding = '5rem 3rem 3rem 3rem';
         element.style.backgroundColor = '#FFFFFF';
 
@@ -2978,6 +3002,216 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         setIsExporting(false);
       }
     }, 100);
+  };
+
+  // Genera un PDF nativo (no captura de pantalla) del listado de partidos.
+  // Texto seleccionable, búsqueda en visor de PDF, tipografía nítida en
+  // papel y paginación automática. Acepta filtro por día.
+  const handleDownloadMatchesPDF = async (items, byDay, dayKeys, filterDay) => {
+    const targetDays = filterDay === 'all' ? dayKeys : dayKeys.filter(d => d === filterDay);
+    if (targetDays.length === 0) {
+      toast('No hay partidos para ese día.', 'warning');
+      return;
+    }
+    setMatchesListPdfLoading(true);
+    try {
+      // Pre-carga del logo (no rompe si falla)
+      let logoDataUrl = null;
+      try {
+        const logoRes = await fetch('/logo.png');
+        const blob = await logoRes.blob();
+        logoDataUrl = await new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) { /* sin logo */ }
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const marginX = 10;
+      const marginTop = 22;
+      const marginBottom = 14;
+      const usableW = pageW - 2 * marginX;
+
+      // Anchos en mm: total 190 (cabe en A4 con margen 10)
+      const cols = [
+        { key: 'hour',  label: 'Hora',              width: 14 },
+        { key: 'court', label: 'Pista',             width: 22 },
+        { key: 'cat',   label: 'Categoría · Ronda', width: 38 },
+        { key: 'p1',    label: 'Pareja 1',          width: 46 },
+        { key: 'p2',    label: 'Pareja 2',          width: 46 },
+        { key: 'score', label: 'Resultado',         width: 24 },
+      ];
+      let y = marginTop;
+
+      const drawPageHeader = () => {
+        if (logoDataUrl) {
+          try {
+            const props = pdf.getImageProperties(logoDataUrl);
+            const aspect = props.width / props.height;
+            const lw = 32;
+            const lh = lw / aspect;
+            pdf.addImage(logoDataUrl, 'PNG', pageW - lw - marginX, 6, lw, lh, undefined, 'FAST');
+          } catch (e) { /* sin logo */ }
+        }
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(15);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(tConfig.name || 'Torneo', marginX, 12);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(9);
+        pdf.setTextColor(100, 116, 139);
+        const subtitle = filterDay === 'all'
+          ? `Partidos · ${dayKeys.length} día${dayKeys.length === 1 ? '' : 's'} · ${items.length} partido${items.length === 1 ? '' : 's'}`
+          : `Partidos del ${filterDay} · ${byDay[filterDay]?.length || 0} partido${(byDay[filterDay]?.length || 0) === 1 ? '' : 's'}`;
+        pdf.text(subtitle, marginX, 17);
+      };
+
+      const drawTableHeader = () => {
+        pdf.setFillColor(15, 23, 42);
+        pdf.rect(marginX, y, usableW, 7, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(9);
+        let x = marginX;
+        cols.forEach(c => {
+          pdf.text(c.label, x + 1.5, y + 4.7);
+          x += c.width;
+        });
+        y += 7;
+      };
+
+      const drawDayBanner = (day) => {
+        pdf.setFillColor(30, 41, 59);
+        pdf.rect(marginX, y, usableW, 8, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(11);
+        const count = byDay[day]?.length || 0;
+        pdf.text(`${day}  -  ${count} partido${count === 1 ? '' : 's'}`, marginX + 2.5, y + 5.5);
+        y += 8;
+      };
+
+      const ensureSpace = (need, day) => {
+        if (y + need > pageH - marginBottom) {
+          pdf.addPage();
+          y = marginTop;
+          drawPageHeader();
+          if (day) {
+            drawDayBanner(`${day} (cont.)`);
+          }
+          drawTableHeader();
+        }
+      };
+
+      drawPageHeader();
+
+      targetDays.forEach((day) => {
+        ensureSpace(20, null);
+        drawDayBanner(day);
+        drawTableHeader();
+        const rows = byDay[day] || [];
+
+        rows.forEach((it, idx) => {
+          const roundName = it.isCons ? 'Cons.' : (it.isPrelim ? 'Previa' : `R${it.round + 1}`);
+          const courtName = getCourtName(it.court);
+          pdf.setFontSize(9);
+          const p1Lines = pdf.splitTextToSize(it.p1 || '', cols[3].width - 3).slice(0, 2);
+          const p2Lines = pdf.splitTextToSize(it.p2 || '', cols[4].width - 3).slice(0, 2);
+          const lineCount = Math.max(p1Lines.length, p2Lines.length, 2);
+          const rowH = lineCount * 4.2 + 2.5;
+
+          ensureSpace(rowH, day);
+
+          // Fondo: alterna gris claro / blanco; verde claro si hay ganador
+          if (it.winner) {
+            pdf.setFillColor(240, 253, 244);
+          } else if (idx % 2 === 0) {
+            pdf.setFillColor(248, 250, 252);
+          } else {
+            pdf.setFillColor(255, 255, 255);
+          }
+          pdf.rect(marginX, y, usableW, rowH, 'F');
+
+          let x = marginX;
+          // Hora
+          pdf.setTextColor(15, 23, 42);
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(10);
+          pdf.text(it.hour || '', x + 1.5, y + 5);
+          x += cols[0].width;
+          // Pista
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(9);
+          pdf.text(courtName || '', x + 1.5, y + 5);
+          x += cols[1].width;
+          // Categoría · Ronda (2 líneas)
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(9);
+          pdf.text(it.cat || '', x + 1.5, y + 4);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          if (it.isCons) pdf.setTextColor(217, 119, 6);
+          else pdf.setTextColor(100, 116, 139);
+          pdf.text(`${it.isCons ? 'Consolación · ' : ''}${roundName}`, x + 1.5, y + 8);
+          pdf.setTextColor(15, 23, 42);
+          x += cols[2].width;
+          // Pareja 1
+          const p1Win = it.winner && it.winner === it.p1;
+          pdf.setFont('helvetica', p1Win ? 'bold' : 'normal');
+          pdf.setFontSize(9);
+          if (p1Win) pdf.setTextColor(21, 128, 61);
+          p1Lines.forEach((ln, i) => pdf.text(ln, x + 1.5, y + 4 + i * 4.2));
+          pdf.setTextColor(15, 23, 42);
+          x += cols[3].width;
+          // Pareja 2
+          const p2Win = it.winner && it.winner === it.p2;
+          pdf.setFont('helvetica', p2Win ? 'bold' : 'normal');
+          pdf.setFontSize(9);
+          if (p2Win) pdf.setTextColor(21, 128, 61);
+          p2Lines.forEach((ln, i) => pdf.text(ln, x + 1.5, y + 4 + i * 4.2));
+          pdf.setTextColor(15, 23, 42);
+          x += cols[4].width;
+          // Resultado
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(9);
+          if (it.score) pdf.setTextColor(21, 128, 61);
+          else pdf.setTextColor(180, 188, 200);
+          pdf.text(it.score || '-', x + 1.5, y + 5);
+          pdf.setTextColor(15, 23, 42);
+
+          // Borde inferior de la fila
+          pdf.setDrawColor(226, 232, 240);
+          pdf.setLineWidth(0.1);
+          pdf.line(marginX, y + rowH, marginX + usableW, y + rowH);
+
+          y += rowH;
+        });
+        y += 5; // separación entre días
+      });
+
+      // Numeración de páginas
+      const pageCount = pdf.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        pdf.setPage(i);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(`Página ${i} de ${pageCount}`, pageW - marginX, pageH - 6, { align: 'right' });
+        pdf.text('Padel Medina', marginX, pageH - 6);
+      }
+
+      const safeName = (tConfig.name || 'Torneo').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+      const safeDay = filterDay === 'all' ? 'todos' : filterDay.replace(/\//g, '-');
+      pdf.save(`Partidos_${safeName}_${safeDay}.pdf`);
+    } catch (err) {
+      console.error('Error generando PDF de partidos:', err);
+      toast('Error al generar el PDF.', 'error');
+    } finally {
+      setMatchesListPdfLoading(false);
+    }
   };
 
   // getRoundName: si pasas un array de rondas, detectamos automáticamente
@@ -5314,13 +5548,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     {items.length} partido{items.length === 1 ? '' : 's'} programado{items.length === 1 ? '' : 's'} en {dayKeys.length} día{dayKeys.length === 1 ? '' : 's'}.
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <button
-                    onClick={() => window.print()}
-                    title="Abre el diálogo de imprimir del navegador"
-                    style={{ padding: '0.5rem 0.85rem', borderRadius: '0.5rem', border: '1.5px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select
+                    value={matchesListDayFilter}
+                    onChange={e => setMatchesListDayFilter(e.target.value)}
+                    title="Filtrar por día (también afecta al PDF descargado)"
+                    style={{ padding: '0.45rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#0F172A', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
                   >
-                    🖨️ Imprimir
+                    <option value="all">Todos los días</option>
+                    {dayKeys.map(d => (
+                      <option key={d} value={d}>📅 {d} ({byDay[d].length})</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => handleDownloadMatchesPDF(items, byDay, dayKeys, matchesListDayFilter)}
+                    disabled={matchesListPdfLoading || dayKeys.length === 0}
+                    title="Descarga un PDF nativo (no captura) con los partidos del día seleccionado"
+                    style={{ padding: '0.5rem 0.9rem', borderRadius: '0.5rem', border: '1.5px solid #BBF7D0', background: '#F0FDF4', color: '#15803D', fontWeight: 700, fontSize: '0.78rem', cursor: matchesListPdfLoading ? 'wait' : 'pointer', opacity: matchesListPdfLoading ? 0.6 : 1 }}
+                  >
+                    {matchesListPdfLoading ? '⏳ Generando…' : '📄 Descargar PDF'}
                   </button>
                   <button onClick={() => setShowMatchesList(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
                 </div>
@@ -5331,7 +5577,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     Aún no hay partidos con horario asignado. Genera el cuadro o usa "Recalcular horarios" para asignar tiempos.
                   </p>
                 ) : (
-                  dayKeys.map(d => (
+                  (matchesListDayFilter === 'all' ? dayKeys : dayKeys.filter(d => d === matchesListDayFilter)).map(d => (
                     <div key={d} style={{ marginBottom: '1.25rem' }}>
                       <h4 style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.85rem', fontSize: '0.85rem', fontWeight: 800, color: 'white', background: 'linear-gradient(135deg,#1E293B,#334155)', borderRadius: '0.5rem', display: 'inline-block' }}>
                         📅 {d} · {byDay[d].length} partido{byDay[d].length === 1 ? '' : 's'}
