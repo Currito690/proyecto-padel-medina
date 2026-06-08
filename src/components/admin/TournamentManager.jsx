@@ -1430,18 +1430,46 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // de R0 podrá pulsar "Recalcular horarios" para que las siguientes
        // se reorganicen respetando la elección manual.
        if (catRounds[0] && !opts.manualR0) {
-         catRounds[0].forEach(match => {
-           if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
-              const p1Final = match.p1.finalSlots || [];
-              const p2Final = match.p2.finalSlots || [];
-              let common = p1Final.filter(s => p2Final.includes(s));
-              if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
-              const picked = pickSlotCourtForMatch(0, common, match.p1, match.p2);
-              if (picked) {
-                markOccupied(picked.slot, picked.court);
-                markPlayerSlot(picked.slot, match.p1, match.p2);
-                match.time = `${picked.slot} - Pista ${picked.court}`;
-              }
+         // AFINIDAD 100% — most-constrained-first.
+         //
+         // Antes: forEach en orden de cuadro. El primer match procesado se
+         // quedaba los slots compartidos buenos; los que tenían pocas opciones
+         // (afinidad baja entre p1 y p2) llegaban al final sin slot común
+         // disponible y caían al fallback (cualquier hora). Resultado:
+         // parejas jugando a horas donde uno había dicho "no puedo".
+         //
+         // Ahora: pre-calculamos cuántos slots comunes tiene cada match y los
+         // procesamos por orden ASCENDENTE de opciones. Los más restringidos
+         // pillan primero; los flexibles se acomodan después. Es la heurística
+         // estándar de constraint satisfaction (most-constrained variable).
+         const r0Matches = catRounds[0]
+           .map(match => {
+             if (!match.p1 || !match.p2 || match.p1.isBye || match.p2.isBye) {
+               return { match, common: null, demand: Infinity };
+             }
+             const p1Final = match.p1.finalSlots || [];
+             const p2Final = match.p2.finalSlots || [];
+             const common = p1Final.filter(s => p2Final.includes(s));
+             // Sin afinidad calculable (alguno sin disponibilidad declarada)
+             // → demand alta para procesarlo al final.
+             const demand = common.length > 0 ? common.length : Infinity;
+             return { match, common, demand };
+           })
+           .sort((a, b) => a.demand - b.demand);
+
+         r0Matches.forEach(({ match, common }) => {
+           if (common === null) return; // bye u otro caso descartado arriba
+           let pickList = common;
+           if (pickList.length === 0) {
+             const p1Final = match.p1.finalSlots || [];
+             const p2Final = match.p2.finalSlots || [];
+             pickList = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
+           }
+           const picked = pickSlotCourtForMatch(0, pickList, match.p1, match.p2);
+           if (picked) {
+             markOccupied(picked.slot, picked.court);
+             markPlayerSlot(picked.slot, match.p1, match.p2);
+             match.time = `${picked.slot} - Pista ${picked.court}`;
            }
          });
        }
@@ -1517,14 +1545,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          //   - allowedCourtsForCat (pistas permitidas por categoría)
          //   - occupied (pistas ya tomadas en cada slot, across categorías)
          //   - afinidad de jugadores (cuando son conocidos)
+         //
+         // AFINIDAD 100%: dentro de cada ronda, procesamos los matches
+         // ordenados por demanda ASCENDENTE (most-constrained-first). Los
+         // matches con menos slots de afinidad común se asignan primero
+         // para que no se les "agoten" los slots buenos.
          for (let r = 1; r < catRounds.length; r++) {
-           catRounds[r].forEach((match, mIdx) => {
+           const ordered = catRounds[r]
+             .map((match, mIdx) => {
+               let preferred = null;
+               let demand = Infinity;
+               if (match.p1?.finalSlots && match.p2?.finalSlots && !match.p1.isBye && !match.p2.isBye && !match.p1.isPlaceholder && !match.p2.isPlaceholder && !match.p1.isPrelimPlaceholder && !match.p2.isPrelimPlaceholder) {
+                 const common = match.p1.finalSlots.filter(s => match.p2.finalSlots.includes(s));
+                 if (common.length > 0) {
+                   preferred = common;
+                   demand = common.length;
+                 }
+               }
+               return { match, mIdx, preferred, demand };
+             })
+             .sort((a, b) => a.demand - b.demand);
+
+           ordered.forEach(({ match, mIdx, preferred }) => {
              const earliestMinutes = computeEarliestMinutes(r, mIdx);
-             let preferred = null;
-             if (match.p1?.finalSlots && match.p2?.finalSlots && !match.p1.isBye && !match.p2.isBye && !match.p1.isPlaceholder && !match.p2.isPlaceholder && !match.p1.isPrelimPlaceholder && !match.p2.isPrelimPlaceholder) {
-               const common = match.p1.finalSlots.filter(s => match.p2.finalSlots.includes(s));
-               if (common.length > 0) preferred = common;
-             }
              const picked = pickSlotCourtForMatch(earliestMinutes, preferred, match.p1, match.p2);
              if (picked) {
                markOccupied(picked.slot, picked.court);
@@ -1809,15 +1852,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           const barrierIdx = barrierIndices.length > 0 ? Math.max(...barrierIndices) + gapSlots : 0;
           const minDaySlot = r > 0 ? minDayIdxToSlotIdx(minDayIdxForRound(r)) : 0;
 
-          catRounds[r].forEach((m, mIdx) => {
-            if (m.timeManual && m.time) return; // respeta lo puesto por admin
-            if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye) return;
+          // AFINIDAD 100% — most-constrained-first dentro de la ronda.
+          // Pre-calculamos demanda (= # slots comunes entre p1 y p2) y
+          // procesamos primero los matches con menos opciones.
+          const ordered = catRounds[r]
+            .map((m, mIdx) => {
+              if (m.timeManual && m.time) return { m, mIdx, skip: true, demand: Infinity };
+              if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye) return { m, mIdx, skip: true, demand: Infinity };
+              const p1Slots = expandPlayerSlots(m.p1, globalSlots);
+              const p2Slots = expandPlayerSlots(m.p2, globalSlots);
+              const common = p1Slots.filter(s => p2Slots.includes(s));
+              return { m, mIdx, skip: false, demand: common.length > 0 ? common.length : Infinity };
+            })
+            .sort((a, b) => a.demand - b.demand);
+
+          ordered.forEach(({ m, mIdx, skip }) => {
+            if (skip) return;
 
             let earliestIdx = 0;
             if (r > 0) {
-              // Con ronda previa, los partidos de R1 reciben ganadores via
-              // `nextSlot` (no por la regla m/2). Sin previa o para r >= 2,
-              // mapping estándar.
               let predTimes = [];
               if (r === 1 && hasPrelim) {
                 const targetSlots = [mIdx * 2, mIdx * 2 + 1];
@@ -2773,18 +2826,32 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
 
     // R0 (primera ronda de la consolación): scheduling con afinidad de jugadores.
+    // AFINIDAD 100% — most-constrained-first (igual que en el principal).
     if (newRounds[0]) {
-      newRounds[0].forEach(match => {
-        if (match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye) {
-           const p1Final = match.p1.finalSlots || [];
-           const p2Final = match.p2.finalSlots || [];
-           let common = p1Final.filter(s => p2Final.includes(s));
-           if (common.length === 0) common = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
-           const picked = pickSlotCourtForCons(0, common);
-           if (picked) {
-             markOccupied(picked.slot, picked.court);
-             match.time = `${picked.slot} - Pista ${picked.court}`;
-           }
+      const ordered = newRounds[0]
+        .map(match => {
+          if (!match.p1 || !match.p2 || match.p1.isBye || match.p2.isBye || match.p1.isPlaceholder || match.p2.isPlaceholder) {
+            return { match, common: null, demand: Infinity };
+          }
+          const p1Final = match.p1.finalSlots || [];
+          const p2Final = match.p2.finalSlots || [];
+          const common = p1Final.filter(s => p2Final.includes(s));
+          return { match, common, demand: common.length > 0 ? common.length : Infinity };
+        })
+        .sort((a, b) => a.demand - b.demand);
+
+      ordered.forEach(({ match, common }) => {
+        if (common === null) return;
+        let pickList = common;
+        if (pickList.length === 0) {
+          const p1Final = match.p1.finalSlots || [];
+          const p2Final = match.p2.finalSlots || [];
+          pickList = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
+        }
+        const picked = pickSlotCourtForCons(0, pickList);
+        if (picked) {
+          markOccupied(picked.slot, picked.court);
+          match.time = `${picked.slot} - Pista ${picked.court}`;
         }
       });
     }
