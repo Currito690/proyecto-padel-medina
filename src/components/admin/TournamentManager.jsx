@@ -6137,11 +6137,23 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                        <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden' }}>
                          <div style={{ backgroundColor: '#F8FAFC', padding: '0.35rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                            {(() => {
-                             const isReady = match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye;
-                             const show = isReady || match.timeManual;
+                             // 3 estados de header:
+                             //  · "Horario X" / "Horario por definir": ambas parejas reales conocidas
+                             //  · "Esperando rival": una real + la otra placeholder/null
+                             //  · "Esperando rondas previas": ambas placeholder/null
+                             const isReal = (p) => p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
+                             const realCount = (isReal(match.p1) ? 1 : 0) + (isReal(match.p2) ? 1 : 0);
+                             const label = match.timeManual && match.time
+                               ? displayTime(match.time)
+                               : realCount === 2
+                                 ? (match.time ? displayTime(match.time) : 'Horario por definir')
+                                 : realCount === 1
+                                   ? 'Esperando rival'
+                                   : 'Esperando rondas previas';
+                             const dimmed = realCount < 2 && !match.timeManual;
                              return (
-                               <span style={{ fontSize: '0.65rem', fontWeight: 700, color: show ? '#64748B' : '#CBD5E1' }}>
-                                 {show ? (match.time ? displayTime(match.time) : 'Horario por definir') : 'Esperando rondas previas'}
+                               <span style={{ fontSize: '0.65rem', fontWeight: 700, color: dimmed ? '#CBD5E1' : '#64748B' }}>
+                                 {label}
                                </span>
                              );
                            })()}
@@ -6338,27 +6350,44 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   <h4 style={{ textAlign: 'center', color: bracket.isCons ? '#D97706' : '#16A34A', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 0.5rem 0', padding: '0.35rem 0.75rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#F0FDF4', borderRadius: '0.5rem', border: `1px solid ${bracket.isCons ? '#FDE68A' : '#DCFCE7'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
                     {getRoundName(rIdx, bracket.data)}
                   </h4>
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around' }}>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                   {roundMatches.map(match => {
                     // Saltamos boxes sin partido real: bye-vs-bye o
                     // placeholder + bye (el placeholder se auto-resuelve a
                     // la siguiente ronda — no hay que mostrarlo aquí).
-                    // Devolvemos null y dejamos que el flexbox redistribuya
-                    // las cajas reales con justify-content: space-around.
                     const isBoth = (a, b) => a?.isBye && b?.isPlaceholder;
                     const isPlaceholderBye = isBoth(match.p1, match.p2) || isBoth(match.p2, match.p1);
                     const isBothBye = match.p1?.isBye && match.p2?.isBye;
                     if (isPlaceholderBye || isBothBye) return null;
+                    // BRACKET ALIGNMENT: cada match se envuelve en un slot
+                    // `flex: 1`. Como todas las columnas tienen la misma
+                    // altura (alignItems: stretch en el padre), cada match
+                    // de R(n+1) ocupa el doble de espacio vertical que los
+                    // de R(n) y queda CENTRADO entre sus dos predecesores.
+                    // Esto es lo que da la forma piramidal estándar del cuadro.
                     return (
-                    <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', margin: '1rem 0' }}>
+                    <div key={`slot-${match.id}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 0 }}>
+                    <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
                         <div style={{ backgroundColor: '#F8FAFC', padding: '0.4rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           {(() => {
-                            const isReady = match.p1 && match.p2 && !match.p1.isBye && !match.p2.isBye;
-                            const show = isReady || match.timeManual;
+                            // Mismo criterio que en liguilla — 3 estados:
+                            //  ambas reales → horario / "Horario por definir"
+                            //  solo una real → "Esperando rival"
+                            //  ninguna real → "Esperando rondas previas"
+                            const isReal = (p) => p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
+                            const realCount = (isReal(match.p1) ? 1 : 0) + (isReal(match.p2) ? 1 : 0);
+                            const label = match.timeManual && match.time
+                              ? displayTime(match.time)
+                              : realCount === 2
+                                ? (match.time ? displayTime(match.time) : 'Horario por definir')
+                                : realCount === 1
+                                  ? 'Esperando rival'
+                                  : 'Esperando rondas previas';
+                            const dimmed = realCount < 2 && !match.timeManual;
                             return (
-                              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: show ? '#64748B' : '#CBD5E1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                {show ? (match.time ? displayTime(match.time) : 'Horario por definir') : 'Esperando rondas previas'}
+                              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: dimmed ? '#CBD5E1' : '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {label}
                               </span>
                             );
                           })()}
@@ -6384,9 +6413,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             style={{ padding: '0.6rem 0.75rem', backgroundColor: bg, borderBottom: sIdx === 0 ? '1.5px solid #F1F5F9' : 'none', cursor: swappable ? 'pointer' : 'default', transition: 'background-color 0.2s', display: 'flex', alignItems: 'center', gap: '0.4rem', outline: isSelected ? '2px solid #7C3AED' : 'none' }}
                           >
                             {swappable && <span style={{ fontSize: '0.7rem', color: isSelected ? '#7C3AED' : '#A78BFA', flexShrink: 0 }}>⇄</span>}
-                            <span style={{ fontSize: '0.82rem', fontWeight: isWinner ? 800 : 600, color: isSelected ? '#7C3AED' : (isWinner ? (bracket.isCons ? '#D97706' : '#16A34A') : '#334155'), flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {player ? player.name : '\u00A0'}
-                            </span>
+                            {(() => {
+                              // Si el player es un placeholder, lo pintamos
+                              // en gris claro + cursiva para que se distinga
+                              // visualmente de una pareja real. Reduce la
+                              // confusi\u00F3n cuando un real ("Nico Morales")
+                              // aparece al lado de un "Perdedor por definir".
+                              const isPlaceholder = player?.isPlaceholder || player?.isPrelimPlaceholder;
+                              const winnerColor = bracket.isCons ? '#D97706' : '#16A34A';
+                              const baseColor = isSelected ? '#7C3AED' : (isWinner ? winnerColor : '#334155');
+                              const color = isPlaceholder ? '#94A3B8' : baseColor;
+                              return (
+                                <span style={{ fontSize: '0.82rem', fontWeight: isWinner ? 800 : (isPlaceholder ? 500 : 600), color, fontStyle: isPlaceholder ? 'italic' : 'normal', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {player ? player.name : '\u00A0'}
+                                </span>
+                              );
+                            })()}
                             {match.score && (
                               <div style={{ display: 'flex', gap: '0.2rem', flexShrink: 0 }}>
                                 {parseScore(match.score, sIdx).map((s, i) => (
@@ -6457,6 +6499,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           </div>
                         );
                       })()}
+                    </div>
                     </div>
                     );
                   })}
