@@ -2117,12 +2117,31 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Helpers PUROS (no leen de state, reciben catConsRounds como input).
   // Devuelven el nuevo array o null si no hubo cambios.
 
-  const pushLoserToConsPure = (catConsRounds, loser) => {
+  // CONSOLACIÓN ESPEJO: el perdedor del match (mainRound, mainMatchIdx) del
+  // cuadro principal va al placeholder cuyo `sourceMain` coincide — no al
+  // primer hueco libre. Esto asegura que perdedores de matches adyacentes
+  // del principal (M0 y M1, M2 y M3, etc.) se enfrenten entre sí en cons R0,
+  // como en cualquier cuadro de doble eliminación estándar.
+  // Si no se pasa sourceMain (compat) o no se encuentra el placeholder
+  // vinculado, cae al comportamiento legacy: primer placeholder libre.
+  const pushLoserToConsPure = (catConsRounds, loser, sourceMain = null) => {
     if (!catConsRounds || catConsRounds.length === 0 || !loser || loser.isBye) return null;
     const alreadyIn = catConsRounds.some(r => r.some(m => m.p1?.id === loser.id || m.p2?.id === loser.id));
     if (alreadyIn) return null;
     const next = catConsRounds.map(r => r.map(m => ({ ...m })));
     const r0 = next[0];
+    // PASS 1 (espejo): buscar placeholder vinculado al main match origen.
+    if (sourceMain && Number.isFinite(sourceMain.round) && Number.isFinite(sourceMain.matchIndex)) {
+      for (const m of r0) {
+        if (m.p1?.isPlaceholder && m.p1.sourceMain?.round === sourceMain.round && m.p1.sourceMain?.matchIndex === sourceMain.matchIndex) {
+          m.p1 = { ...loser }; return next;
+        }
+        if (m.p2?.isPlaceholder && m.p2.sourceMain?.round === sourceMain.round && m.p2.sourceMain?.matchIndex === sourceMain.matchIndex) {
+          m.p2 = { ...loser }; return next;
+        }
+      }
+    }
+    // PASS 2 (fallback legacy): primer placeholder libre.
     for (const m of r0) {
       if (m.p1?.isPlaceholder) { m.p1 = { ...loser }; return next; }
       if (m.p2?.isPlaceholder) { m.p2 = { ...loser }; return next; }
@@ -2166,10 +2185,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
     return changed ? next : null;
   };
-
-  // Compat: alias del helper anterior basado en state actual (pocas llamadas
-  // externas). Mantiene la firma original.
-  const pushLoserToConsolation = (cat, loser) => pushLoserToConsPure(consRounds[cat], loser);
 
   // Sincroniza la consolación tras asignar/cambiar el winner de un match del
   // cuadro principal. Maneja:
@@ -2300,7 +2315,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (oldLoser && oldLoser.id !== newLoser.id) {
         updated = swapLoserInConsPure(catCons, oldLoser, newLoser);
       } else {
-        updated = pushLoserToConsPure(catCons, newLoser);
+        // sourceMain identifica la posición espejo donde debe ir el perdedor.
+        // Para R1 con bye (sin previa), el placeholder está vinculado al R1
+        // donde compitió por primera vez, no al R0 (que era bye).
+        updated = pushLoserToConsPure(catCons, newLoser, { round: match.round, matchIndex: match.matchIndex });
       }
       return updated ? { ...prev, [cat]: updated } : prev;
     });
@@ -2524,79 +2542,85 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // ellos R1 ES su primera (y única) ronda jugada.
     const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
 
-    // Perdedores puros de R0
-    const losersR0 = catRounds[0].map(m => {
-       if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) {
-          return m.winner.id === m.p1.id ? m.p2 : m.p1;
-       }
-       return null;
-    }).filter(Boolean);
+    // CONSOLACIÓN ESPEJO: cada SLOT de la consolación R0 está vinculado a un
+    // MATCH origen del cuadro principal. El perdedor de ese match aterriza
+    // SIEMPRE en su slot espejo, no donde haya hueco.
+    //
+    // `mainSources[i]` = info del match del principal que alimenta el slot i
+    // de cons R0 (in-order, sin shuffle). Cada entry tiene:
+    //   - sourceMain: { round, matchIndex }      ← para enlazar el placeholder
+    //   - loser:      perdedor actual (si ya hay) o null si aún no se jugó
+    //
+    // Recorremos los R0 main matches EN ORDEN; cada match real que produce
+    // perdedor genera UN slot espejo. Después, los R1 cons-eligibles (con
+    // previa o con bye-en-R0) generan slots adicionales DESPUÉS, manteniendo
+    // el orden del cuadro principal.
+    const mainSources = [];
 
-    // Perdedores de R1.
-    // · Sin previa: solo si su oponente (o él mismo) tuvo BYE en R0
-    //   (porque solo entonces R1 es su primer partido).
-    // · Con previa: TODOS los perdedores de R1 van a consolación, porque
-    //   las parejas de cuartos no jugaron la previa.
-    const losersR1WithBye = (catRounds[1] || []).map(m => {
-       if (m.winner && m.p1 && m.p2) {
-          const loser = m.winner.id === m.p1.id ? m.p2 : m.p1;
-          if (loser.isBye) return null;
-          if (hasPrelim) return loser;
-          const r0Match = catRounds[0].find(r0m => r0m.p1?.id === loser.id || r0m.p2?.id === loser.id);
-          if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) {
-             return loser;
-          }
-       }
-       return null;
-    }).filter(Boolean);
-
-    // Cálculo del NÚMERO TOTAL DE PERDEDORES ESPERADOS para que el cuadro de
-    // consolación tenga el tamaño correcto desde el principio.
-    // REGLA: todo jugador debe jugar mínimo 2 partidos (jugando cuadro o cons).
-    //   · Perdedor de R0 (real) → 1 partido jugado → cons (1 más).
-    //   · Perdedor de R1 con BYE en R0 → 1 partido jugado → cons (1 más).
-    //   · Perdedor de R1 sin bye en R0 → 2 partidos ya jugados → no cons.
-    //   · Con previa: todos los perdedores de R1 van a cons (la previa cuenta
-    //     como su 1er partido — los que perdieron previa van a cons como R0).
-    let expectedLosers = 0;
-    catRounds[0].forEach(m => {
-      if (m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) expectedLosers++;
+    catRounds[0].forEach((m, mIdx) => {
+      if (!m.p1 || !m.p2) return;
+      if (m.p1.isBye || m.p2.isBye) return; // bye en R0 → no produce perdedor real aquí
+      let loser = null;
+      if (m.winner) {
+        loser = m.winner.id === m.p1.id ? m.p2 : m.p1;
+      }
+      mainSources.push({ sourceMain: { round: 0, matchIndex: mIdx }, loser });
     });
-    if (hasPrelim && catRounds[1]) {
-      catRounds[1].forEach(m => {
-        if (m.p1 && m.p2 && !(m.p1.isBye && m.p2.isBye)) expectedLosers++;
-      });
-    } else if (catRounds[1]) {
-      // Sin previa: identificamos parejas que pasaron a R1 vía BYE en R0.
-      // Cuando alguno de esos pierda R1, irá a consolación (solo habrá
-      // jugado 1 partido — necesita el 2º). Reservamos slots para ellos.
-      const byeWinnerIds = new Set();
-      catRounds[0].forEach(r0m => {
-        if (!r0m.p1 || !r0m.p2) return;
-        if (r0m.p1.isBye && r0m.p2 && !r0m.p2.isBye) byeWinnerIds.add(r0m.p2.id);
-        if (r0m.p2.isBye && r0m.p1 && !r0m.p1.isBye) byeWinnerIds.add(r0m.p1.id);
-      });
-      // Worst case: todos los R1 que tienen al menos un bye-winner producen
-      // un cons-eligible loser. Aproximación segura: cuenta cuartos donde
-      // p1 o p2 (o ambos) viene de bye.
-      catRounds[1].forEach(r1m => {
-        const p1FromBye = r1m.p1 && byeWinnerIds.has(r1m.p1.id);
-        const p2FromBye = r1m.p2 && byeWinnerIds.has(r1m.p2.id);
-        if (p1FromBye || p2FromBye) expectedLosers++;
-      });
-    }
 
-    // Conjunto de IDs ya conocidos como perdedores
-    const knownLoserIds = new Set([...losersR0, ...losersR1WithBye].map(p => p.id));
-    // Necesitamos rellenar (expectedLosers - knownLosers) huecos con placeholders.
-    const placeholdersNeeded = Math.max(0, expectedLosers - knownLoserIds.size);
-    const placeholderList = Array.from({ length: placeholdersNeeded }, (_, i) => ({
-      id: `cons-placeholder-${cat}-${i}`,
-      name: `Perdedor por definir`,
-      isPlaceholder: true,
-    }));
+    (catRounds[1] || []).forEach((m, mIdx) => {
+      if (!m.p1 || !m.p2) return;
+      // Solo R1 cons-eligibles (igual criterio que el legacy):
+      //   · con previa → todos los R1
+      //   · sin previa → solo si vino de bye en R0
+      let eligible = false;
+      if (hasPrelim) {
+        eligible = !(m.p1.isBye && m.p2.isBye);
+      } else {
+        // Verificar si alguno de los dos vino de bye en R0
+        const camePlayer = (player) => {
+          if (!player || player.isBye || player.isPlaceholder) return false;
+          const r0Match = catRounds[0].find(r0m => r0m.p1?.id === player.id || r0m.p2?.id === player.id);
+          return r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye);
+        };
+        eligible = camePlayer(m.p1) || camePlayer(m.p2);
+      }
+      if (!eligible) return;
+      let loser = null;
+      if (m.winner && !m.p1.isBye && !m.p2.isBye) {
+        loser = m.winner.id === m.p1.id ? m.p2 : m.p1;
+        if (loser?.isBye) loser = null;
+      }
+      mainSources.push({ sourceMain: { round: 1, matchIndex: mIdx }, loser });
+    });
 
-    let consPlayers = [...losersR0, ...losersR1WithBye, ...placeholderList];
+    // El tamaño y la composición del cuadro de consolación ahora vienen
+    // íntegramente de `mainSources` (construido arriba): un slot por cada
+    // R0 main match real + un slot por cada R1 cons-eligible. No necesitamos
+    // contar `expectedLosers` aparte ni rellenar con placeholders extra.
+
+    // CONSOLACIÓN ESPEJO (sin shuffle): construimos consPlayers RESPETANDO el
+    // orden de `mainSources`. Cada entrada lleva `sourceMain` (referencia al
+    // match origen del principal). Esto garantiza que el match cons R0 M0
+    // empareje a los perdedores de main M0 y M1, M0/M1 vs M2/M3, etc. — el
+    // "espejo" estándar de un cuadro de doble eliminación.
+    //
+    // Resultado: el orden de mainSources determina el bracket de cons R0.
+    // Si una entry ya tiene loser conocido, se mete el loser real (con
+    // sourceMain anotado por consistencia). Si no, se crea un placeholder
+    // anclado a ese sourceMain — cuando llegue el loser real desde
+    // pushLoserToConsPure, se ubicará en ESE slot concreto (no en el primero
+    // libre).
+    let consPlayers = mainSources.map((src) => {
+      if (src.loser && !src.loser.isBye) {
+        return { ...src.loser, sourceMain: src.sourceMain };
+      }
+      return {
+        id: `cons-placeholder-${cat}-r${src.sourceMain.round}-m${src.sourceMain.matchIndex}`,
+        name: 'Perdedor por definir',
+        isPlaceholder: true,
+        sourceMain: src.sourceMain,
+      };
+    });
 
     // Fallback final: si por algún motivo no hay nada, abortar.
     if (consPlayers.length < 2) {
@@ -2605,28 +2629,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
 
     let p = [...consPlayers];
-    // Si son placeholders (Perdedor P.1, P.2, ...) usamos un orden
-    // determinista intercalando mitades para que el emparejamiento de la
-    // primera ronda sea P1 vs P3, P2 vs P4 (en vez de P1 vs P2, P3 vs P4),
-    // que visualmente es más coherente con un cuadro estándar.
-    // Para perdedores reales mantenemos el sorteo aleatorio de toda la vida.
-    const allPlaceholders = p.length > 0 && p.every(x => x?.isPlaceholder);
-    if (allPlaceholders) {
-      const half = Math.ceil(p.length / 2);
-      const firstHalf = p.slice(0, half);
-      const secondHalf = p.slice(half);
-      const interleaved = [];
-      for (let i = 0; i < half; i++) {
-        interleaved.push(firstHalf[i]);
-        if (secondHalf[i] !== undefined) interleaved.push(secondHalf[i]);
-      }
-      p = interleaved;
-    } else {
-      for (let i = p.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [p[i], p[j]] = [p[j], p[i]];
-      }
-    }
+    // ⚠️ Antes aquí había un shuffle (perdedores reales) o un interleave
+    // de mitades (placeholders). Ambos rompían la estructura espejo, así
+    // que los hemos eliminado. El orden viene tal cual de mainSources.
 
     let pow = 2;
     while (pow < p.length) pow *= 2;
