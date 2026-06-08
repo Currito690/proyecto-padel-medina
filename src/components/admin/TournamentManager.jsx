@@ -2649,31 +2649,64 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       mainSources.push({ sourceMain: { round: 0, matchIndex: mIdx }, loser });
     });
 
+    // Helper: dice si una pareja vino a R1 vía BYE en R0 (solo jugó 1 partido).
+    const cameFromBye = (player) => {
+      if (!player || player.isBye || player.isPlaceholder) return false;
+      const r0Match = catRounds[0].find(r0m => r0m.p1?.id === player.id || r0m.p2?.id === player.id);
+      return r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye);
+    };
+
     (catRounds[1] || []).forEach((m, mIdx) => {
       if (!m.p1 || !m.p2) return;
-      // Solo R1 cons-eligibles (igual criterio que el legacy):
-      //   · con previa → todos los R1
-      //   · sin previa → solo si vino de bye en R0
+      // Solo R1 cons-eligibles:
+      //   · con previa → todos los R1 (la previa cuenta como su 1er partido)
+      //   · sin previa → solo si AL MENOS UNO vino de bye en R0
+      // CRÍTICO: si solo UNO vino de bye, el OTRO ya jugó 2 partidos (R0+R1)
+      // y NO va a cons. Antes esto no se filtraba al asignar loser → si
+      // perdía la pareja "no-bye", aparecía duplicada en cons (ya estaba
+      // como loser de su R0). Ahora calculamos el loser SOLO si es cons-eligible.
+      const p1FromBye = cameFromBye(m.p1);
+      const p2FromBye = cameFromBye(m.p2);
       let eligible = false;
       if (hasPrelim) {
         eligible = !(m.p1.isBye && m.p2.isBye);
       } else {
-        // Verificar si alguno de los dos vino de bye en R0
-        const camePlayer = (player) => {
-          if (!player || player.isBye || player.isPlaceholder) return false;
-          const r0Match = catRounds[0].find(r0m => r0m.p1?.id === player.id || r0m.p2?.id === player.id);
-          return r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye);
-        };
-        eligible = camePlayer(m.p1) || camePlayer(m.p2);
+        eligible = p1FromBye || p2FromBye;
       }
       if (!eligible) return;
+
       let loser = null;
       if (m.winner && !m.p1.isBye && !m.p2.isBye) {
-        loser = m.winner.id === m.p1.id ? m.p2 : m.p1;
-        if (loser?.isBye) loser = null;
+        const candidateLoser = m.winner.id === m.p1.id ? m.p2 : m.p1;
+        if (candidateLoser?.isBye) {
+          loser = null;
+        } else if (hasPrelim) {
+          // con previa todos elegibles
+          loser = candidateLoser;
+        } else {
+          // sin previa, solo si el LOSER vino de bye (jugó 1 partido). Si
+          // perdió la pareja que jugó R0 normal, ya jugó 2 → no cons.
+          const loserCameFromBye = candidateLoser.id === m.p1.id ? p1FromBye : p2FromBye;
+          loser = loserCameFromBye ? candidateLoser : null;
+        }
       }
       mainSources.push({ sourceMain: { round: 1, matchIndex: mIdx }, loser });
     });
+
+    // DEDUPE: red de seguridad — si por cualquier inconsistencia (bracket
+    // regenerado, doble inscripción, etc.) el mismo loser apareciera en dos
+    // entries, nos quedamos con la primera (la de R0 si la hubiera).
+    {
+      const seenIds = new Set();
+      const dedup = [];
+      for (const src of mainSources) {
+        if (src.loser && seenIds.has(src.loser.id)) continue;
+        if (src.loser) seenIds.add(src.loser.id);
+        dedup.push(src);
+      }
+      mainSources.length = 0;
+      mainSources.push(...dedup);
+    }
 
     // El tamaño y la composición del cuadro de consolación ahora vienen
     // íntegramente de `mainSources` (construido arriba): un slot por cada
@@ -6328,8 +6361,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             {(() => {
               const indexedRounds = bracket.data.map((round, originalIdx) => ({ round, originalIdx }));
               const renderedRounds = bracket.isCons ? [...indexedRounds].reverse() : indexedRounds;
+              // Altura mínima dinámica: cada match real de R0 necesita ~190px
+              // (header + 2 parejas + botón resultado + botón pasar). Sin esto
+              // la columna se queda corta y las cards se cortan a mitad —
+              // sobre todo en cuartos con muchos botones.
+              const r0RealCount = (bracket.data[0] || []).filter(m => {
+                if (!m) return false;
+                const bothBye = m.p1?.isBye && m.p2?.isBye;
+                const placeBye = (m.p1?.isBye && m.p2?.isPlaceholder) || (m.p2?.isBye && m.p1?.isPlaceholder);
+                return !bothBye && !placeBye;
+              }).length;
+              const dynMinHeight = Math.max(350, r0RealCount * 195);
               return (
-            <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: '350px', alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: `${dynMinHeight}px`, alignItems: 'stretch' }}>
               {/* En consolación, trofeo a la IZQUIERDA (al lado de la final
                   que ya está a la izquierda por el reverse). En principal
                   va a la derecha (al final del recorrido visual). */}
@@ -6366,7 +6410,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     // de R(n) y queda CENTRADO entre sus dos predecesores.
                     // Esto es lo que da la forma piramidal estándar del cuadro.
                     return (
-                    <div key={`slot-${match.id}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 0 }}>
+                    <div key={`slot-${match.id}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0.5rem 0' }}>
                     <div key={match.id} style={{ backgroundColor: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                       {(!match.p1?.isBye && !match.p2?.isBye) && (
                         <div style={{ backgroundColor: '#F8FAFC', padding: '0.4rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
