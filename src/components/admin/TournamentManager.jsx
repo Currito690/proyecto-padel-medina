@@ -1534,9 +1534,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            });
          }
 
-         // PASS 2: Validación. Si algún match quedó en una hora anterior a sus
-         // predecesores, lo reasignamos. Hasta 3 iteraciones para propagar.
-         for (let pass = 0; pass < 3; pass++) {
+         // PASS 2: Validación. INVARIANTE DURO: ningún match puede caer antes
+         // (en el tiempo) que sus predecesores ni que la barrera de ronda.
+         // Si no hay slot válido, BORRAMOS el time (antes se quedaba con la
+         // hora vieja inválida → partidos de R+1 jugándose antes que los de R).
+         // Iteramos hasta convergencia (cap 20) para propagar en cadena.
+         for (let pass = 0; pass < 20; pass++) {
            let fixed = 0;
            for (let r = 1; r < catRounds.length; r++) {
              catRounds[r].forEach((match, mIdx) => {
@@ -1560,6 +1563,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                    markOccupied(picked.slot, picked.court);
                    markPlayerSlot(picked.slot, match.p1, match.p2);
                    match.time = `${picked.slot} - Pista ${picked.court}`;
+                   fixed++;
+                 } else {
+                   // Mejor sin hora que con hora inválida.
+                   match.time = null;
                    fixed++;
                  }
                }
@@ -1843,16 +1850,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     scheduleCatRounds(nextMain, false);
     scheduleCatRounds(nextCons, true);
 
-    // PASS 2: validación post-pase. Si algún match auto-asignado quedó antes
-    // que sus predecesores (caso byes/placeholders), lo reasignamos. Hasta 3
-    // iteraciones para propagar reajustes a rondas más tardías.
+    // PASS 2: validación post-pase. Invariante DURO: ningún match puede caer
+    // antes (en el tiempo) que sus predecesores ni que la barrera de ronda.
+    //
+    // Antes este pase tenía 2 fallos:
+    //   1. Si pickSlotAndCourt no encontraba slot válido, dejaba m.time con
+    //      la hora vieja INVÁLIDA. Ahora la borramos (mejor sin hora que
+    //      con una que viole orden temporal).
+    //   2. Solo iteraba 3 veces. Subido a 20 para que las violaciones en
+    //      rondas avanzadas se propaguen sin quedarse fuera.
     const validateAndFixPass = (catRoundsObj, isCons) => {
       Object.entries(catRoundsObj).forEach(([cat, catRounds]) => {
         const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
         const gapSlots = Math.ceil((durationMin + restMin) / 60);
         const allowedCourts = getAllowedCourts(cat, isCons);
         const hasPrelim = !!catRounds[0]?.[0]?.isPrelim;
-        for (let pass = 0; pass < 3; pass++) {
+        for (let pass = 0; pass < 20; pass++) {
           let fixed = 0;
           for (let r = 1; r < catRounds.length; r++) {
             catRounds[r].forEach((m, mIdx) => {
@@ -1886,6 +1899,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 const picked = pickSlotAndCourt(common, occupied, allowedCourts, globalSlots, earliestIdx);
                 if (picked) {
                   m.time = `${picked.slot} - Pista ${picked.court}`;
+                  fixed++;
+                } else {
+                  // No hay slot válido → mejor sin hora que con hora inválida.
+                  // El admin verá el match sin programar y podrá decidir.
+                  m.time = null;
                   fixed++;
                 }
               }
@@ -2807,9 +2825,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         });
       }
 
-      // PASS 2: validación. Si algún match quedó en una hora anterior a sus
-      // predecesores, lo reasignamos liberando la pista vieja primero.
-      for (let pass = 0; pass < 3; pass++) {
+      // PASS 2: validación. INVARIANTE DURO igual que en generateBracket:
+      // sin slot válido → m.time = null (mejor sin hora que inválida).
+      // Iteramos hasta convergencia (cap 20).
+      for (let pass = 0; pass < 20; pass++) {
         let fixed = 0;
         for (let r = 1; r < newRounds.length; r++) {
           newRounds[r].forEach((match, mIdx) => {
@@ -2827,6 +2846,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               if (picked) {
                 markOccupied(picked.slot, picked.court);
                 match.time = `${picked.slot} - Pista ${picked.court}`;
+                fixed++;
+              } else {
+                match.time = null;
                 fixed++;
               }
             }
