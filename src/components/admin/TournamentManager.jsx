@@ -136,6 +136,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showSeedsPanel, setShowSeedsPanel] = useState(false);
   // Editor de pistas durante el torneo (panel modal)
   const [showCourtsEditor, setShowCourtsEditor] = useState(false);
+  // Dropdown "Más opciones" en la cabecera del cuadro. Agrupa las acciones
+  // secundarias y destructivas para reducir la cantidad de botones visibles
+  // (antes había 8 botones seguidos en la barra → ahora 3 principales + 1
+  // menú con el resto). Se cierra al elegir cualquier opción o al click fuera.
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!actionsMenuOpen) return;
+    const close = () => setActionsMenuOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [actionsMenuOpen]);
   // Modal/panel admin-only con el listado de TODOS los partidos del torneo
   // agrupados por día y ordenados por hora. Útil para imprimir el "parte del
   // día" o llamar a las parejas en orden.
@@ -5878,7 +5889,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               ? Object.entries(tConfig.matchDurationByCategory).map(([cat, dur]) => `${cat}: ${dur} min`).join(' · ')
               : `${tConfig.matchDuration ?? 90} min`}
           </p>
-          <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Haz clic en el ganador de cada partido para avanzar ronda.</p>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Introduce el resultado de cada partido (ej. 6-4 6-3) y el ganador avanza solo.</p>
           <div className="tm-deadline-row">
             <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#92400E', whiteSpace: 'nowrap' }}>Plazo inscripción:</span>
             <input type="date" value={tConfig.registrationDeadline || ''} max={tConfig.startDate || ''} onChange={e => setTConfig({...tConfig, registrationDeadline: e.target.value})} style={{ padding: '0.3rem 0.5rem', borderRadius: '0.4rem', border: '1.5px solid #FDE68A', fontSize: '0.8rem', cursor: 'pointer', backgroundColor: '#FFFBEB', boxSizing: 'border-box' }} />
@@ -5898,25 +5909,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         <div className="tm-btn-group">
           {!isExporting && (
             <>
+              {/* Acciones PRIMARIAS — siempre visibles. Solo las 3 que se
+                  usan en cada sesión: publicar/notificar, ver partidos del
+                  día, recalcular horarios automáticos. */}
               <button
-                onClick={() => setPhase('setup')}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                onClick={handlePublishBracket}
+                title={tConfig.bracketPublished ? 'Avisar a los jugadores de que el cuadro se ha actualizado' : 'Publicar el cuadro y avisar a los jugadores por correo'}
+                style={{ padding: '0.6rem 1.1rem', borderRadius: '0.5rem', border: 'none', background: tConfig.bracketPublished ? 'linear-gradient(135deg,#2563EB,#1D4ED8)' : 'linear-gradient(135deg,#16A34A,#15803D)', color: 'white', fontWeight: 800, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap', boxShadow: tConfig.bracketPublished ? '0 4px 12px rgba(37,99,235,0.25)' : '0 4px 12px rgba(22,163,74,0.25)' }}
               >
-                Atrás a Inscripción
-              </button>
-              <button
-                onClick={recomputeAllAutoTimes}
-                title="Re-asigna horarios de todos los partidos respetando afinidad de jugadores, orden entre rondas y cupo de pistas. No toca los horarios que hayas puesto manualmente."
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #BFDBFE', backgroundColor: '#EFF6FF', color: '#1D4ED8', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
-              >
-                🔄 Recalcular horarios
-              </button>
-              <button
-                onClick={() => setShowCourtsEditor(true)}
-                title="Añade o quita pistas del torneo y ajusta a partir de qué hora está disponible cada una."
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FED7AA', backgroundColor: '#FFF7ED', color: '#9A3412', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
-              >
-                🏟️ Pistas
+                {tConfig.bracketPublished ? '🔔 Notificar actualización' : '🚀 Publicar cuadro'}
               </button>
               <button
                 onClick={() => setShowMatchesList(true)}
@@ -5926,88 +5927,135 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 📅 Partidos por día
               </button>
               <button
-                onClick={async () => {
-                  const ok = await confirmDialog(
-                    '¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro.',
-                    { title: 'Reiniciar resultados', okText: 'Reiniciar', danger: true }
-                  );
-                  if (ok) {
-                    const resetRounds = (allRounds) =>
-                      Object.fromEntries(
-                        Object.entries(allRounds).map(([cat, catRounds]) => [
-                          cat,
-                          catRounds.map((roundMatches, rIdx) =>
-                            roundMatches.map(m => ({
-                              ...m,
-                              winner: null,
-                              score: null,
-                              // Only keep p1/p2 in round 0; clear propagated players in later rounds
-                              p1: rIdx === 0 ? m.p1 : null,
-                              p2: rIdx === 0 ? m.p2 : null,
-                            }))
-                          ),
-                        ])
-                      );
-                    setRounds(prev => resetRounds(prev));
-                    setConsRounds(prev => resetRounds(prev));
-                  }
-                }}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: 'white', color: '#DC2626', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                onClick={recomputeAllAutoTimes}
+                title="Re-asigna horarios de todos los partidos respetando afinidad de jugadores, orden entre rondas y cupo de pistas. No toca los horarios que hayas puesto manualmente."
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #BFDBFE', backgroundColor: '#EFF6FF', color: '#1D4ED8', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
               >
-                Reiniciar Torneo
+                🔄 Recalcular horarios
               </button>
-              <button
-                onClick={async () => {
-                  const ok = await confirmDialog(
-                    '¿Volver a sortear el cuadro? Se perderán todos los resultados actuales y se generará un nuevo orden aleatorio con las mismas parejas.',
-                    { title: 'Re-sortear cuadro', okText: 'Re-sortear', danger: true }
-                  );
-                  if (ok) generateBracket();
-                }}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FDE68A', backgroundColor: 'white', color: '#B45309', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
-              >
-                Re-sortear Cuadro
-              </button>
-              <button
-                onClick={async () => {
-                  const ok = await confirmDialog(
-                    '¿Deshacer el sorteo? Se borrarán TODOS los cuadros (principal y consolación) y el cuadro dejará de ser público. Las parejas inscritas y la configuración del torneo se conservan.',
-                    { title: 'Deshacer sorteo', okText: 'Deshacer sorteo', danger: true }
-                  );
-                  if (!ok) return;
-                  const newTConfig = { ...tConfig, bracketPublished: false };
-                  setRounds({});
-                  setConsRounds({});
-                  setTConfig(newTConfig);
-                  setPhase('setup');
-                  if (publishedId) {
-                    try {
-                      const config = { ...newTConfig, rounds: {}, consRounds: {}, participants, phase: 'setup' };
-                      const { error } = await supabase.from('tournaments')
-                        .update({ config })
-                        .eq('id', publishedId);
-                      if (error) throw error;
-                      toast('Sorteo deshecho. Las parejas siguen inscritas y puedes volver a sortear cuando quieras.', 'success');
-                    } catch (e) {
-                      console.error(e);
-                      toast('Error al guardar en la base de datos: ' + (e.message || e), 'error');
-                    }
-                  } else {
-                    toast('Sorteo deshecho.', 'success');
-                  }
-                }}
-                title="Vacía los cuadros principal y de consolación, deja de publicarlo, pero mantiene las parejas y la configuración intactas."
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: 'white', color: '#B91C1C', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
-              >
-                🗑️ Deshacer Sorteo
-              </button>
-              <button
-                onClick={handlePublishBracket}
-                title={tConfig.bracketPublished ? 'Avisar a los jugadores de que el cuadro se ha actualizado' : 'Publicar el cuadro y avisar a los jugadores por correo'}
-                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: tConfig.bracketPublished ? '1.5px solid #BFDBFE' : '1.5px solid #DCFCE7', backgroundColor: tConfig.bracketPublished ? '#EFF6FF' : '#F0FDF4', color: tConfig.bracketPublished ? '#1D4ED8' : '#16A34A', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
-              >
-                {tConfig.bracketPublished ? '🔄 Notificar Actualización' : 'Publicar Cuadro'}
-              </button>
+
+              {/* Acciones SECUNDARIAS / destructivas — en un dropdown para no
+                  saturar la cabecera. El stopPropagation evita que el listener
+                  global de "click fuera" cierre el menú al pulsar el botón. */}
+              <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+                <button
+                  onClick={() => setActionsMenuOpen(v => !v)}
+                  style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: actionsMenuOpen ? '#F1F5F9' : 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                  title="Más acciones del torneo"
+                >
+                  ⚙️ Más <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>{actionsMenuOpen ? '▲' : '▼'}</span>
+                </button>
+                {actionsMenuOpen && (
+                  <div
+                    style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '240px', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.75rem', boxShadow: '0 10px 30px rgba(15,23,42,0.12)', padding: '0.45rem', zIndex: 100, display: 'flex', flexDirection: 'column', gap: '0.2rem' }}
+                  >
+                    <button
+                      onClick={() => { setActionsMenuOpen(false); setShowCourtsEditor(true); }}
+                      style={{ padding: '0.55rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: 'transparent', color: '#9A3412', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#FFF7ED'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <span style={{ width: '1.4rem' }}>🏟️</span> Gestionar pistas
+                    </button>
+                    <button
+                      onClick={() => { setActionsMenuOpen(false); setPhase('setup'); }}
+                      style={{ padding: '0.55rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: 'transparent', color: '#475569', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <span style={{ width: '1.4rem' }}>⬅️</span> Volver a inscripción
+                    </button>
+
+                    <div style={{ height: '1px', background: '#E2E8F0', margin: '0.3rem 0.25rem' }} />
+                    <div style={{ padding: '0.2rem 0.75rem 0.1rem', fontSize: '0.65rem', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Zona peligrosa</div>
+
+                    <button
+                      onClick={async () => {
+                        setActionsMenuOpen(false);
+                        const ok = await confirmDialog(
+                          '¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro.',
+                          { title: 'Reiniciar resultados', okText: 'Reiniciar', danger: true }
+                        );
+                        if (ok) {
+                          const resetRounds = (allRounds) =>
+                            Object.fromEntries(
+                              Object.entries(allRounds).map(([cat, catRounds]) => [
+                                cat,
+                                catRounds.map((roundMatches, rIdx) =>
+                                  roundMatches.map(m => ({
+                                    ...m,
+                                    winner: null,
+                                    score: null,
+                                    p1: rIdx === 0 ? m.p1 : null,
+                                    p2: rIdx === 0 ? m.p2 : null,
+                                  }))
+                                ),
+                              ])
+                            );
+                          setRounds(prev => resetRounds(prev));
+                          setConsRounds(prev => resetRounds(prev));
+                        }
+                      }}
+                      style={{ padding: '0.55rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: 'transparent', color: '#DC2626', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <span style={{ width: '1.4rem' }}>↺</span> Reiniciar resultados
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setActionsMenuOpen(false);
+                        const ok = await confirmDialog(
+                          '¿Volver a sortear el cuadro? Se perderán todos los resultados actuales y se generará un nuevo orden aleatorio con las mismas parejas.',
+                          { title: 'Re-sortear cuadro', okText: 'Re-sortear', danger: true }
+                        );
+                        if (ok) generateBracket();
+                      }}
+                      style={{ padding: '0.55rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: 'transparent', color: '#B45309', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#FFFBEB'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <span style={{ width: '1.4rem' }}>🎲</span> Re-sortear cuadro
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setActionsMenuOpen(false);
+                        const ok = await confirmDialog(
+                          '¿Deshacer el sorteo? Se borrarán TODOS los cuadros (principal y consolación) y el cuadro dejará de ser público. Las parejas inscritas y la configuración del torneo se conservan.',
+                          { title: 'Deshacer sorteo', okText: 'Deshacer sorteo', danger: true }
+                        );
+                        if (!ok) return;
+                        const newTConfig = { ...tConfig, bracketPublished: false };
+                        setRounds({});
+                        setConsRounds({});
+                        setTConfig(newTConfig);
+                        setPhase('setup');
+                        if (publishedId) {
+                          try {
+                            const config = { ...newTConfig, rounds: {}, consRounds: {}, participants, phase: 'setup' };
+                            const { error } = await supabase.from('tournaments')
+                              .update({ config })
+                              .eq('id', publishedId);
+                            if (error) throw error;
+                            toast('Sorteo deshecho. Las parejas siguen inscritas y puedes volver a sortear cuando quieras.', 'success');
+                          } catch (e) {
+                            console.error(e);
+                            toast('Error al guardar en la base de datos: ' + (e.message || e), 'error');
+                          }
+                        } else {
+                          toast('Sorteo deshecho.', 'success');
+                        }
+                      }}
+                      title="Vacía los cuadros principal y de consolación, deja de publicarlo, pero mantiene las parejas y la configuración intactas."
+                      style={{ padding: '0.55rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: 'transparent', color: '#B91C1C', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <span style={{ width: '1.4rem' }}>🗑️</span> Deshacer sorteo
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
