@@ -23,6 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 
+# Claude Code local settings (permisos personales, no compartir)
+.claude/settings.local.json
+
 # Environment variables
 .env
 .env.local

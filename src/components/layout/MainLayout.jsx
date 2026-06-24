@@ -46,6 +46,17 @@ const MainLayout = () => {
       ),
     },
     {
+      path: '/tienda',
+      label: 'Tienda',
+      icon: (active) => (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 9l1.5-5h15L21 9" />
+          <path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9" />
+          <path d="M9 22V12h6v10" />
+        </svg>
+      ),
+    },
+    {
       path: '/mis-reservas',
       label: 'Mis Reservas',
       icon: (active) => (

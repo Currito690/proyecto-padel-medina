@@ -105,6 +105,68 @@ serve(async (req) => {
       return new Response('OK', { status: 200 });
     }
 
+    // ── Pago de pedido de la TIENDA ──────────────────────────────────────
+    if (kind === 'order') {
+      const supaUrl = Deno.env.get('SUPABASE_URL')!;
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+      if (responseCode <= 99) {
+        // RPC idempotente: marca pagado + descuenta stock de forma atómica
+        const { data: rpc, error: rpcErr } = await supabase.rpc('confirmar_pedido_pagado', {
+          p_redsys_order_id: orderId,
+          p_metodo_pago: decoded.Ds_PayMethod === 'z' ? 'bizum' : null,
+          p_authorisation_code: decoded.Ds_AuthorisationCode ?? null,
+          p_response_code: String(responseCode),
+          p_raw: decoded,
+        });
+        if (rpcErr) {
+          console.error('confirmar_pedido_pagado error:', rpcErr);
+          return new Response('KO', { status: 500 });
+        }
+        const row = Array.isArray(rpc) ? rpc[0] : rpc;
+
+        // Solo la PRIMERA notificación (no reintentos) dispara email + push
+        if (row && row.already_processed === false) {
+          const { data: order } = await supabase
+            .from('orders')
+            .select('*, order_items(*)')
+            .eq('id', row.order_id)
+            .single();
+
+          if (order?.cliente_email) {
+            await fetch(`${supaUrl}/functions/v1/send-order-email`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+              body: JSON.stringify({ order }),
+            }).catch((e) => console.warn('send-order-email error:', e));
+          }
+
+          await fetch(`${supaUrl}/functions/v1/send-push`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+            body: JSON.stringify({
+              title: '🛍️ Nuevo pedido en la tienda',
+              body: `${order?.cliente_nombre || 'Cliente'} · ${(order?.total_centimos ?? 0) / 100}€ · ${order?.numero_pedido || ''}`,
+              url: '/',
+            }),
+          }).catch(console.warn);
+
+          console.log(`Redsys OK: pedido ${order?.numero_pedido} pagado y stock descontado`);
+        } else {
+          console.log(`Redsys: notificación duplicada para pedido ${orderId} (idempotente, ignorada)`);
+        }
+      } else {
+        await supabase.rpc('marcar_pedido_fallido', {
+          p_redsys_order_id: orderId,
+          p_response_code: String(responseCode),
+          p_raw: decoded,
+        });
+        console.log(`Redsys: pago de pedido ${orderId} rechazado con código ${responseCode}`);
+      }
+
+      return new Response('OK', { status: 200 });
+    }
+
     // ── Pago de reserva de pista (flujo original) ────────────────────────
     // Códigos 0000–0099 = pago OK
     if (responseCode <= 99) {

@@ -18,6 +18,12 @@ const Cart = lazy(() => import('./pages/Cart'));
 const SharedPayment = lazy(() => import('./pages/SharedPayment'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const Tournaments = lazy(() => import('./pages/Tournaments'));
+const ShopLayout = lazy(() => import('./components/shop/ShopLayout'));
+const Tienda = lazy(() => import('./pages/shop/Tienda'));
+const ProductoDetalle = lazy(() => import('./pages/shop/ProductoDetalle'));
+const ShopCart = lazy(() => import('./pages/shop/ShopCart'));
+const ShopCheckout = lazy(() => import('./pages/shop/ShopCheckout'));
+const ShopOrderResult = lazy(() => import('./pages/shop/ShopOrderResult'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -242,6 +248,15 @@ function App() {
           <Route path="/torneos/:id/cuadro" element={<TournamentBracket />} />
           <Route path="/pago-compartido" element={<SharedPayment />} />
           <Route path="/privacidad" element={<PrivacyPolicy />} />
+
+          {/* Tienda pública (accesible sin login, con su propio layout) */}
+          <Route element={<ShopLayout />}>
+            <Route path="/tienda" element={<Tienda />} />
+            <Route path="/tienda/carrito" element={<ShopCart />} />
+            <Route path="/tienda/checkout" element={<ShopCheckout />} />
+            <Route path="/tienda/pedido/:numero" element={<ShopOrderResult />} />
+            <Route path="/tienda/:slug" element={<ProductoDetalle />} />
+          </Route>
 
           {/* Admin Routes */}
           {user?.role === 'admin' && (

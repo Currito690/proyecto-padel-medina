@@ -432,6 +432,15 @@ verify_jwt = false
 [functions.redsys-redirect]
 verify_jwt = false
 
+[functions.shop-create-order]
+verify_jwt = false
+
+[functions.shop-order-status]
+verify_jwt = false
+
+[functions.send-order-email]
+verify_jwt = false
+
 [functions.debug-bookings]
 enabled = true
 verify_jwt = true

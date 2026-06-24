@@ -2,9 +2,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
-import { MemoryRouter } from 'react-router-dom'
+import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
+import { ProductCartProvider } from './context/ProductCartContext'
 import { startServerTimeSync } from './utils/serverTime'
 
 // Sincroniza la hora con el servidor (Supabase Date header). Necesario para
@@ -36,13 +37,15 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <MemoryRouter initialEntries={[window.location.pathname + window.location.search]}>
+    <BrowserRouter>
       <AuthProvider>
         <CartProvider>
-          <App />
+          <ProductCartProvider>
+            <App />
+          </ProductCartProvider>
         </CartProvider>
       </AuthProvider>
-    </MemoryRouter>
+    </BrowserRouter>
   </StrictMode>,
 )
 
