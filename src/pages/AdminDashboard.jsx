@@ -19,9 +19,18 @@ const formatDate = (dateStr) => {
 const slotColors = {
   available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' },
   booked:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#DC2626' },
+  online:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#2563EB' }, // tarjeta/bizum
+  club:      { borderColor: '#FDE68A', backgroundColor: '#FFFBEB', color: '#B45309' }, // pago en el club
   blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#94A3B8' },
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
+
+// Color de una reserva según su método de pago: tarjeta/bizum = azul, club = ámbar,
+// el resto (manual, gratis, reservas antiguas sin método) = rojo genérico.
+const metodoColor = (metodo) =>
+  metodo === 'tarjeta' || metodo === 'bizum' ? slotColors.online
+    : metodo === 'club' ? slotColors.club
+      : slotColors.booked;
 
 // Etiqueta del método de pago de una reserva (con fallback para reservas antiguas).
 const METODO_PAGO_LABELS = {
@@ -535,6 +544,22 @@ const AdminDashboard = () => {
             url: '/admin',
           },
         }).catch(() => {});
+        // Si el admin asignó la reserva a un usuario REGISTRADO, avisarle por email.
+        if (selectedUserId) {
+          const bookedUser = allUsers.find(u => u.id === selectedUserId);
+          if (bookedUser?.email) {
+            supabase.functions.invoke('send-booking-email', {
+              body: {
+                type: 'confirmation',
+                email: bookedUser.email,
+                userName: bookedUser.name || 'jugador/a',
+                courtName,
+                date: selectedDate,
+                timeSlot: time,
+              },
+            }).catch(() => {});
+          }
+        }
       }
       setSelectedUserId(null);
       setShowUserPicker(false);
@@ -869,7 +894,9 @@ const AdminDashboard = () => {
                   <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
                     {[
                       { label: 'Libre', s: slotColors.available },
-                      { label: 'Reservado', s: slotColors.booked },
+                      { label: '💳 Tarjeta/Bizum', s: slotColors.online },
+                      { label: '🏪 Club', s: slotColors.club },
+                      { label: 'Otras', s: slotColors.booked },
                       { label: 'Bloqueado', s: slotColors.blocked },
                     ].map(({ label, s }) => (
                       <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
@@ -898,7 +925,9 @@ const AdminDashboard = () => {
                               {TIMES.map(time => {
                                 const slot = slots[court.id]?.[time];
                                 const isSelected = activeSlot?.courtId === court.id && activeSlot?.time === time;
-                                const c = isSelected ? slotColors.selected : slotColors[slot?.status] || slotColors.available;
+                                const c = isSelected ? slotColors.selected
+                                  : slot?.status === 'booked' ? metodoColor(slot.metodo)
+                                  : slotColors[slot?.status] || slotColors.available;
                                 return (
                                   <button key={time} disabled={!court.active}
                                     onClick={() => setActiveSlot(prev => prev?.courtId === court.id && prev?.time === time ? null : { courtId: court.id, time })}
