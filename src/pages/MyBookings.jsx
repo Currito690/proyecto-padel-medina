@@ -110,15 +110,18 @@ const MyBookings = () => {
         }
 
         // Redsys/Bizum: esperar a que redsys-notify cree la reserva (para UI)
-        const { courtId, date, timeSlot, metodo } = JSON.parse(raw);
-        for (let i = 0; i < 4; i++) {
+        const { courtId, date, timeSlot, metodo, isSplit } = JSON.parse(raw);
+        for (let i = 0; i < 6; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
           if (found) { sessionStorage.removeItem('pendingBooking'); return; }
-          if (i < 3) {
+          if (i < 5) {
             await new Promise(r => setTimeout(r, 2500));
             data = await fetchBookingsSilent();
           }
         }
+
+        // Pago compartido: NO crear fallback (perdería los tokens/teléfonos del split). Solo esperar.
+        if (isSplit) { sessionStorage.removeItem('pendingBooking'); return; }
 
         // Fallback: redsys-notify no creó la reserva → crearla desde el frontend
         const { error } = await supabase.from('bookings').insert({

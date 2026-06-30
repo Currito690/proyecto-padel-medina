@@ -349,6 +349,15 @@ const PaymentGateway = () => {
       if (!data.Ds_MerchantParameters || !data.Ds_Signature || !data.redsysUrl) throw new Error('Datos de pago incompletos');
 
       clearCart();
+      // Guardar datos para que "Mis Reservas" espere/muestre la reserva al volver.
+      sessionStorage.setItem('pendingBooking', JSON.stringify({
+        courtId: item.courtId,
+        courtName: item.courtName,
+        date: item.date,
+        timeSlot: item.timeSlot,
+        metodo: 'tarjeta',
+        isSplit: true,
+      }));
       const form = document.createElement('form');
       form.method = 'POST';
       form.action = data.redsysUrl;
