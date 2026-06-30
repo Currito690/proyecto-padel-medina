@@ -1,5 +1,6 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useProductCart } from '../../context/ProductCartContext';
+import BottomNav from '../layout/BottomNav';
 
 // Cabecera/standalone de la tienda pública (no usa el MainLayout de cliente,
 // para que sea accesible también a visitantes anónimos). Respeta la identidad
@@ -10,7 +11,7 @@ export default function ShopLayout() {
   const onCart = pathname === '/tienda/carrito';
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--color-bg-secondary, #F8FAFC)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--color-bg-secondary, #F8FAFC)', display: 'flex', flexDirection: 'column', paddingBottom: 'calc(72px + env(safe-area-inset-bottom))' }}>
       <header style={{
         position: 'sticky', top: 0, zIndex: 50,
         background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(16px)',
@@ -50,6 +51,9 @@ export default function ShopLayout() {
       <footer style={{ textAlign: 'center', padding: '1rem', color: 'var(--color-text-muted, #94A3B8)', fontSize: '0.72rem' }}>
         © {new Date().getFullYear()} Padel Medina
       </footer>
+
+      {/* Navegación principal compartida con el resto de la app */}
+      <BottomNav />
     </div>
   );
 }
