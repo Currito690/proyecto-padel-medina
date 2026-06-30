@@ -5,6 +5,10 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
 
+// Pago compartido temporalmente DESACTIVADO (oculta la pestaña "Compartido").
+// Cambiar a true para reactivarlo cuando esté probado.
+const SPLIT_PAYMENT_ENABLED = false;
+
 const PaymentGateway = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -438,7 +442,7 @@ const PaymentGateway = () => {
                     🏪 Club
                   </button>
                 )}
-                {!isMulti && (!allowedByRules || allowedByRules.includes('redsys')) && (
+                {SPLIT_PAYMENT_ENABLED && !isMulti && (!allowedByRules || allowedByRules.includes('redsys')) && (
                   <button onClick={() => setPaymentMethod('compartido')} className={`pay-tab ${paymentMethod === 'compartido' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
                     👥 Compartido
                   </button>
