@@ -243,12 +243,12 @@ const PaymentGateway = () => {
       const { error } = await supabase.from('bookings').insert(rows);
       if (error) throw error;
 
-      // Notificar al admin
+      // Notificar al admin (con método de pago: en el club)
       const summary = items.length === 1
         ? `${user.name} — ${items[0].courtName} · ${items[0].timeSlot}`
         : `${user.name} — ${items.length} reservas`;
       supabase.functions.invoke('send-push', {
-        body: { title: 'Nueva reserva', body: summary, url: '/' },
+        body: { title: '🏪 Nueva reserva · Pago en el club', body: summary, url: '/' },
       }).catch(() => {});
 
       // Email de confirmación al usuario por cada reserva

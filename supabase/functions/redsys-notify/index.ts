@@ -231,10 +231,13 @@ serve(async (req) => {
       const [y, m, d] = date.split('-');
       const dateStr = `${d}/${m}/${y}`;
 
-      // Notificar al admin via push
+      // Notificar al admin via push (con método de pago: tarjeta o bizum)
       const pushUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push`;
       const isSplitStr = isSharedPayment ? ' (Pago Compartido: 1/4 pagado)' : '';
-      
+      // Redsys devuelve Ds_PayMethod='z' cuando se pagó con Bizum; si no, fue tarjeta.
+      const esBizum = decoded.Ds_PayMethod === 'z';
+      const metodoLabel = esBizum ? '📱 Bizum' : '💳 Tarjeta';
+
       await fetch(pushUrl, {
         method: 'POST',
         headers: {
@@ -242,8 +245,8 @@ serve(async (req) => {
           'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
         body: JSON.stringify({
-          title: '💳 Reserva pagada online' + (isSharedPayment ? ' 👯' : ''),
-          body: `${userName} ha reservado ${courtName} · ${dateStr} · ${timeSlot}${isSplitStr}`,
+          title: `${esBizum ? '📱' : '💳'} Reserva pagada online` + (isSharedPayment ? ' 👯' : ''),
+          body: `${userName} ha reservado ${courtName} · ${dateStr} · ${timeSlot} · ${metodoLabel}${isSplitStr}`,
           url: '/',
         }),
       }).catch(console.warn);
