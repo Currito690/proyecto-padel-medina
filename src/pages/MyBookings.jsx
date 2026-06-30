@@ -63,7 +63,7 @@ const MyBookings = () => {
         }
 
         // Redsys/Bizum: esperar a que redsys-notify cree la reserva (para UI)
-        const { courtId, date, timeSlot } = JSON.parse(raw);
+        const { courtId, date, timeSlot, metodo } = JSON.parse(raw);
         for (let i = 0; i < 4; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
           if (found) { sessionStorage.removeItem('pendingBooking'); return; }
@@ -81,6 +81,7 @@ const MyBookings = () => {
           time_slot: timeSlot,
           status: 'confirmed',
           is_free: false,
+          metodo_pago: metodo || 'tarjeta',
         });
         if (!error) await fetchBookingsSilent();
         sessionStorage.removeItem('pendingBooking');

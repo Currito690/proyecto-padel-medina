@@ -23,6 +23,17 @@ const slotColors = {
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
+// Etiqueta del método de pago de una reserva (con fallback para reservas antiguas).
+const METODO_PAGO_LABELS = {
+  club: '🏪 Pago en el club',
+  tarjeta: '💳 Tarjeta',
+  bizum: '📱 Bizum',
+  gratis: '🎾 Gratis',
+  manual: '✍️ Reserva manual',
+};
+const formatMetodoPago = (metodo, isFree) =>
+  METODO_PAGO_LABELS[metodo] || (isFree ? '🎾 Gratis' : '—');
+
 const editLabel = { display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.04em' };
 const editInput = { width: '100%', padding: '0.7rem 0.85rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.9rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' };
 
@@ -395,7 +406,7 @@ const AdminDashboard = () => {
     });
     bookings?.forEach(b => {
       if (newSlots[b.court_id]) {
-        newSlots[b.court_id][b.time_slot] = { status: 'booked', client: b.observaciones || b.profiles?.name || 'Cliente', bookingId: b.id };
+        newSlots[b.court_id][b.time_slot] = { status: 'booked', client: b.observaciones || b.profiles?.name || 'Cliente', bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free };
       }
     });
     blocked?.forEach(b => {
@@ -514,7 +525,7 @@ const AdminDashboard = () => {
       const bookUserId = selectedUserId || user.id;
       const bookedUserName = obs || allUsers.find(u => u.id === bookUserId)?.name || user.name || 'Cliente';
       const courtName = courts.find(c => c.id === courtId)?.name || 'Pista';
-      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true, observaciones: obs || null });
+      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true, observaciones: obs || null, metodo_pago: 'manual' });
       actionError = error;
       if (!error) {
         supabase.functions.invoke('send-push', {
@@ -910,6 +921,11 @@ const AdminDashboard = () => {
                                     <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
                                       {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Bloqueada para entrenos' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
                                     </p>
+                                    {selectedSlotData.status === 'booked' && (
+                                      <p style={{ margin: '0.2rem 0 0', fontSize: '0.775rem', fontWeight: 700, color: '#1B3A6E' }}>
+                                        Pago: {formatMetodoPago(selectedSlotData.metodo, selectedSlotData.isFree)}
+                                      </p>
+                                    )}
                                   </div>
                                   <button onClick={() => { setActiveSlot(null); setBookObs(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem', fontSize: '1rem', lineHeight: 1 }}>✕</button>
                                 </div>

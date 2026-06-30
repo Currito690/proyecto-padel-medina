@@ -134,6 +134,7 @@ const PaymentGateway = () => {
           payment_type: 'full',
           split_phones: [],
           split_paid: 4,
+          metodo_pago: 'gratis',
         });
         if (bookErr) throw bookErr;
         supabase.functions.invoke('send-push', {
@@ -223,6 +224,7 @@ const PaymentGateway = () => {
         courtName: item.courtName,
         date: item.date,
         timeSlot: item.timeSlot,
+        metodo: method === 'bizum' ? 'bizum' : 'tarjeta',
       }));
 
       document.body.appendChild(form);
@@ -249,6 +251,7 @@ const PaymentGateway = () => {
         time_slot: item.timeSlot,
         status: 'confirmed',
         is_free: false,
+        metodo_pago: 'club',
       }));
 
       const { error } = await supabase.from('bookings').insert(rows);

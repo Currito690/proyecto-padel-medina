@@ -170,6 +170,8 @@ serve(async (req) => {
     // ── Pago de reserva de pista (flujo original) ────────────────────────
     // Códigos 0000–0099 = pago OK
     if (responseCode <= 99) {
+      // Redsys devuelve Ds_PayMethod='z' cuando se pagó con Bizum; si no, fue tarjeta.
+      const esBizum = decoded.Ds_PayMethod === 'z';
       const { data: bookingRow, error } = await supabase.from('bookings').insert({
         court_id:  courtId,
         user_id:   userId,
@@ -180,6 +182,7 @@ serve(async (req) => {
         payment_type: isSharedPayment ? 'split' : 'full',
         split_phones: isSharedPayment ? sharedPhones : [],
         split_paid: isSharedPayment ? 1 : 4, // 1 pagado (el creador)
+        metodo_pago: esBizum ? 'bizum' : 'tarjeta',
       }).select().single();
 
       if (error) {
@@ -235,8 +238,6 @@ serve(async (req) => {
       // Notificar al admin via push (con método de pago: tarjeta o bizum)
       const pushUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push`;
       const isSplitStr = isSharedPayment ? ' (Pago Compartido: 1/4 pagado)' : '';
-      // Redsys devuelve Ds_PayMethod='z' cuando se pagó con Bizum; si no, fue tarjeta.
-      const esBizum = decoded.Ds_PayMethod === 'z';
       const metodoLabel = esBizum ? '📱 Bizum' : '💳 Tarjeta';
 
       await fetch(pushUrl, {
