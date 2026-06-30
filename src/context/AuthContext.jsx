@@ -14,11 +14,11 @@ const buildUser = (u, role) => ({
   id: u.id,
   email: u.email,
   name: u.user_metadata?.name || u.email.split('@')[0],
-  role: role || (
-    LEGACY_ADMIN_EMAILS.includes(u.email) ? 'admin'
-      : MONITOR_EMAILS.includes(u.email) ? 'monitor'
-        : 'client'
-  ),
+  // El email de monitor es AUTORITATIVO (manda sobre profiles.role), porque es
+  // una cuenta de staff especial. El resto usa profiles.role con fallback admin.
+  role: MONITOR_EMAILS.includes(u.email)
+    ? 'monitor'
+    : (role || (LEGACY_ADMIN_EMAILS.includes(u.email) ? 'admin' : 'client')),
 });
 
 // Consulta profiles.role del usuario logeado. Nunca lanza; si falla/tarda,
