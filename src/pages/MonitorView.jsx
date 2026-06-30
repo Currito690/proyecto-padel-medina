@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 
-// Vista de SOLO LECTURA para el rol 'monitor' (p.ej. lolo). Muestra, por día,
-// únicamente las franjas OCUPADAS de cada pista: reservadas, bloqueadas o de
-// entreno. Sirve para que el monitor sepa a qué horas hay pista libre o no.
+// Vista de SOLO LECTURA para el rol 'monitor' (lolo). Muestra el día separado
+// POR PISTAS (2 columnas), con cada franja ocupada coloreada según su tipo:
+// reservada (rojo), bloqueada (ámbar) o entreno (azul).
 
 const toYMD = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -18,16 +18,16 @@ function formatLong(ymd) {
   return `${DAYS[date.getDay()]}, ${d} de ${MONTHS[m - 1]}`;
 }
 
-const TIPO_META = {
-  reserva: { label: 'Reservada', emoji: '🎾', bg: '#FEF2F2', border: '#FECACA', color: '#B91C1C' },
-  bloqueo: { label: 'Bloqueada', emoji: '🔒', bg: '#F1F5F9', border: '#CBD5E1', color: '#475569' },
-  entreno: { label: 'Entreno', emoji: '🏋️', bg: '#EFF6FF', border: '#BFDBFE', color: '#1D4ED8' },
+const TIPO = {
+  reserva: { label: 'Reservada', emoji: '🎾', bg: '#FEF2F2', border: '#FECACA', color: '#DC2626' },
+  bloqueo: { label: 'Bloqueada', emoji: '🔒', bg: '#FFFBEB', border: '#FDE68A', color: '#D97706' },
+  entreno: { label: 'Entreno', emoji: '🏋️', bg: '#EFF6FF', border: '#BFDBFE', color: '#2563EB' },
 };
 
 export default function MonitorView() {
   const { user, logout } = useAuth();
   const [date, setDate] = useState(() => toYMD(new Date()));
-  const [slots, setSlots] = useState([]);
+  const [courts, setCourts] = useState([]); // [{id,name,slots:[{time,tipo,note}]}]
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (d) => {
@@ -38,29 +38,21 @@ export default function MonitorView() {
         supabase.from('blocked_slots').select('court_id, time_slot, tipo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
-      const courtName = Object.fromEntries((ct.data || []).map((c) => [c.id, c.name]));
-      const items = [];
+      const byCourt = {};
+      (ct.data || []).forEach((c) => { byCourt[c.id] = { id: c.id, name: c.name, slots: [] }; });
+      const ensure = (cid) => byCourt[cid] || (byCourt[cid] = { id: cid, name: 'Pista', slots: [] });
       (bk.data || []).forEach((b) => {
         if (b.status === 'cancelled') return;
-        items.push({
-          time: b.time_slot,
-          court: courtName[b.court_id] || 'Pista',
-          tipo: 'reserva',
-          note: b.observaciones || '',
-        });
+        ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: b.observaciones || '' });
       });
       (bl.data || []).forEach((s) => {
-        items.push({
-          time: s.time_slot,
-          court: courtName[s.court_id] || 'Pista',
-          tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo',
-          note: '',
-        });
+        ensure(s.court_id).slots.push({ time: s.time_slot, tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo', note: '' });
       });
-      items.sort((a, b) => (a.time || '').localeCompare(b.time || '') || (a.court || '').localeCompare(b.court || ''));
-      setSlots(items);
+      const list = Object.values(byCourt).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
+      list.forEach((c) => c.slots.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
+      setCourts(list);
     } catch {
-      setSlots([]);
+      setCourts([]);
     } finally {
       setLoading(false);
     }
@@ -70,14 +62,27 @@ export default function MonitorView() {
 
   const shiftDay = (delta) => {
     const [y, m, d] = date.split('-').map(Number);
-    const nd = new Date(y, m - 1, d + delta);
-    setDate(toYMD(nd));
+    setDate(toYMD(new Date(y, m - 1, d + delta)));
   };
 
+  const isToday = date === toYMD(new Date());
+  const totalOcupadas = courts.reduce((n, c) => n + c.slots.length, 0);
+
   return (
-    <div style={{ minHeight: '100vh', background: '#F8FAFC', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#EEF2F7 0%,#F8FAFC 240px)', display: 'flex', flexDirection: 'column' }}>
+      <style>{`
+        .agenda-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+        @media (min-width: 760px) { .agenda-grid { grid-template-columns: repeat(3, 1fr); } }
+        .court-card { background:#fff; border:1px solid #E8EDF3; border-radius:1rem; padding:0.75rem 0.7rem 0.8rem; box-shadow:0 1px 3px rgba(15,23,42,0.05); }
+        .slot { border-radius:0.6rem; padding:0.45rem 0.55rem; margin-top:0.4rem; }
+        .slot-time { font-weight:800; font-size:0.82rem; color:#0F172A; letter-spacing:-0.01em; line-height:1.15; }
+        .slot-tag { font-size:0.68rem; font-weight:800; margin-top:2px; display:inline-flex; align-items:center; gap:3px; }
+        .nav-arrow { width:38px; height:38px; border-radius:0.7rem; border:1px solid #E2E8F0; background:#fff; color:#1B3A6E; font-size:1.3rem; font-weight:800; cursor:pointer; line-height:1; flex-shrink:0; }
+        .nav-arrow:active { background:#F1F5F9; }
+      `}</style>
+
       {/* Cabecera */}
-      <header style={{ background: '#fff', borderBottom: '1px solid #E2E8F0', padding: '0.85rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
+      <header style={{ background: '#fff', borderBottom: '1px solid #E8EDF3', padding: '0.8rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <img src="/logo.png" alt="Padel Medina" style={{ height: 30 }} />
           <span style={{ fontWeight: 800, color: '#1B3A6E', fontSize: '1.02rem' }}>Agenda</span>
@@ -87,60 +92,72 @@ export default function MonitorView() {
         </button>
       </header>
 
-      <main style={{ flex: 1, width: '100%', maxWidth: 640, margin: '0 auto', padding: '1.1rem 1rem 2.5rem', boxSizing: 'border-box' }}>
-        <p style={{ margin: '0 0 0.9rem', color: '#64748B', fontSize: '0.85rem' }}>
-          Hola <strong style={{ color: '#0F172A' }}>{user?.name || 'monitor'}</strong>, estas son las pistas ocupadas del día (reservas, bloqueos y entrenos).
+      <main style={{ flex: 1, width: '100%', maxWidth: 760, margin: '0 auto', padding: '1rem 0.9rem 2.5rem', boxSizing: 'border-box' }}>
+        <p style={{ margin: '0 0 0.85rem', color: '#64748B', fontSize: '0.85rem' }}>
+          Hola <strong style={{ color: '#0F172A' }}>{user?.name || 'monitor'}</strong>, pistas ocupadas del día por reservas, bloqueos y entrenos.
         </p>
 
         {/* Selector de día */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#fff', border: '1px solid #E2E8F0', borderRadius: '0.9rem', padding: '0.6rem 0.75rem', marginBottom: '1.1rem' }}>
-          <button onClick={() => shiftDay(-1)} aria-label="Día anterior" style={navBtn}>‹</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#fff', border: '1px solid #E8EDF3', borderRadius: '0.95rem', padding: '0.55rem 0.7rem', marginBottom: '0.8rem', boxShadow: '0 1px 3px rgba(15,23,42,0.05)' }}>
+          <button onClick={() => shiftDay(-1)} aria-label="Día anterior" className="nav-arrow">‹</button>
           <div style={{ flex: 1, textAlign: 'center' }}>
-            <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.98rem', textTransform: 'capitalize' }}>{formatLong(date)}</div>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => e.target.value && setDate(e.target.value)}
-              style={{ border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '0.72rem', fontFamily: 'inherit', textAlign: 'center', marginTop: 2 }}
-            />
+            <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.98rem', textTransform: 'capitalize' }}>
+              {formatLong(date)} {isToday && <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '0.1rem 0.4rem', borderRadius: 999, verticalAlign: 'middle', marginLeft: 4 }}>HOY</span>}
+            </div>
+            <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} style={{ border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '0.72rem', fontFamily: 'inherit', textAlign: 'center', marginTop: 2 }} />
           </div>
-          <button onClick={() => shiftDay(1)} aria-label="Día siguiente" style={navBtn}>›</button>
+          <button onClick={() => shiftDay(1)} aria-label="Día siguiente" className="nav-arrow">›</button>
         </div>
 
-        {/* Lista de franjas ocupadas */}
+        {/* Leyenda */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+          {Object.values(TIPO).map((t) => (
+            <span key={t.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 700, color: t.color, background: t.bg, border: `1px solid ${t.border}`, padding: '0.28rem 0.6rem', borderRadius: 999 }}>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', background: t.color, display: 'inline-block' }} /> {t.label}
+            </span>
+          ))}
+        </div>
+
         {loading ? (
           <p style={{ textAlign: 'center', color: '#94A3B8', padding: '2rem 0' }}>Cargando…</p>
-        ) : slots.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#64748B', background: '#fff', border: '1px dashed #CBD5E1', borderRadius: '0.9rem', padding: '2.25rem 1rem' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '0.4rem' }}>✅</div>
-            <p style={{ margin: 0, fontWeight: 700, color: '#0F172A' }}>No hay pistas ocupadas este día</p>
-            <p style={{ margin: '0.25rem 0 0', fontSize: '0.82rem' }}>Todas las pistas están libres.</p>
+        ) : totalOcupadas === 0 ? (
+          <div style={{ textAlign: 'center', color: '#64748B', background: '#fff', border: '1px dashed #CBD5E1', borderRadius: '1rem', padding: '2.5rem 1rem' }}>
+            <div style={{ fontSize: '2.2rem', marginBottom: '0.4rem' }}>✅</div>
+            <p style={{ margin: 0, fontWeight: 800, color: '#0F172A' }}>Todas las pistas libres</p>
+            <p style={{ margin: '0.25rem 0 0', fontSize: '0.82rem' }}>No hay reservas ni bloqueos este día.</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
-            {slots.map((s, i) => {
-              const meta = TIPO_META[s.tipo] || TIPO_META.bloqueo;
-              return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', background: '#fff', border: '1px solid #E2E8F0', borderRadius: '0.85rem', padding: '0.75rem 0.9rem' }}>
-                  <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.92rem', minWidth: 96, whiteSpace: 'nowrap' }}>{s.time}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.9rem' }}>{s.court}</div>
-                    {s.note && <div style={{ fontSize: '0.76rem', color: '#64748B', marginTop: 1 }}>{s.note}</div>}
-                  </div>
-                  <span style={{ flexShrink: 0, background: meta.bg, border: `1px solid ${meta.border}`, color: meta.color, fontSize: '0.72rem', fontWeight: 800, padding: '0.3rem 0.6rem', borderRadius: '999px', whiteSpace: 'nowrap' }}>
-                    {meta.emoji} {meta.label}
-                  </span>
+          <div className="agenda-grid">
+            {courts.map((c) => (
+              <div key={c.id} className="court-card">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.1rem' }}>
+                  <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.92rem' }}>{c.name}</span>
+                  {c.slots.length > 0 && (
+                    <span style={{ fontSize: '0.66rem', fontWeight: 800, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding: '0.1rem 0.45rem' }}>{c.slots.length}</span>
+                  )}
                 </div>
-              );
-            })}
+
+                {c.slots.length === 0 ? (
+                  <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#16A34A', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '0.6rem', padding: '0.5rem 0.55rem' }}>
+                    🟢 Libre
+                  </div>
+                ) : (
+                  c.slots.map((s, i) => {
+                    const m = TIPO[s.tipo] || TIPO.bloqueo;
+                    return (
+                      <div key={i} className="slot" style={{ background: m.bg, border: `1px solid ${m.border}`, borderLeft: `3px solid ${m.color}` }}>
+                        <div className="slot-time">{s.time}</div>
+                        <div className="slot-tag" style={{ color: m.color }}>{m.emoji} {m.label}</div>
+                        {s.note && <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 2, fontWeight: 500 }}>{s.note}</div>}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ))}
           </div>
         )}
       </main>
     </div>
   );
 }
-
-const navBtn = {
-  width: 38, height: 38, borderRadius: '0.7rem', border: '1px solid #E2E8F0', background: '#F8FAFC',
-  color: '#1B3A6E', fontSize: '1.3rem', fontWeight: 800, cursor: 'pointer', lineHeight: 1, flexShrink: 0,
-};
