@@ -149,6 +149,17 @@ const PaymentGateway = () => {
             timeSlot: item.timeSlot,
           },
         }).catch(() => {});
+        supabase.functions.invoke('send-booking-email', {
+          body: {
+            type: 'admin',
+            email: user.email,
+            userName: user.name,
+            courtName: item.courtName,
+            date: item.date,
+            timeSlot: item.timeSlot,
+            metodoPago: 'Gratuita',
+          },
+        }).catch(() => {});
         clearCart();
         navigate('/mis-reservas?pago=ok');
         return;
@@ -251,7 +262,7 @@ const PaymentGateway = () => {
         body: { title: '🏪 Nueva reserva · Pago en el club', body: summary, url: '/' },
       }).catch(() => {});
 
-      // Email de confirmación al usuario por cada reserva
+      // Emails por cada reserva: confirmación al usuario + aviso al admin (método de pago)
       items.forEach((item) => {
         supabase.functions.invoke('send-booking-email', {
           body: {
@@ -261,6 +272,17 @@ const PaymentGateway = () => {
             courtName: item.courtName,
             date: item.date,
             timeSlot: item.timeSlot,
+          },
+        }).catch(() => {});
+        supabase.functions.invoke('send-booking-email', {
+          body: {
+            type: 'admin',
+            email: user.email,
+            userName: user.name,
+            courtName: item.courtName,
+            date: item.date,
+            timeSlot: item.timeSlot,
+            metodoPago: 'Pago en el club',
           },
         }).catch(() => {});
       });

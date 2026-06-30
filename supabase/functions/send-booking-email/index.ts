@@ -6,6 +6,8 @@ const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
 const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
 const REPLY_TO = 'info@padelmedina.com';
 const APP_URL = Deno.env.get('APP_URL') || 'https://padelmedina.com';
+// Email del administrador que recibe el aviso de cada reserva (con método de pago).
+const ADMIN_EMAIL = Deno.env.get('ADMIN_NOTIFY_EMAIL') || 'padelmedina@hotmail.com';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -164,15 +166,63 @@ function reminderHtml(userName: string, courtName: string, timeSlot: string): st
 </html>`;
 }
 
+// Aviso interno al admin con los datos de la reserva + método de pago.
+function adminBookingHtml(
+  userName: string, courtName: string, date: string, timeSlot: string,
+  metodoPago: string, userEmail?: string, userPhone?: string,
+): string {
+  const dateLong = date ? formatDateLong(date) : '—';
+  const contacto = [userEmail, userPhone].filter(Boolean).join(' · ');
+  const row = (icon: string, label: string, value: string) => `
+    <tr>
+      <td width="36" valign="top" style="padding-bottom:14px"><span style="font-size:22px">${icon}</span></td>
+      <td style="padding-bottom:14px;padding-left:8px">
+        <div style="font-size:11px;color:#94A3B8;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:3px">${label}</div>
+        <div style="font-size:16px;color:#0F172A;font-weight:700">${value}</div>
+      </td>
+    </tr>`;
+
+  return `<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nueva reserva</title></head>
+<body style="margin:0;padding:0;background:#F1F5F9;font-family:Arial,Helvetica,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#F1F5F9;padding:32px 16px"><tr><td align="center">
+  <table width="100%" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+    <tr><td style="background:linear-gradient(135deg,#1B3A6E 0%,#152D57 100%);padding:32px 28px;text-align:center">
+      <div style="font-size:40px;line-height:1;margin-bottom:8px">🎾</div>
+      <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:800;letter-spacing:-0.5px">Nueva reserva</h1>
+      <p style="color:rgba(255,255,255,0.85);margin:6px 0 0;font-size:14px;font-weight:500">Aviso para el administrador</p>
+    </td></tr>
+    <tr><td style="padding:28px 28px 8px">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#F8FAFC;border-radius:12px"><tr><td style="padding:20px 20px 6px">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${row('👤', 'Jugador', `${userName}${contacto ? `<div style="font-size:13px;color:#64748B;font-weight:500;margin-top:2px">${contacto}</div>` : ''}`)}
+          ${row('🏟️', 'Pista', courtName)}
+          ${row('📅', 'Fecha', `<span style="text-transform:capitalize">${dateLong}</span>`)}
+          ${row('⏰', 'Horario', timeSlot)}
+          ${row('💶', 'Método de pago', metodoPago)}
+        </table>
+      </td></tr></table>
+    </td></tr>
+    <tr><td style="background:#F8FAFC;padding:18px 28px;text-align:center;border-top:1px solid #E2E8F0">
+      <p style="margin:0;font-size:12px;color:#94A3B8">Padel Medina · aviso automático de reserva</p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const { type, email, userName, courtName, date, timeSlot } = await req.json();
+    const { type, email, userName, courtName, date, timeSlot, metodoPago, userPhone } = await req.json();
 
-    if (!email || !type || !courtName || !timeSlot) {
+    const isAdmin = type === 'admin';
+
+    // El aviso al admin no necesita `email` del jugador (va a ADMIN_EMAIL).
+    if (!type || !courtName || !timeSlot || (!isAdmin && !email)) {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -193,13 +243,20 @@ Deno.serve(async (req: Request) => {
     const [y, m, d] = (date || '').split('-');
     const dateShort = d && m && y ? `${d}/${m}/${y}` : '';
 
-    const subject = isConfirmation
-      ? `Reserva confirmada – ${courtName}${dateShort ? ` · ${dateShort}` : ''}`
-      : `Recordatorio: tienes partido hoy a las ${startTime}`;
+    // Destinatario: el admin para el aviso interno; el jugador para confirmación/recordatorio.
+    const to = isAdmin ? ADMIN_EMAIL : email;
 
-    const html = isConfirmation
-      ? confirmationHtml(safeName, courtName, date, timeSlot)
-      : reminderHtml(safeName, courtName, timeSlot);
+    const subject = isAdmin
+      ? `🎾 Nueva reserva: ${courtName}${dateShort ? ` · ${dateShort}` : ''} · ${timeSlot}${metodoPago ? ` · ${metodoPago}` : ''}`
+      : isConfirmation
+        ? `Reserva confirmada – ${courtName}${dateShort ? ` · ${dateShort}` : ''}`
+        : `Recordatorio: tienes partido hoy a las ${startTime}`;
+
+    const html = isAdmin
+      ? adminBookingHtml(safeName, courtName, date, timeSlot, metodoPago || '—', email, userPhone)
+      : isConfirmation
+        ? confirmationHtml(safeName, courtName, date, timeSlot)
+        : reminderHtml(safeName, courtName, timeSlot);
 
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -207,7 +264,7 @@ Deno.serve(async (req: Request) => {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ from: FROM_EMAIL, reply_to: REPLY_TO, to: [email], subject, html }),
+      body: JSON.stringify({ from: FROM_EMAIL, reply_to: REPLY_TO, to: [to], subject, html }),
     });
 
     const result = await res.json();
@@ -220,7 +277,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    console.log(`Email (${type}) sent to ${email} — id: ${result.id}`);
+    console.log(`Email (${type}) sent to ${to} — id: ${result.id}`);
     return new Response(JSON.stringify({ success: true, id: result.id }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

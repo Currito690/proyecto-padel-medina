@@ -190,11 +190,12 @@ serve(async (req) => {
       // Obtener nombre de pista y usuario (necesario para SMS y push)
       const [courtRes, userRes] = await Promise.all([
         supabase.from('courts').select('name').eq('id', courtId).single(),
-        supabase.from('profiles').select('name, email').eq('id', userId).single(),
+        supabase.from('profiles').select('name, email, phone').eq('id', userId).single(),
       ]);
       const courtName = courtRes.data?.name  || 'Pista';
       const userName  = userRes.data?.name   || 'Usuario';
       const userEmail = userRes.data?.email  || '';
+      const userPhone = userRes.data?.phone  || '';
 
       // ── Si es pago compartido, generar tokens para los acompañantes ──
       let shareLinks: { phone: string; link: string }[] = [];
@@ -278,6 +279,25 @@ serve(async (req) => {
           }),
         }).catch((e) => console.warn('Email confirmation error:', e));
       }
+
+      // Aviso al admin por email (con el método de pago: tarjeta o bizum)
+      await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-booking-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        },
+        body: JSON.stringify({
+          type: 'admin',
+          email: userEmail,
+          userName,
+          userPhone,
+          courtName,
+          date,
+          timeSlot,
+          metodoPago: esBizum ? 'Bizum' : 'Tarjeta',
+        }),
+      }).catch((e) => console.warn('Email admin error:', e));
 
       console.log(`Redsys OK: reserva creada para ${userName} - ${courtName} ${date} ${timeSlot}`);
     } else {
