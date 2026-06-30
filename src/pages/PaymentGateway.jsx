@@ -21,6 +21,8 @@ const PaymentGateway = () => {
   // allowedByRules: métodos permitidos por reglas admin (pista+franja).
   // null mientras carga; luego string[] (intersección de todos los items del carrito).
   const [allowedByRules, setAllowedByRules] = useState(null);
+  // Teléfonos de los otros 3 jugadores para el pago compartido (1/4 cada uno).
+  const [splitPhones, setSplitPhones] = useState(['', '', '']);
 
   // Calcular si el pago en club está disponible ahora (por día y hora)
   const { isClubOpen, clubOpenTime } = (() => {
@@ -92,11 +94,15 @@ const PaymentGateway = () => {
     }
   }, [items.length, paymentMethod]);
 
-  // Si el método actual no está permitido por las reglas admin, cambiar al primero disponible
+  // Si el método actual no está permitido por las reglas admin, cambiar al primero disponible.
+  // 'compartido' se considera permitido si lo está 'redsys' (el creador paga su parte con tarjeta).
   useEffect(() => {
     if (!allowedByRules) return;
     if (allowedByRules.length === 0) return;
-    if (!allowedByRules.includes(paymentMethod)) {
+    const ok = paymentMethod === 'compartido'
+      ? allowedByRules.includes('redsys')
+      : allowedByRules.includes(paymentMethod);
+    if (!ok) {
       setPaymentMethod(allowedByRules[0]);
     }
   }, [allowedByRules, paymentMethod]);
@@ -300,6 +306,73 @@ const PaymentGateway = () => {
     }
   };
 
+  // ── Pago compartido: el creador paga su 1/4 con tarjeta. El backend (redsys-notify)
+  // crea la reserva 'split', genera los tokens y los enlaces de WhatsApp para los demás ──
+  const handleSplitPay = async () => {
+    if (!user || items.length !== 1) return;
+    if (payLockRef.current) return;
+    const phones = splitPhones.map(p => (p || '').replace(/\s/g, '')).filter(Boolean);
+    if (phones.length === 0) {
+      setError('Añade el teléfono de al menos un jugador para enviarle el enlace de pago.');
+      return;
+    }
+    const item = items[0];
+    payLockRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const myShare = Math.round((item.price / 4) * 100) / 100;
+      const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
+      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok&compartido=1`)}`;
+      const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
+      const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
+
+      const res = await supabase.functions.invoke('redsys-create', {
+        body: {
+          amount: myShare,
+          courtId: item.courtId,
+          userId: user.id,
+          date: item.date,
+          timeSlot: item.timeSlot,
+          successUrl,
+          failUrl,
+          notifyUrl,
+          paymentMethod: 'card',
+          isSharedPayment: true,
+          sharedPhones: phones,
+        },
+      });
+
+      if (res.error) throw new Error(res.error?.message || 'No se pudo conectar con la pasarela de pago');
+      const data = res.data;
+      if (!data || data.error) throw new Error(data?.error || 'Respuesta vacía del servidor');
+      if (!data.Ds_MerchantParameters || !data.Ds_Signature || !data.redsysUrl) throw new Error('Datos de pago incompletos');
+
+      clearCart();
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = data.redsysUrl;
+      [
+        ['Ds_SignatureVersion', 'HMAC_SHA256_V1'],
+        ['Ds_MerchantParameters', data.Ds_MerchantParameters],
+        ['Ds_Signature', data.Ds_Signature],
+      ].forEach(([name, value]) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+    } catch (err) {
+      console.error('Error pago compartido:', err);
+      setError(`Error: ${err.message}`);
+      setLoading(false);
+      payLockRef.current = false;
+    }
+  };
+
   if (items.length === 0) return null;
 
   const isMulti = items.length > 1;
@@ -354,6 +427,11 @@ const PaymentGateway = () => {
                 {isClubOpen && (!allowedByRules || allowedByRules.includes('club')) && (
                   <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
                     🏪 Club
+                  </button>
+                )}
+                {!isMulti && (!allowedByRules || allowedByRules.includes('redsys')) && (
+                  <button onClick={() => setPaymentMethod('compartido')} className={`pay-tab ${paymentMethod === 'compartido' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
+                    👥 Compartido
                   </button>
                 )}
               </div>
@@ -479,6 +557,56 @@ const PaymentGateway = () => {
                     </div>
                   </div>
                 </>
+              ) : paymentMethod === 'compartido' ? (
+                <div style={{ padding: '1.5rem' }}>
+                  <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+                    <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem', fontSize: '1.5rem' }}>👥</div>
+                    <h3 style={{ margin: '0 0 0.4rem', fontSize: '1rem', fontWeight: 800, color: '#0F172A' }}>Pago compartido (entre 4)</h3>
+                    <p style={{ margin: 0, fontSize: '0.84rem', color: '#64748B', lineHeight: 1.5 }}>
+                      Tú pagas tu parte ahora con tarjeta. Los demás recibirán un enlace por WhatsApp para pagar la suya (o pueden pagar en el club y el admin lo marca).
+                    </p>
+                  </div>
+
+                  <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1.1rem', textAlign: 'center' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#1D4ED8', fontWeight: 600 }}>Tu parte (1 de 4): </span>
+                    <strong style={{ fontSize: '1.15rem', color: '#1D4ED8' }}>{(total / 4).toFixed(2).replace('.', ',')} €</strong>
+                  </div>
+
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#475569', marginBottom: '0.5rem' }}>
+                    Teléfonos de los otros jugadores (para enviarles el enlace)
+                  </label>
+                  {splitPhones.map((ph, i) => (
+                    <input
+                      key={i}
+                      type="tel"
+                      value={ph}
+                      onChange={(e) => setSplitPhones(prev => prev.map((p, idx) => idx === i ? e.target.value : p))}
+                      placeholder={`Jugador ${i + 2} · ej. 600123456`}
+                      className="input-focus-ring"
+                      style={{ width: '100%', padding: '0.7rem 0.85rem', borderRadius: '0.6rem', border: '1.5px solid #E2E8F0', fontSize: '0.9rem', boxSizing: 'border-box', marginBottom: '0.5rem', fontFamily: 'inherit' }}
+                    />
+                  ))}
+
+                  {error && (
+                    <div style={{ backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.875rem', borderRadius: '0.6rem', fontSize: '0.85rem', margin: '0.5rem 0 1rem', border: '1px solid #FECACA', fontWeight: 500 }}>
+                      {error}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleSplitPay}
+                    disabled={loading}
+                    style={{ width: '100%', padding: '1rem', backgroundColor: loading ? '#94A3B8' : '#1D4ED8', color: 'white', border: 'none', borderRadius: '0.75rem', fontFamily: 'inherit', fontSize: '1rem', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginTop: '0.25rem' }}
+                  >
+                    {loading ? (
+                      <><svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>Conectando...</>
+                    ) : `Pagar mi parte · ${(total / 4).toFixed(2).replace('.', ',')} €`}
+                  </button>
+
+                  <p style={{ margin: '0.9rem 0 0', fontSize: '0.72rem', color: '#94A3B8', textAlign: 'center', lineHeight: 1.5 }}>
+                    Al pagar, la pista queda reservada y podrás enviar los enlaces de pago por WhatsApp desde "Mis Reservas".
+                  </p>
+                </div>
               ) : (
                 <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                   <div style={{ textAlign: 'center', padding: '1rem 0' }}>

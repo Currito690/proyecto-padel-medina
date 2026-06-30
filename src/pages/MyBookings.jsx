@@ -4,6 +4,52 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
 
+// Sección de pago compartido dentro de una reserva: estado X/4 + enlaces de
+// WhatsApp para que el creador mande su parte a cada jugador.
+function SplitInfo({ booking, tokens }) {
+  const courtName = booking.courts?.name || 'Pista';
+  const [y, m, d] = (booking.date || '').split('-');
+  const dateStr = d ? `${d}/${m}/${y}` : booking.date;
+  const paid = booking.split_paid || 1;
+  const waLink = (t) => {
+    let p = (t.phone || '').replace(/\D/g, '');
+    if (p.length === 9) p = '34' + p; // móvil español sin prefijo
+    const payUrl = `${window.location.origin}/pago-compartido?token=${t.token}`;
+    const msg = `¡Hola! Te toca pagar tu parte de la pista de pádel (${courtName} · ${dateStr} · ${booking.time_slot}): ${Number(t.amount).toFixed(2).replace('.', ',')} €. Paga aquí 👉 ${payUrl}`;
+    return `https://wa.me/${p}?text=${encodeURIComponent(msg)}`;
+  };
+  return (
+    <div style={{ marginTop: '0.85rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '0.75rem', padding: '0.85rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tokens.length ? '0.55rem' : 0 }}>
+        <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0F172A' }}>👥 Pago compartido</span>
+        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: paid >= 4 ? '#15803D' : '#B45309', background: paid >= 4 ? '#F0FDF4' : '#FFFBEB', border: `1px solid ${paid >= 4 ? '#BBF7D0' : '#FDE68A'}`, padding: '0.2rem 0.55rem', borderRadius: 999 }}>
+          {paid >= 4 ? '✓ Todo pagado' : `${paid}/4 pagado`}
+        </span>
+      </div>
+      {tokens.map((t, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.45rem 0', borderTop: i ? '1px solid #EEF2F7' : 'none' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>📱 {t.phone}</div>
+            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{Number(t.amount).toFixed(2).replace('.', ',')} €</div>
+          </div>
+          {t.paid ? (
+            <span style={{ fontSize: '0.74rem', fontWeight: 800, color: '#15803D' }}>✓ Pagado</span>
+          ) : (
+            <a href={waLink(t)} target="_blank" rel="noopener noreferrer"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#25D366', color: 'white', textDecoration: 'none', fontSize: '0.76rem', fontWeight: 800, padding: '0.45rem 0.7rem', borderRadius: '0.6rem', whiteSpace: 'nowrap' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.5 15.3L2 22l4.8-1.5A10 10 0 1 0 12 2zm0 2a8 8 0 1 1-4.2 14.8l-.3-.2-2.8.9.9-2.7-.2-.3A8 8 0 0 1 12 4z"/></svg>
+              WhatsApp
+            </a>
+          )}
+        </div>
+      ))}
+      {tokens.length === 0 && (
+        <p style={{ margin: 0, fontSize: '0.74rem', color: '#94A3B8' }}>Sin jugadores con enlace. El resto se paga en el club.</p>
+      )}
+    </div>
+  );
+}
+
 const MyBookings = () => {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -11,6 +57,7 @@ const MyBookings = () => {
   const [loading, setLoading] = useState(true);
   const [pagoOk, setPagoOk] = useState(false);
   const [cancelSettings, setCancelSettings] = useState({ enabled: true, hours: 24 });
+  const [splitTokens, setSplitTokens] = useState({}); // booking_id -> [tokens] (pago compartido)
 
   const sendConfirmationEmail = (booking) => {
     if (!user?.email) return;
@@ -120,7 +167,20 @@ const MyBookings = () => {
       .eq('status', 'confirmed')
       .order('created_at', { ascending: false });
     if (error) console.error('fetchBookings error:', error.message);
-    if (data) setBookings(data);
+    if (data) {
+      setBookings(data);
+      // Cargar los tokens de pago compartido de las reservas 'split' (para los enlaces WhatsApp).
+      const splitIds = data.filter(b => b.payment_type === 'split').map(b => b.id);
+      if (splitIds.length) {
+        const { data: toks } = await supabase
+          .from('shared_payment_tokens')
+          .select('booking_id, phone, amount, paid, token')
+          .in('booking_id', splitIds);
+        const map = {};
+        (toks || []).forEach(t => { if (!map[t.booking_id]) map[t.booking_id] = []; map[t.booking_id].push(t); });
+        setSplitTokens(map);
+      }
+    }
     return data || [];
   };
 
@@ -256,6 +316,9 @@ const MyBookings = () => {
                           </div>
                         )}
                       </div>
+                      {booking.payment_type === 'split' && (
+                        <SplitInfo booking={booking} tokens={splitTokens[booking.id] || []} />
+                      )}
                     </div>
                   </div>
                 ))}

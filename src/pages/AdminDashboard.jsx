@@ -43,6 +43,77 @@ const METODO_PAGO_LABELS = {
 const formatMetodoPago = (metodo, isFree) =>
   METODO_PAGO_LABELS[metodo] || (isFree ? '🎾 Gratis' : '—');
 
+// Gestión del pago compartido por el admin: ver el estado X/4 y marcar pagada la
+// parte de un jugador (p.ej. si paga en el club en vez de por su enlace).
+function SplitAdmin({ bookingId }) {
+  const [tokens, setTokens] = useState([]);
+  const [paid, setPaid] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [{ data: b }, { data: toks }] = await Promise.all([
+      supabase.from('bookings').select('split_paid').eq('id', bookingId).single(),
+      supabase.from('shared_payment_tokens').select('id, phone, amount, paid').eq('booking_id', bookingId).order('created_at'),
+    ]);
+    setPaid(b?.split_paid || 1);
+    setTokens(toks || []);
+    setLoading(false);
+  }, [bookingId]);
+
+  useEffect(() => { if (bookingId) load(); }, [bookingId, load]);
+
+  const bumpPaid = async (delta) => {
+    const { data: b } = await supabase.from('bookings').select('split_paid').eq('id', bookingId).single();
+    const next = Math.min(4, Math.max(0, (b?.split_paid || 1) + delta));
+    await supabase.from('bookings').update({ split_paid: next }).eq('id', bookingId);
+  };
+
+  const markToken = async (tok) => {
+    setBusy(true);
+    await supabase.from('shared_payment_tokens').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', tok.id);
+    await bumpPaid(1);
+    await load();
+    setBusy(false);
+  };
+
+  const markClub = async () => {
+    setBusy(true);
+    await bumpPaid(1);
+    await load();
+    setBusy(false);
+  };
+
+  if (loading) return <p style={{ fontSize: '0.78rem', color: '#94A3B8', margin: '0.6rem 0 0' }}>Cargando pago compartido…</p>;
+
+  return (
+    <div style={{ marginTop: '0.6rem', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.6rem', padding: '0.7rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tokens.length ? '0.5rem' : 0 }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>👥 Pago compartido</span>
+        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: paid >= 4 ? '#15803D' : '#B45309', background: paid >= 4 ? '#F0FDF4' : '#FFFBEB', border: `1px solid ${paid >= 4 ? '#BBF7D0' : '#FDE68A'}`, padding: '0.15rem 0.5rem', borderRadius: 999 }}>
+          {paid >= 4 ? '✓ Todo pagado' : `${paid}/4`}
+        </span>
+      </div>
+      {tokens.map(t => (
+        <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', padding: '0.35rem 0', borderTop: '1px solid #F1F5F9' }}>
+          <span style={{ fontSize: '0.78rem', color: '#0F172A', fontWeight: 600 }}>📱 {t.phone} · {Number(t.amount).toFixed(2).replace('.', ',')}€</span>
+          {t.paid ? (
+            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#15803D', whiteSpace: 'nowrap' }}>✓ Pagado</span>
+          ) : (
+            <button onClick={() => markToken(t)} disabled={busy} style={{ fontSize: '0.7rem', fontWeight: 800, color: 'white', background: '#16A34A', border: 'none', borderRadius: '0.45rem', padding: '0.35rem 0.55rem', cursor: busy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>Marcar pagado</button>
+          )}
+        </div>
+      ))}
+      {paid < 4 && (
+        <button onClick={markClub} disabled={busy} style={{ marginTop: '0.55rem', width: '100%', fontSize: '0.74rem', fontWeight: 800, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.5rem', padding: '0.45rem', cursor: busy ? 'wait' : 'pointer' }}>
+          🏪 Marcar un pago en el club (+1)
+        </button>
+      )}
+    </div>
+  );
+}
+
 const editLabel = { display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.04em' };
 const editInput = { width: '100%', padding: '0.7rem 0.85rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.9rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' };
 
@@ -415,7 +486,7 @@ const AdminDashboard = () => {
     });
     bookings?.forEach(b => {
       if (newSlots[b.court_id]) {
-        newSlots[b.court_id][b.time_slot] = { status: 'booked', client: b.observaciones || b.profiles?.name || 'Cliente', bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free };
+        newSlots[b.court_id][b.time_slot] = { status: 'booked', client: b.observaciones || b.profiles?.name || 'Cliente', bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type };
       }
     });
     blocked?.forEach(b => {
@@ -958,6 +1029,9 @@ const AdminDashboard = () => {
                                   </div>
                                   <button onClick={() => { setActiveSlot(null); setBookObs(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem', fontSize: '1rem', lineHeight: 1 }}>✕</button>
                                 </div>
+                                {selectedSlotData.status === 'booked' && selectedSlotData.paymentType === 'split' && (
+                                  <SplitAdmin bookingId={selectedSlotData.bookingId} />
+                                )}
                                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                   {selectedSlotData.status === 'available' && (
                                     <>
