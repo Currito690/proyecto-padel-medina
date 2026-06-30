@@ -6,12 +6,19 @@ const AuthContext = createContext();
 // Fallback: el admin original sigue reconociéndose por email aunque el fetch
 // a profiles.role falle (problemas de red, RLS mal aplicado, etc.).
 const LEGACY_ADMIN_EMAILS = ['admin@padelmedina.com'];
+// Usuarios "monitor" (solo lectura de la agenda) reconocidos por email como
+// respaldo, además de profiles.role = 'monitor'.
+const MONITOR_EMAILS = ['lolo@padelmedina.com'];
 
 const buildUser = (u, role) => ({
   id: u.id,
   email: u.email,
   name: u.user_metadata?.name || u.email.split('@')[0],
-  role: role || (LEGACY_ADMIN_EMAILS.includes(u.email) ? 'admin' : 'client'),
+  role: role || (
+    LEGACY_ADMIN_EMAILS.includes(u.email) ? 'admin'
+      : MONITOR_EMAILS.includes(u.email) ? 'monitor'
+        : 'client'
+  ),
 });
 
 // Consulta profiles.role del usuario logeado. Nunca lanza; si falla/tarda,

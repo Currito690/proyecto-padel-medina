@@ -26,6 +26,7 @@ const ProductoDetalle = lazy(() => import('./pages/shop/ProductoDetalle'));
 const ShopCart = lazy(() => import('./pages/shop/ShopCart'));
 const ShopCheckout = lazy(() => import('./pages/shop/ShopCheckout'));
 const ShopOrderResult = lazy(() => import('./pages/shop/ShopOrderResult'));
+const MonitorView = lazy(() => import('./pages/MonitorView'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -264,6 +265,11 @@ function App() {
           {/* Admin Routes */}
           {user?.role === 'admin' && (
             <Route path="/*" element={<AdminDashboard />} />
+          )}
+
+          {/* Monitor (solo lectura: agenda de pistas ocupadas) */}
+          {user?.role === 'monitor' && (
+            <Route path="/*" element={<MonitorView />} />
           )}
 
           {/* Client Routes - No Layout */}
