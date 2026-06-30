@@ -34,16 +34,26 @@ export default function MonitorView() {
     setLoading(true);
     try {
       const [bk, bl, ct] = await Promise.all([
-        supabase.from('bookings').select('court_id, time_slot, observaciones, status').eq('date', d),
+        supabase.from('bookings').select('court_id, time_slot, observaciones, status, user_id').eq('date', d),
         supabase.from('blocked_slots').select('court_id, time_slot, tipo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
+
+      // Nombres de quienes reservaron (para mostrárselos al monitor).
+      const userIds = [...new Set((bk.data || []).map((b) => b.user_id).filter(Boolean))];
+      let nameById = {};
+      if (userIds.length) {
+        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', userIds);
+        nameById = Object.fromEntries((profs || []).map((p) => [p.id, p.name]));
+      }
+
       const byCourt = {};
       (ct.data || []).forEach((c) => { byCourt[c.id] = { id: c.id, name: c.name, slots: [] }; });
       const ensure = (cid) => byCourt[cid] || (byCourt[cid] = { id: cid, name: 'Pista', slots: [] });
       (bk.data || []).forEach((b) => {
         if (b.status === 'cancelled') return;
-        ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: b.observaciones || '' });
+        const who = b.observaciones || nameById[b.user_id] || '';
+        ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: who });
       });
       (bl.data || []).forEach((s) => {
         ensure(s.court_id).slots.push({ time: s.time_slot, tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo', note: '' });
@@ -148,7 +158,7 @@ export default function MonitorView() {
                       <div key={i} className="slot" style={{ background: m.bg, border: `1px solid ${m.border}`, borderLeft: `3px solid ${m.color}` }}>
                         <div className="slot-time">{s.time}</div>
                         <div className="slot-tag" style={{ color: m.color }}>{m.emoji} {m.label}</div>
-                        {s.note && <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 2, fontWeight: 500 }}>{s.note}</div>}
+                        {s.note && <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: 2, fontWeight: 600 }}>{s.tipo === 'reserva' ? '👤 ' : ''}{s.note}</div>}
                       </div>
                     );
                   })
