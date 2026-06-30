@@ -26,10 +26,10 @@ dist-ssr
 # Claude Code local settings (permisos personales, no compartir)
 .claude/settings.local.json
 
-# Environment variables
+# Environment variables (.env.production SÍ se versiona: solo lleva claves
+# públicas VITE_, necesarias para que Plesk compile el frontend al hacer push)
 .env
 .env.local
-.env.production
 
 .vercel
 .env*.local
