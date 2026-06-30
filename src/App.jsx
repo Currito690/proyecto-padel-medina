@@ -5,6 +5,7 @@ import { supabase } from './services/supabase';
 import { subscribeAdminToPush } from './services/pushNotifications';
 import MainLayout from './components/layout/MainLayout';
 import ErrorBoundary from './components/ErrorBoundary';
+import InstallPrompt from './components/InstallPrompt';
 
 const BookingDashboard = lazy(() => import('./pages/BookingDashboard'));
 const MyBookings = lazy(() => import('./pages/MyBookings'));
@@ -289,6 +290,7 @@ function App() {
         </Routes>
       </Suspense>
       </ErrorBoundary>
+      <InstallPrompt />
     </div>
   );
 }
