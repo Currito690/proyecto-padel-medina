@@ -18,6 +18,7 @@ const Cart = lazy(() => import('./pages/Cart'));
 const SharedPayment = lazy(() => import('./pages/SharedPayment'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const Tournaments = lazy(() => import('./pages/Tournaments'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const ShopLayout = lazy(() => import('./components/shop/ShopLayout'));
 const Tienda = lazy(() => import('./pages/shop/Tienda'));
 const ProductoDetalle = lazy(() => import('./pages/shop/ProductoDetalle'));
@@ -248,6 +249,7 @@ function App() {
           <Route path="/torneos/:id/cuadro" element={<TournamentBracket />} />
           <Route path="/pago-compartido" element={<SharedPayment />} />
           <Route path="/privacidad" element={<PrivacyPolicy />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* Tienda pública (accesible sin login, con su propio layout) */}
           <Route element={<ShopLayout />}>

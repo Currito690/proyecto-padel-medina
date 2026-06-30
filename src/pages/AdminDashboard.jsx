@@ -23,9 +23,48 @@ const slotColors = {
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
-const UserRow = ({ u, togglingId, toggleBan, onDeleted, supabase }) => {
+const editLabel = { display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.04em' };
+const editInput = { width: '100%', padding: '0.7rem 0.85rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.9rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' };
+
+const UserRow = ({ u, togglingId, toggleBan, onDeleted, onUpdated, supabase }) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [eName, setEName] = useState(u.name || '');
+  const [eEmail, setEEmail] = useState(u.email || '');
+  const [ePhone, setEPhone] = useState(u.phone || '');
+  const [ePassword, setEPassword] = useState('');
+
+  const openEdit = () => {
+    setEName(u.name || ''); setEEmail(u.email || ''); setEPhone(u.phone || ''); setEPassword('');
+    setShowEdit(true);
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (ePassword && ePassword.length < 6) { toast('La contraseña debe tener al menos 6 caracteres', 'error'); return; }
+    setSavingEdit(true);
+    try {
+      const body = { userId: u.id, name: eName.trim(), phone: ePhone.trim() };
+      if (eEmail.trim() && eEmail.trim() !== u.email) body.email = eEmail.trim();
+      if (ePassword) body.password = ePassword;
+      const { data, error } = await supabase.functions.invoke('admin-update-user', { body });
+      if (error) {
+        let msg = error.message || 'Error desconocido';
+        try { const b = await error.context?.json?.(); if (b?.error) msg = b.error; } catch {}
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      onUpdated(u.id, { name: eName.trim(), phone: ePhone.trim(), ...(body.email ? { email: body.email } : {}) });
+      toast('Jugador actualizado', 'success');
+      setShowEdit(false);
+    } catch (err) {
+      toast('Error al guardar: ' + (err.message || JSON.stringify(err)), 'error');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -79,6 +118,40 @@ const UserRow = ({ u, togglingId, toggleBan, onDeleted, supabase }) => {
           </div>
         </div>
       )}
+      {showEdit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', zIndex: 9999, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+          <div style={{ background: 'white', borderRadius: '1.25rem', padding: '1.5rem', maxWidth: '440px', width: '100%', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', marginTop: '3rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>Editar jugador</h3>
+              <button onClick={() => setShowEdit(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.3rem', lineHeight: 1 }}>✕</button>
+            </div>
+            <form onSubmit={handleSaveEdit} style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
+              <div>
+                <label style={editLabel}>Nombre</label>
+                <input value={eName} onChange={e => setEName(e.target.value)} style={editInput} />
+              </div>
+              <div>
+                <label style={editLabel}>Email</label>
+                <input type="email" value={eEmail} onChange={e => setEEmail(e.target.value)} style={editInput} />
+              </div>
+              <div>
+                <label style={editLabel}>Teléfono</label>
+                <input value={ePhone} onChange={e => setEPhone(e.target.value)} style={editInput} />
+              </div>
+              <div>
+                <label style={editLabel}>Nueva contraseña <span style={{ color: '#94A3B8', fontWeight: 500, textTransform: 'none' }}>(opcional)</span></label>
+                <input type="password" value={ePassword} onChange={e => setEPassword(e.target.value)} placeholder="Dejar en blanco para no cambiarla" minLength={6} style={editInput} />
+              </div>
+              <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                <button type="button" onClick={() => setShowEdit(false)} disabled={savingEdit} style={{ padding: '0.65rem 1.1rem', borderRadius: '0.65rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>Cancelar</button>
+                <button type="submit" disabled={savingEdit} style={{ padding: '0.65rem 1.3rem', borderRadius: '0.65rem', border: 'none', background: '#16A34A', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.85rem', cursor: savingEdit ? 'not-allowed' : 'pointer', opacity: savingEdit ? 0.7 : 1 }}>
+                  {savingEdit ? 'Guardando…' : 'Guardar cambios'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.875rem 1rem', backgroundColor: u.banned ? '#FEF2F2' : 'white', borderRadius: '0.875rem', border: `1px solid ${u.banned ? '#FECACA' : '#E2E8F0'}`, opacity: u.banned ? 0.85 : 1, transition: 'all 0.2s' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -90,6 +163,9 @@ const UserRow = ({ u, togglingId, toggleBan, onDeleted, supabase }) => {
         </div>
         {u.role !== 'admin' && (
           <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+            <button onClick={openEdit} title="Editar datos y contraseña" style={{ padding: '0.4rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', transition: 'all 0.2s' }}>
+              ✎ Editar
+            </button>
             <button disabled={togglingId === u.id} onClick={() => toggleBan(u)} style={{ padding: '0.4rem 0.875rem', borderRadius: '0.5rem', border: `1.5px solid ${u.banned ? '#16A34A' : '#DC2626'}`, backgroundColor: u.banned ? '#F0FDF4' : '#FEF2F2', color: u.banned ? '#16A34A' : '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: togglingId === u.id ? 'not-allowed' : 'pointer', transition: 'all 0.2s', opacity: togglingId === u.id ? 0.6 : 1 }}>
               {togglingId === u.id ? '...' : u.banned ? 'Reactivar' : 'Dar de baja'}
             </button>
@@ -172,6 +248,7 @@ const UserDirectoryTab = ({ supabase, allUsers, setAllUsers }) => {
               togglingId={togglingId}
               toggleBan={toggleBan}
               onDeleted={(id) => setAllUsers(prev => prev.filter(p => p.id !== id))}
+              onUpdated={(id, patch) => setAllUsers(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p))}
               supabase={supabase}
             />
           ))}
@@ -201,6 +278,7 @@ const AdminDashboard = () => {
   const [userSearch, setUserSearch] = useState('');
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [showUserPicker, setShowUserPicker] = useState(false);
+  const [bookObs, setBookObs] = useState(''); // nombre/observaciones para reserva manual (no registrados)
   const [allDbBookings, setAllDbBookings] = useState([]);
   const [loadingAllBookings, setLoadingAllBookings] = useState(false);
   const [bookingsDate, setBookingsDate] = useState(new Date().toISOString().split('T')[0]);
@@ -317,12 +395,12 @@ const AdminDashboard = () => {
     });
     bookings?.forEach(b => {
       if (newSlots[b.court_id]) {
-        newSlots[b.court_id][b.time_slot] = { status: 'booked', client: b.profiles?.name || 'Cliente', bookingId: b.id };
+        newSlots[b.court_id][b.time_slot] = { status: 'booked', client: b.observaciones || b.profiles?.name || 'Cliente', bookingId: b.id };
       }
     });
     blocked?.forEach(b => {
       if (newSlots[b.court_id]) {
-        newSlots[b.court_id][b.time_slot] = { status: 'blocked', blockedId: b.id };
+        newSlots[b.court_id][b.time_slot] = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
       }
     });
     setSlots(newSlots);
@@ -424,7 +502,7 @@ const AdminDashboard = () => {
 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleAction = async (action) => {
+  const handleAction = async (action, opts = {}) => {
     if (isProcessing) return;
     setIsProcessing(true);
     const { courtId, time } = activeSlot;
@@ -432,10 +510,11 @@ const AdminDashboard = () => {
     let actionError = null;
 
     if (action === 'reserve') {
+      const obs = (bookObs || '').trim();
       const bookUserId = selectedUserId || user.id;
-      const bookedUserName = allUsers.find(u => u.id === bookUserId)?.name || user.name || 'Cliente';
+      const bookedUserName = obs || allUsers.find(u => u.id === bookUserId)?.name || user.name || 'Cliente';
       const courtName = courts.find(c => c.id === courtId)?.name || 'Pista';
-      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true });
+      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true, observaciones: obs || null });
       actionError = error;
       if (!error) {
         supabase.functions.invoke('send-push', {
@@ -448,8 +527,10 @@ const AdminDashboard = () => {
       }
       setSelectedUserId(null);
       setShowUserPicker(false);
+      setBookObs('');
     } else if (action === 'block') {
-      const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id });
+      const tipo = opts.tipo === 'entreno' ? 'entreno' : 'bloqueado';
+      const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id, tipo });
       actionError = error;
     } else if (action === 'cancel') {
       const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', slot.bookingId);
@@ -827,10 +908,10 @@ const AdminDashboard = () => {
                                   <div>
                                     <p style={{ margin: 0, fontWeight: 800, color: '#0F172A', fontSize: '0.875rem' }}>{activeSlot.time}</p>
                                     <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
-                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? 'Bloqueado por administrador' : 'Franja disponible'}
+                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Bloqueada para entrenos' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
                                     </p>
                                   </div>
-                                  <button onClick={() => setActiveSlot(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem', fontSize: '1rem', lineHeight: 1 }}>✕</button>
+                                  <button onClick={() => { setActiveSlot(null); setBookObs(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem', fontSize: '1rem', lineHeight: 1 }}>✕</button>
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                   {selectedSlotData.status === 'available' && (
@@ -861,6 +942,12 @@ const AdminDashboard = () => {
                                         </div>
                                       ) : (
                                         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                          <input
+                                            value={bookObs}
+                                            onChange={e => setBookObs(e.target.value)}
+                                            placeholder="Nombre / observaciones (si no está registrado)"
+                                            style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontSize: '0.82rem', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                                          />
                                           {selectedUserId && (
                                             <span style={{ fontSize: '0.78rem', backgroundColor: '#F0FDF4', color: '#16A34A', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: 700, border: '1px solid #86EFAC' }}>
                                               ✓ {allUsers.find(u => u.id === selectedUserId)?.name || 'Jugador seleccionado'}
@@ -878,8 +965,11 @@ const AdminDashboard = () => {
                                           <button disabled={isProcessing} onClick={() => handleAction('reserve')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: 'none', backgroundColor: isProcessing ? '#94A3B8' : '#16A34A', color: 'white', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             {isProcessing ? 'Procesando...' : '✓ Reservar (gratis)'}
                                           </button>
-                                          <button onClick={() => handleAction('block')} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                                          <button disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'bloqueado' })} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             🔒 Bloquear
+                                          </button>
+                                          <button disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'entreno' })} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #FED7AA', backgroundColor: '#FFF7ED', color: '#9A3412', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                            🏋️ Entreno
                                           </button>
                                         </div>
                                       )}

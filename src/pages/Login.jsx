@@ -4,9 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { sanitizeInput } from '../utils/sanitize';
 
 const Login = () => {
-  const { loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp } = useAuth();
+  const { loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resetPassword } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [step, setStep] = useState(1); // 1 = formulario, 2 = código OTP (solo registro)
+  const [forgotMode, setForgotMode] = useState(false); // recuperar contraseña
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -39,6 +40,22 @@ const Login = () => {
       }
     } catch (err) {
       setError(err.message || 'Error al procesar la solicitud');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Enviar email de recuperación de contraseña
+  const handleForgot = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setSuccessMsg('');
+    try {
+      await resetPassword(sanitizeInput(email));
+      setSuccessMsg(`Si existe una cuenta con ${email}, te hemos enviado un email con un enlace para restablecer tu contraseña.`);
+    } catch (err) {
+      setError(err.message || 'No se pudo enviar el email de recuperación');
     } finally {
       setLoading(false);
     }
@@ -334,7 +351,7 @@ const Login = () => {
 
             {/* Title */}
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 1.25rem', letterSpacing: '-0.02em' }}>
-              {step === 2 ? 'Verifica tu correo' : (isLogin ? 'Bienvenido de nuevo' : 'Crea tu cuenta')}
+              {step === 2 ? 'Verifica tu correo' : forgotMode ? 'Recuperar contraseña' : (isLogin ? 'Bienvenido de nuevo' : 'Crea tu cuenta')}
             </h2>
 
             {/* Error */}
@@ -356,7 +373,27 @@ const Login = () => {
               </div>
             )}
 
-            {step === 1 ? (
+            {step === 1 && forgotMode ? (
+              <form onSubmit={handleForgot}>
+                <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#64748B', lineHeight: 1.5 }}>
+                  Introduce tu email y te enviaremos un enlace para crear una contraseña nueva.
+                </p>
+                <div className="login-input-group">
+                  <label className="login-label">Email</label>
+                  <input className="login-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="tu@email.com" />
+                </div>
+                <button type="submit" disabled={loading} className="login-submit">
+                  {loading ? (
+                    <><svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>Enviando...</>
+                  ) : 'Enviar enlace de recuperación'}
+                </button>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                  <button type="button" onClick={() => { setForgotMode(false); setError(null); setSuccessMsg(''); }} style={{ background: 'transparent', border: 'none', color: '#64748B', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline' }}>
+                    ← Volver al inicio de sesión
+                  </button>
+                </div>
+              </form>
+            ) : step === 1 ? (
               <form onSubmit={handleSubmit}>
                 {!isLogin && (
                   <div className="login-input-group">
@@ -387,6 +424,14 @@ const Login = () => {
                     <><svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>Cargando...</>
                   ) : isLogin ? 'Entrar' : 'Crear cuenta y verificar'}
                 </button>
+
+                {isLogin && (
+                  <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                    <button type="button" onClick={() => { setForgotMode(true); setError(null); setSuccessMsg(''); }} style={{ background: 'transparent', border: 'none', color: '#1B3A6E', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}>
+                      ¿Olvidaste tu contraseña?
+                    </button>
+                  </div>
+                )}
               </form>
             ) : (
               <form onSubmit={handleVerifyOtp}>
@@ -427,7 +472,7 @@ const Login = () => {
               </form>
             )}
 
-            {step === 1 && (
+            {step === 1 && !forgotMode && (
               <>
                 <div className="login-divider">
                   <hr /><span>o</span><hr />

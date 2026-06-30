@@ -441,6 +441,9 @@ verify_jwt = false
 [functions.send-order-email]
 verify_jwt = false
 
+[functions.admin-update-user]
+verify_jwt = false
+
 [functions.debug-bookings]
 enabled = true
 verify_jwt = true

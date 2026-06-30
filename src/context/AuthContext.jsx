@@ -135,6 +135,20 @@ export function AuthProvider({ children }) {
     if (error) throw error;
   };
 
+  // Recuperar contraseña: envía un email con enlace a /reset-password
+  const resetPassword = async (email) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) throw error;
+  };
+
+  // Cambiar la contraseña del usuario actual (tras abrir el enlace de recuperación)
+  const updatePassword = async (newPassword) => {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+  };
+
   // Logout
   const logout = async () => {
     await supabase.auth.signOut();
@@ -154,7 +168,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, logout, loading }}>
+    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resetPassword, updatePassword, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
