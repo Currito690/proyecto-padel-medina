@@ -1245,7 +1245,7 @@ const AdminDashboard = () => {
                         🔓 Hora de apertura de reservas
                       </label>
                       <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
-                        Los clientes no podrán ver ni reservar pistas hasta que llegue esta hora cada día. Por ejemplo, <strong>08:00</strong> significa que las pistas se desbloquean a las 8 de la mañana. Pon <strong>00:00</strong> para que siempre estén disponibles.
+                        Las pistas de cada día se abren a esta hora <strong>del día anterior</strong>. Por ejemplo, con <strong>09:00</strong>, las pistas del sábado se abren el viernes a las 9 de la mañana. El día actual siempre se puede reservar. Con <strong>00:00</strong>, el día siguiente se abre a medianoche.
                       </p>
                       <input
                         type="time"
