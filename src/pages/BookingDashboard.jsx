@@ -6,7 +6,7 @@ import DateSelector from '../components/booking/DateSelector';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
-import { serverNowMs } from '../utils/serverTime';
+import { serverNow, serverNowMs } from '../utils/serverTime';
 
 const SCHEDULE_TIMES = [
   '09:00 - 10:30',
@@ -141,8 +141,8 @@ const BookingDashboard = () => {
         court_price: isNaN(parsedPrice) ? 18.00 : parsedPrice,
         slots_release_time: releaseTime,
       });
-      // Check if courts are still locked for today
-      const now = new Date();
+      // Check if courts are still locked for today (hora del servidor)
+      const now = serverNow();
       const [rH, rM] = releaseTime.split(':').map(Number);
       const releaseMinutes = rH * 60 + rM;
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -207,7 +207,8 @@ const BookingDashboard = () => {
     if (!y || !m || !d) return false;
     const [rH, rM] = (siteSettings.slots_release_time || '00:00').split(':').map(Number);
     const releaseAt = new Date(y, m - 1, d - 1, rH || 0, rM || 0, 0, 0);
-    return new Date() < releaseAt;
+    // Hora del SERVIDOR: así adelantar el reloj del móvil no desbloquea días.
+    return serverNow() < releaseAt;
   };
 
   const handleCourtChange = (courtId) => {
@@ -246,20 +247,28 @@ const BookingDashboard = () => {
     navigate('/carrito');
   };
 
-  // Re-evaluar el bloqueo cada 30s para que se desbloquee solo a la hora exacta
-  // (release_time = 09:00) sin obligar al usuario a recargar la página.
+  // Cada 30s: re-lee la hora de apertura de la BD (así, si el admin la cambia,
+  // se aplica sin tener que recargar la página) y re-evalúa el bloqueo con la
+  // hora del SERVIDOR para que se desbloquee solo a la hora exacta.
   useEffect(() => {
-    if (!siteSettings.slots_release_time) return;
-    const evaluate = () => {
-      const now = new Date();
-      const [rH, rM] = siteSettings.slots_release_time.split(':').map(Number);
-      const releaseMin = rH * 60 + rM;
-      const nowMin = now.getHours() * 60 + now.getMinutes();
-      setSlotsLocked(nowMin < releaseMin);
+    let cancelled = false;
+    const evaluate = async () => {
+      try {
+        const { data } = await supabase.from('site_settings').select('slots_release_time').single();
+        if (!cancelled && data?.slots_release_time) {
+          setSiteSettings(prev => prev.slots_release_time === data.slots_release_time
+            ? prev
+            : { ...prev, slots_release_time: data.slots_release_time });
+        }
+      } catch { /* sin red: seguimos con el último valor cargado */ }
+      if (cancelled) return;
+      const now = serverNow();
+      const [rH, rM] = (siteSettings.slots_release_time || '00:00').split(':').map(Number);
+      setSlotsLocked(now.getHours() * 60 + now.getMinutes() < rH * 60 + rM);
     };
     evaluate();
     const id = setInterval(evaluate, 30 * 1000);
-    return () => clearInterval(id);
+    return () => { cancelled = true; clearInterval(id); };
   }, [siteSettings.slots_release_time]);
 
   const currentCourt = courts.find(c => c.id === selectedCourt);
