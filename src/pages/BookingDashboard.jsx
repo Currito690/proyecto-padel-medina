@@ -197,17 +197,22 @@ const BookingDashboard = () => {
     setLoadingSlots(false);
   };
 
-  // El release_time solo bloquea fechas FUTURAS. Hoy siempre se puede reservar
-  // (los slots pasados ya quedan marcados como ocupados por loadSlots).
+  // Cada fecha se LIBERA a la hora de liberación (release_time) del día ANTERIOR:
+  // hoy siempre se puede reservar; mañana se abre hoy a las 9:00; pasado mañana
+  // no se abre hasta mañana a las 9:00, etc. (slotsLocked solo fuerza el re-render
+  // del intervalo de 30s; el cálculo real es por fecha.)
   const isDateLocked = (dateStr) => {
-    if (!slotsLocked) return false;
-    const todayStr = new Date().toISOString().split('T')[0];
-    return dateStr > todayStr;
+    if (!dateStr) return false;
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return false;
+    const [rH, rM] = (siteSettings.slots_release_time || '00:00').split(':').map(Number);
+    const releaseAt = new Date(y, m - 1, d - 1, rH || 0, rM || 0, 0, 0);
+    return new Date() < releaseAt;
   };
 
   const handleCourtChange = (courtId) => {
     if (isDateLocked(selectedDate)) {
-      toast(`Las reservas para fechas futuras se abren a las ${siteSettings.slots_release_time}. Hoy puedes reservar normalmente.`);
+      toast(`Cada día se abre a las ${siteSettings.slots_release_time} del día anterior. Hoy puedes reservar normalmente.`);
       return;
     }
     setSelectedCourt(courtId);
@@ -865,8 +870,8 @@ const BookingDashboard = () => {
                 <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
               <div>
-                <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 800, color: '#B91C1C' }}>Fecha bloqueada hasta las {siteSettings.slots_release_time}</p>
-                <p style={{ margin: '0.1rem 0 0', fontSize: '0.78rem', color: '#7F1D1D' }}>Vuelve a esa hora para poder reservar este día. Para hoy puedes reservar con normalidad.</p>
+                <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 800, color: '#B91C1C' }}>Este día aún no está abierto</p>
+                <p style={{ margin: '0.1rem 0 0', fontSize: '0.78rem', color: '#7F1D1D' }}>Las reservas de cada día se abren a las {siteSettings.slots_release_time} del día anterior. Para hoy puedes reservar con normalidad.</p>
               </div>
             </div>
           )}
