@@ -869,9 +869,9 @@ const BookingDashboard = () => {
               <div style={{ width: '28px', height: '28px', border: '3px solid #DCFCE7', borderTopColor: '#16A34A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
             </div>
           ) : (
-            <div style={{ pointerEvents: isDateLocked(selectedDate) ? 'none' : 'auto', opacity: isDateLocked(selectedDate) ? 0.45 : 1, filter: isDateLocked(selectedDate) ? 'grayscale(0.6)' : 'none' }}>
+            <div style={{ pointerEvents: isDateLocked(selectedDate) ? 'none' : 'auto' }}>
               <TimeSlotList
-                slots={slots}
+                slots={isDateLocked(selectedDate) ? slots.map(s => ({ ...s, status: 'occupied' })) : slots}
                 selectedSlot={selectedSlot}
                 onSelectSlot={setSelectedSlot}
                 onBook={handleBook}
