@@ -228,14 +228,19 @@ const PaymentGateway = () => {
         form.appendChild(input);
       });
 
-      // Guardar datos antes del redirect para fallback y email de confirmación
-      sessionStorage.setItem('pendingBooking', JSON.stringify({
+      // Guardar datos antes del redirect para fallback y email de confirmación.
+      // En sessionStorage Y localStorage: en móviles el navegador puede matar la
+      // pestaña durante el pago y sessionStorage se pierde → sin este respaldo,
+      // si el aviso de Redsys tampoco llega, el cobro queda sin reserva.
+      const pendingData = JSON.stringify({
         courtId: item.courtId,
         courtName: item.courtName,
         date: item.date,
         timeSlot: item.timeSlot,
         metodo: method === 'bizum' ? 'bizum' : 'tarjeta',
-      }));
+      });
+      sessionStorage.setItem('pendingBooking', pendingData);
+      try { localStorage.setItem('pendingBooking', pendingData); } catch { /* storage lleno */ }
 
       document.body.appendChild(form);
       form.submit();
@@ -354,14 +359,16 @@ const PaymentGateway = () => {
 
       clearCart();
       // Guardar datos para que "Mis Reservas" espere/muestre la reserva al volver.
-      sessionStorage.setItem('pendingBooking', JSON.stringify({
+      const pendingSplit = JSON.stringify({
         courtId: item.courtId,
         courtName: item.courtName,
         date: item.date,
         timeSlot: item.timeSlot,
         metodo: 'tarjeta',
         isSplit: true,
-      }));
+      });
+      sessionStorage.setItem('pendingBooking', pendingSplit);
+      try { localStorage.setItem('pendingBooking', pendingSplit); } catch { /* storage lleno */ }
       const form = document.createElement('form');
       form.method = 'POST';
       form.action = data.redsysUrl;

@@ -88,7 +88,12 @@ const MyBookings = () => {
       setSearchParams(np, { replace: true });
 
       (async () => {
-        const raw = sessionStorage.getItem('pendingBooking');
+        // sessionStorage puede perderse en móviles durante el pago; localStorage es el respaldo.
+        const raw = sessionStorage.getItem('pendingBooking') || localStorage.getItem('pendingBooking');
+        const clearPending = () => {
+          sessionStorage.removeItem('pendingBooking');
+          try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
+        };
 
         // Enviar email de confirmación inmediatamente con los datos disponibles
         if (raw) {
@@ -113,7 +118,7 @@ const MyBookings = () => {
         const { courtId, date, timeSlot, metodo, isSplit } = JSON.parse(raw);
         for (let i = 0; i < 6; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
-          if (found) { sessionStorage.removeItem('pendingBooking'); return; }
+          if (found) { clearPending(); return; }
           if (i < 5) {
             await new Promise(r => setTimeout(r, 2500));
             data = await fetchBookingsSilent();
@@ -121,7 +126,7 @@ const MyBookings = () => {
         }
 
         // Pago compartido: NO crear fallback (perdería los tokens/teléfonos del split). Solo esperar.
-        if (isSplit) { sessionStorage.removeItem('pendingBooking'); return; }
+        if (isSplit) { clearPending(); return; }
 
         // Fallback: redsys-notify no creó la reserva → crearla desde el frontend
         const { error } = await supabase.from('bookings').insert({
@@ -134,7 +139,7 @@ const MyBookings = () => {
           metodo_pago: metodo || 'tarjeta',
         });
         if (!error) await fetchBookingsSilent();
-        sessionStorage.removeItem('pendingBooking');
+        clearPending();
       })();
     } else {
       loadBookings();
