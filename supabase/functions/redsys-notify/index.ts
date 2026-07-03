@@ -40,6 +40,36 @@ function verifySignature(paramsB64: string, receivedSig: string, orderId: string
   return normalize(expectedSig) === normalize(receivedSig);
 }
 
+// ── Alerta URGENTE al admin: hay un COBRO que no pudo convertirse en reserva ──
+// Mejor un aviso ruidoso que un cobro perdido en silencio (el admin la crea a
+// mano desde su panel mientras se investiga).
+async function alertaCobroSinReserva(orderId: string, detalle: string) {
+  const base = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` };
+  await fetch(`${base}/functions/v1/send-push`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: '🚨 COBRO SIN RESERVA',
+      body: `Pedido Redsys ${orderId}. Crear la reserva a mano. ${detalle}`.slice(0, 170),
+      url: '/admin',
+    }),
+  }).catch(console.warn);
+  await fetch(`${base}/functions/v1/send-booking-email`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      type: 'admin',
+      userName: `⚠️ COBRO SIN RESERVA — pedido Redsys ${orderId}`,
+      courtName: detalle.slice(0, 140) || '(sin datos)',
+      date: '',
+      timeSlot: '—',
+      metodoPago: 'REVISAR EN REDSYS Y CREAR A MANO',
+    }),
+  }).catch(console.warn);
+}
+
 serve(async (req) => {
   try {
     if (!SECRET_KEY) {
@@ -58,6 +88,9 @@ serve(async (req) => {
     const decoded = JSON.parse(atob(base64));
     const orderId = decoded.Ds_Order ?? '';
 
+    // Traza de entrada: queda en los logs aunque algo falle después.
+    console.log(`notify recibido: pedido=${orderId} resp=${decoded.Ds_Response ?? '-'} pm=${decoded.Ds_PayMethod ?? '-'}`);
+
     // Verificar firma con clave derivada por 3DES del orderId
     if (!verifySignature(dsParams, dsSignature, orderId)) {
       console.error('Redsys notify: firma inválida para pedido', orderId);
@@ -65,8 +98,19 @@ serve(async (req) => {
     }
 
     const responseCode = parseInt(decoded.Ds_Response ?? '9999', 10);
-    const merchantData = JSON.parse(decoded.Ds_MerchantData ?? '{}');
-    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones, kind, registrationId } = merchantData;
+    // Parse DEFENSIVO de Ds_MerchantData: Redsys puede devolverlo URL-encoded o
+    // ausente según la operación; que nunca tumbe la función entera.
+    let merchantData: Record<string, unknown> = {};
+    try {
+      let rawMd = decoded.Ds_MerchantData ?? '{}';
+      if (typeof rawMd === 'string' && !rawMd.trim().startsWith('{') && rawMd.includes('%')) {
+        rawMd = decodeURIComponent(rawMd);
+      }
+      merchantData = typeof rawMd === 'string' ? JSON.parse(rawMd) : (rawMd ?? {});
+    } catch (_e) {
+      console.error(`MerchantData no parseable (pedido ${orderId}):`, decoded.Ds_MerchantData);
+    }
+    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones, kind, registrationId } = merchantData as Record<string, any>;
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -170,6 +214,13 @@ serve(async (req) => {
     // ── Pago de reserva de pista (flujo original) ────────────────────────
     // Códigos 0000–0099 = pago OK
     if (responseCode <= 99) {
+      // Cobro confirmado pero sin datos para crear la reserva → alertar al
+      // admin YA (con OK a Redsys: reintentar no lo arreglaría).
+      if (!courtId || !userId || !date || !timeSlot) {
+        console.error(`COBRO SIN DATOS DE RESERVA pedido=${orderId} decoded=${JSON.stringify(decoded).slice(0, 500)}`);
+        await alertaCobroSinReserva(orderId, `Importe ${decoded.Ds_Amount ?? '?'} cent. Datos incompletos en la notificación.`);
+        return new Response('OK', { status: 200 });
+      }
       // Redsys devuelve Ds_PayMethod='z' cuando se pagó con Bizum; si no, fue tarjeta.
       const esBizum = decoded.Ds_PayMethod === 'z';
       const { data: bookingRow, error } = await supabase.from('bookings').insert({
@@ -187,6 +238,7 @@ serve(async (req) => {
 
       if (error) {
         console.error('Error guardando reserva Redsys:', error);
+        await alertaCobroSinReserva(orderId, `${date} ${timeSlot}. Error BD: ${error.message}`.slice(0, 150));
         return new Response('KO', { status: 500 });
       }
 
