@@ -60,7 +60,7 @@ const BookingDashboard = () => {
   const [isBanned, setIsBanned] = useState(false);
 
   const getMaxDate = () => {
-    const now = new Date();
+    const now = serverNow();
     const maxDate = new Date(now);
     maxDate.setDate(now.getDate() + (parseInt(siteSettings.booking_window_days, 10) || 7));
     return maxDate.getFullYear() + '-' + String(maxDate.getMonth() + 1).padStart(2, '0') + '-' + String(maxDate.getDate()).padStart(2, '0');
@@ -254,11 +254,15 @@ const BookingDashboard = () => {
     let cancelled = false;
     const evaluate = async () => {
       try {
-        const { data } = await supabase.from('site_settings').select('slots_release_time').single();
-        if (!cancelled && data?.slots_release_time) {
-          setSiteSettings(prev => prev.slots_release_time === data.slots_release_time
-            ? prev
-            : { ...prev, slots_release_time: data.slots_release_time });
+        const { data } = await supabase.from('site_settings').select('slots_release_time, booking_window_days').single();
+        if (!cancelled && data) {
+          setSiteSettings(prev => {
+            const rt = data.slots_release_time || prev.slots_release_time;
+            const wd = parseInt(data.booking_window_days, 10) || prev.booking_window_days;
+            return (prev.slots_release_time === rt && prev.booking_window_days === wd)
+              ? prev
+              : { ...prev, slots_release_time: rt, booking_window_days: wd };
+          });
         }
       } catch { /* sin red: seguimos con el último valor cargado */ }
       if (cancelled) return;
