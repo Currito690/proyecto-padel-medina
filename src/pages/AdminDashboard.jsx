@@ -721,9 +721,22 @@ const AdminDashboard = () => {
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     setSettingsMsg(null);
+    // Validar ANTES de guardar: un campo vacío guardaría null y rompería en silencio.
+    const windowDays = parseInt(siteSettings.booking_window_days, 10);
+    const price = parseFloat(siteSettings.court_price);
+    if (!Number.isFinite(windowDays) || windowDays < 1) {
+      setSavingSettings(false);
+      setSettingsMsg({ type: 'error', text: 'Los días de antelación deben ser un número (mínimo 1).' });
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setSavingSettings(false);
+      setSettingsMsg({ type: 'error', text: 'El precio de la pista debe ser un número (0 o más).' });
+      return;
+    }
     const { error } = await supabase.from('site_settings').update({
-      booking_window_days: parseInt(siteSettings.booking_window_days, 10),
-      court_price: parseFloat(siteSettings.court_price),
+      booking_window_days: windowDays,
+      court_price: price,
       slots_release_time: siteSettings.slots_release_time || '00:00',
       club_open_time: siteSettings.club_open_time || '00:00',
       club_hours: siteSettings.club_hours,

@@ -254,14 +254,15 @@ const BookingDashboard = () => {
     let cancelled = false;
     const evaluate = async () => {
       try {
-        const { data } = await supabase.from('site_settings').select('slots_release_time, booking_window_days').single();
+        const { data } = await supabase.from('site_settings').select('slots_release_time, booking_window_days, court_price').single();
         if (!cancelled && data) {
           setSiteSettings(prev => {
             const rt = data.slots_release_time || prev.slots_release_time;
             const wd = parseInt(data.booking_window_days, 10) || prev.booking_window_days;
-            return (prev.slots_release_time === rt && prev.booking_window_days === wd)
+            const cp = Number.isFinite(parseFloat(data.court_price)) ? parseFloat(data.court_price) : prev.court_price;
+            return (prev.slots_release_time === rt && prev.booking_window_days === wd && prev.court_price === cp)
               ? prev
-              : { ...prev, slots_release_time: rt, booking_window_days: wd };
+              : { ...prev, slots_release_time: rt, booking_window_days: wd, court_price: cp };
           });
         }
       } catch { /* sin red: seguimos con el último valor cargado */ }
