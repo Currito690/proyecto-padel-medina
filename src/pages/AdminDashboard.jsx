@@ -616,21 +616,32 @@ const AdminDashboard = () => {
           },
         }).catch(() => {});
         // Si el admin asignó la reserva a un usuario REGISTRADO, avisarle por email.
-        if (selectedUserId) {
-          const bookedUser = allUsers.find(u => u.id === selectedUserId);
-          if (bookedUser?.email) {
-            supabase.functions.invoke('send-booking-email', {
-              body: {
-                type: 'confirmation',
-                email: bookedUser.email,
-                userName: bookedUser.name || 'jugador/a',
-                courtName,
-                date: selectedDate,
-                timeSlot: time,
-              },
-            }).catch(() => {});
-          }
+        const bookedUser = selectedUserId ? allUsers.find(u => u.id === selectedUserId) : null;
+        if (bookedUser?.email) {
+          supabase.functions.invoke('send-booking-email', {
+            body: {
+              type: 'confirmation',
+              email: bookedUser.email,
+              userName: bookedUser.name || 'jugador/a',
+              courtName,
+              date: selectedDate,
+              timeSlot: time,
+            },
+          }).catch(() => {});
         }
+        // Y SIEMPRE (registrado o no), correo al admin con los datos de la reserva.
+        supabase.functions.invoke('send-booking-email', {
+          body: {
+            type: 'admin',
+            email: bookedUser?.email || '',
+            userName: bookedUserName,
+            userPhone: bookedUser?.phone || '',
+            courtName,
+            date: selectedDate,
+            timeSlot: time,
+            metodoPago: '✍️ Reserva manual (admin)',
+          },
+        }).catch(() => {});
       }
       setSelectedUserId(null);
       setShowUserPicker(false);
