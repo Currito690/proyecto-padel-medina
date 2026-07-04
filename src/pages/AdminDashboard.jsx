@@ -1258,7 +1258,7 @@ const AdminDashboard = () => {
                         🔓 Hora de apertura de reservas
                       </label>
                       <p style={{ margin: '0 0 0.8rem', fontSize: '0.8rem', color: '#64748B', lineHeight: '1.4' }}>
-                        Las pistas de cada día se abren a esta hora <strong>del día anterior</strong>. Por ejemplo, con <strong>09:00</strong>, las pistas del sábado se abren el viernes a las 9 de la mañana. El día actual siempre se puede reservar. Con <strong>00:00</strong>, el día siguiente se abre a medianoche.
+                        Las pistas de cada día se abren a esta hora, <strong>tantos días antes como marquen los "Días de antelación"</strong>. Por ejemplo, con antelación <strong>2</strong> y hora <strong>09:00</strong>: el jueves a las 9:00 se abre el sábado, el viernes a las 9:00 se abre el domingo, y así cada día. Los días ya abiertos siguen abiertos.
                       </p>
                       <input
                         type="time"

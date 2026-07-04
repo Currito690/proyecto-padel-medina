@@ -197,23 +197,25 @@ const BookingDashboard = () => {
     setLoadingSlots(false);
   };
 
-  // Cada fecha se LIBERA a la hora de liberación (release_time) del día ANTERIOR:
-  // hoy siempre se puede reservar; mañana se abre hoy a las 9:00; pasado mañana
-  // no se abre hasta mañana a las 9:00, etc. (slotsLocked solo fuerza el re-render
-  // del intervalo de 30s; el cálculo real es por fecha.)
+  // Cada fecha se LIBERA a la hora configurada, N DÍAS ANTES (N = días de
+  // antelación). Ej.: con antelación 2 y hora 09:00, el sábado se abre el
+  // jueves a las 09:00 y el domingo el viernes a las 09:00. Así, cada día a esa
+  // hora se estrena el día nuevo que entra en la ventana. (slotsLocked solo
+  // fuerza el re-render del intervalo de 30s; el cálculo real es por fecha.)
   const isDateLocked = (dateStr) => {
     if (!dateStr) return false;
     const [y, m, d] = dateStr.split('-').map(Number);
     if (!y || !m || !d) return false;
     const [rH, rM] = (siteSettings.slots_release_time || '00:00').split(':').map(Number);
-    const releaseAt = new Date(y, m - 1, d - 1, rH || 0, rM || 0, 0, 0);
+    const windowDays = parseInt(siteSettings.booking_window_days, 10) || 7;
+    const releaseAt = new Date(y, m - 1, d - windowDays, rH || 0, rM || 0, 0, 0);
     // Hora del SERVIDOR: así adelantar el reloj del móvil no desbloquea días.
     return serverNow() < releaseAt;
   };
 
   const handleCourtChange = (courtId) => {
     if (isDateLocked(selectedDate)) {
-      toast(`Cada día se abre a las ${siteSettings.slots_release_time} del día anterior. Hoy puedes reservar normalmente.`);
+      toast(`Las pistas de cada día se abren a las ${siteSettings.slots_release_time}, ${siteSettings.booking_window_days} día(s) antes.`);
       return;
     }
     setSelectedCourt(courtId);
