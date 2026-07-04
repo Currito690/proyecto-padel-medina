@@ -41,8 +41,12 @@ serve(async (req) => {
 
     const dsParams    = params.get('Ds_MerchantParameters') ?? '';
     const dsSignature = params.get('Ds_Signature') ?? '';
-    const decoded     = JSON.parse(atob(dsParams));
+    const base64      = dsParams.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded     = JSON.parse(atob(base64));
     const orderId     = decoded.Ds_Order ?? '';
+
+    // Traza de entrada: queda en los logs aunque algo falle después.
+    console.log(`notify-split recibido: pedido=${orderId} resp=${decoded.Ds_Response ?? '-'}`);
 
     if (!verifySignature(dsParams, dsSignature, orderId)) {
       console.error('Firma inválida para pago split, pedido', orderId);
@@ -50,8 +54,20 @@ serve(async (req) => {
     }
 
     const responseCode = parseInt(decoded.Ds_Response ?? '9999', 10);
-    const merchantData = JSON.parse(decoded.Ds_MerchantData ?? '{}');
-    const { splitToken } = merchantData;
+    // Parse DEFENSIVO: Redsys devuelve Ds_MerchantData URL-encoded (%7B%22...)
+    // en las notificaciones; sin descodificar, JSON.parse revienta (causa del
+    // fallo del 3/7: cobro sin reserva).
+    let merchantData: Record<string, unknown> = {};
+    try {
+      let rawMd = decoded.Ds_MerchantData ?? '{}';
+      if (typeof rawMd === 'string' && !rawMd.trim().startsWith('{') && rawMd.includes('%')) {
+        rawMd = decodeURIComponent(rawMd);
+      }
+      merchantData = typeof rawMd === 'string' ? JSON.parse(rawMd) : (rawMd ?? {});
+    } catch (_e) {
+      console.error(`MerchantData no parseable (split, pedido ${orderId}):`, decoded.Ds_MerchantData);
+    }
+    const { splitToken } = merchantData as Record<string, any>;
 
     if (responseCode <= 99 && splitToken) {
       const supabase = createClient(
