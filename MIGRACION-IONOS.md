@@ -16,22 +16,34 @@ Mover **solo el frontend** (React/Vite) de Vercel a IONOS/Plesk.
 > DNS Records). Esto es lo detectado desde fuera; **cruzar con el panel de Vercel**
 > por si hay algún registro extra (verificaciones, etc.).
 
-### WEB (estos CAMBIAN a la IP del servidor Plesk de IONOS)
-| Tipo | Nombre | Valor actual (Vercel) | Valor nuevo (IONOS) |
-|------|--------|-----------------------|---------------------|
-| A | @ (raíz) | 64.29.17.65 / 64.29.17.1 | **IP del hosting Plesk** |
-| A | www | (Vercel) | **IP del hosting Plesk** |
+> Lista COMPLETA confirmada desde el panel de Vercel (2026-06-30). El apex y www
+> en Vercel son **ALIAS** (CNAME-en-raíz, propio de Vercel); en IONOS van como **A**.
+
+### WEB (estos CAMBIAN a la IP del servidor Plesk de IONOS = `87.106.229.29`)
+| Tipo | Nombre | Valor nuevo (IONOS) | Nota |
+|------|--------|---------------------|------|
+| A | @ (raíz) | `87.106.229.29` | sustituye al ALIAS de Vercel |
+| A | www | `87.106.229.29` | en Vercel lo cubría el comodín `*` |
+
+(El comodín `*` ALIAS de Vercel **no se recrea** salvo que uses subdominios.)
 
 ### EMAIL (Resend) — COPIAR EXACTO, **no cambiar nada**
 Si falta alguno, dejan de salir los emails (confirmaciones, recuperar contraseña…).
 
+| Tipo | Nombre | Valor | Prioridad |
+|------|--------|-------|-----------|
+| MX | `send` | `feedback-smtp.eu-west-1.amazonses.com` | 10 |
+| TXT | `send` | `v=spf1 include:amazonses.com ~all` | — |
+| TXT | `resend._domainkey` | `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDdfr1n07iz8mR87THCuGK4wpklTWVxLQN+K7stJY0ZI5tzQuGPPdc6teQRpAlVJMqm6AA90rIUYfcVZ+SP4FnEAzwrjyQNV2Ocxb/lg4AW80b6TaafoJK5s/heidHfMOFrhhlfpdB+ai5poXYivzKCdiiaA52kc/9E1nTq15TVowIDAQAB` | — |
+
+### CAA (autorizan qué CA emiten SSL — `letsencrypt.org` es OBLIGATORIO para el SSL de Plesk)
 | Tipo | Nombre | Valor |
 |------|--------|-------|
-| MX | `send` | `feedback-smtp.eu-west-1.amazonses.com` (prioridad 10) |
-| TXT | `send` | `v=spf1 include:amazonses.com ~all` |
-| TXT | `resend._domainkey` | `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDdfr1n07iz8mR87THCuGK4wpklTWVxLQN+K7stJY0ZI5tzQuGPPdc6teQRpAlVJMqm6AA90rIUYfcVZ+SP4FnEAzwrjyQNV2Ocxb/lg4AW80b6TaafoJK5s/heidHfMOFrhhlfpdB+ai5poXYivzKCdiiaA52kc/9E1nTq15TVowIDAQAB` |
+| CAA | @ | `0 issue "letsencrypt.org"` |
+| CAA | @ | `0 issue "pki.goog"` |
+| CAA | @ | `0 issue "sectigo.com"` |
 
-- No hay registro **DMARC** (`_dmarc`) ni **SPF en la raíz** → no añadir nada nuevo, solo preservar lo que existe.
+- No hay **DMARC** (`_dmarc`) ni **SPF en la raíz** → no añadir nada nuevo.
 
 ---
 
