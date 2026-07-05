@@ -22,6 +22,7 @@ const slotColors = {
   online:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#2563EB' }, // tarjeta/bizum
   club:      { borderColor: '#FDE68A', backgroundColor: '#FFFBEB', color: '#B45309' }, // pago en el club
   blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#94A3B8' },
+  entreno:   { borderColor: '#D8B4FE', backgroundColor: '#FAF5FF', color: '#9333EA' }, // bloqueada para entrenos
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
@@ -991,8 +992,9 @@ const AdminDashboard = () => {
                       { label: 'Libre', s: slotColors.available },
                       { label: '💳 Tarjeta/Bizum', s: slotColors.online },
                       { label: '🏪 Club', s: slotColors.club },
-                      { label: 'Otras', s: slotColors.booked },
-                      { label: 'Bloqueado', s: slotColors.blocked },
+                      { label: 'Otras reservas', s: slotColors.booked },
+                      { label: '🔒 Bloqueada', s: slotColors.blocked },
+                      { label: '🏋️ Entreno', s: slotColors.entreno },
                     ].map(({ label, s }) => (
                       <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                         <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: s.backgroundColor, border: `1.5px solid ${s.borderColor}` }} />
@@ -1022,6 +1024,7 @@ const AdminDashboard = () => {
                                 const isSelected = activeSlot?.courtId === court.id && activeSlot?.time === time;
                                 const c = isSelected ? slotColors.selected
                                   : slot?.status === 'booked' ? metodoColor(slot.metodo)
+                                  : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? slotColors.entreno : slotColors.blocked)
                                   : slotColors[slot?.status] || slotColors.available;
                                 return (
                                   <button key={time} disabled={!court.active}
@@ -1030,7 +1033,7 @@ const AdminDashboard = () => {
                                   >
                                     <div>{time.split(' - ')[0]}</div>
                                     <div style={{ fontSize: '0.58rem', fontWeight: 500, marginTop: '0.15rem', opacity: 0.85 }}>
-                                      {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? '🔒' : 'Libre'}
+                                      {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? '🏋️ Entreno' : '🔒 Bloqueada') : 'Libre'}
                                     </div>
                                   </button>
                                 );
