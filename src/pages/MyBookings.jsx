@@ -58,6 +58,9 @@ const MyBookings = () => {
   const [pagoOk, setPagoOk] = useState(false);
   const [cancelSettings, setCancelSettings] = useState({ enabled: true, hours: 24 });
   const [splitTokens, setSplitTokens] = useState({}); // booking_id -> [tokens] (pago compartido)
+  // Reserva recién pagada en Redsys: se pinta AL INSTANTE al volver del banco,
+  // y se sustituye por la fila real de la BD en cuanto el webhook la crea.
+  const [optimistic, setOptimistic] = useState(null);
 
   const sendConfirmationEmail = (booking) => {
     if (!user?.email) return;
@@ -95,13 +98,25 @@ const MyBookings = () => {
           try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
         };
 
-        // Enviar email de confirmación inmediatamente con los datos disponibles
+        // Pintar la reserva INMEDIATAMENTE (optimista) con los datos guardados
+        // antes de ir al banco, mientras llega la fila real del webhook. Así, al
+        // salir de Redsys la reserva ya se ve, sin esperas.
         if (raw) {
-          const { courtName, date, timeSlot } = JSON.parse(raw);
+          const p = JSON.parse(raw);
+          setOptimistic({
+            id: 'optimista',
+            optimistic: true,
+            court_id: p.courtId,
+            date: p.date,
+            time_slot: p.timeSlot,
+            is_free: false,
+            courts: { name: p.courtName || 'Pista', sport: p.sport || 'Pádel', location: p.location || '', gradient: p.gradient },
+          });
+          // Email de confirmación inmediato con los datos disponibles
           sendConfirmationEmail({
-            courts: { name: courtName || 'Pista' },
-            date,
-            time_slot: timeSlot,
+            courts: { name: p.courtName || 'Pista' },
+            date: p.date,
+            time_slot: p.timeSlot,
           });
         }
 
@@ -118,7 +133,7 @@ const MyBookings = () => {
         const { courtId, date, timeSlot, metodo, isSplit } = JSON.parse(raw);
         for (let i = 0; i < 6; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
-          if (found) { clearPending(); return; }
+          if (found) { clearPending(); setOptimistic(null); return; }
           if (i < 5) {
             await new Promise(r => setTimeout(r, 2500));
             data = await fetchBookingsSilent();
@@ -126,7 +141,7 @@ const MyBookings = () => {
         }
 
         // Pago compartido: NO crear fallback (perdería los tokens/teléfonos del split). Solo esperar.
-        if (isSplit) { clearPending(); return; }
+        if (isSplit) { clearPending(); setOptimistic(null); return; }
 
         // Fallback: redsys-notify no creó la reserva → crearla desde el frontend
         const { error } = await supabase.from('bookings').insert({
@@ -140,6 +155,7 @@ const MyBookings = () => {
         });
         if (!error) await fetchBookingsSilent();
         clearPending();
+        setOptimistic(null);
       })();
     } else {
       loadBookings();
@@ -217,6 +233,10 @@ const MyBookings = () => {
   const today = new Date().toISOString().split('T')[0];
   const upcoming = bookings.filter(b => b.date >= today);
   const past = bookings.filter(b => b.date < today);
+  // La reserva optimista va la primera, salvo que la fila real ya haya llegado.
+  const upcomingList = optimistic && !upcoming.some(b => b.court_id === optimistic.court_id && b.date === optimistic.date && b.time_slot === optimistic.time_slot)
+    ? [optimistic, ...upcoming]
+    : upcoming;
 
   const formatDate = (dateStr) => {
     const d = new Date(dateStr + 'T12:00:00');
@@ -270,7 +290,7 @@ const MyBookings = () => {
       </header>
 
       <main style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {upcoming.length === 0 && past.length === 0 ? (
+        {upcomingList.length === 0 && past.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: '#94A3B8' }}>
             <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 1rem', display: 'block' }}>
               <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
@@ -280,10 +300,10 @@ const MyBookings = () => {
           </div>
         ) : (
           <>
-            {upcoming.length > 0 && (
+            {upcomingList.length > 0 && (
               <>
                 <p className="section-label">Próximas</p>
-                {upcoming.map(booking => (
+                {upcomingList.map(booking => (
                   <div key={booking.id} style={{ backgroundColor: 'white', borderRadius: '1.25rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(22,163,74,.1)', border: '1px solid var(--color-border-accent)' }}>
                     <div style={{ height: '4px', background: booking.courts?.gradient || 'linear-gradient(90deg,#16A34A,#059669)' }} />
                     <div style={{ padding: '1.25rem' }}>
@@ -306,7 +326,9 @@ const MyBookings = () => {
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                           {booking.is_free ? 'Reserva admin (gratis)' : 'Confirmada'}
                         </div>
-                        {isCancelable(booking.date, booking.time_slot) ? (
+                        {booking.optimistic ? (
+                          <span style={{ fontSize: '.78rem', color: '#16A34A', fontWeight: 700 }}>✓ Pago recibido</span>
+                        ) : isCancelable(booking.date, booking.time_slot) ? (
                           <button onClick={() => cancelBooking(booking)}
                             style={{ backgroundColor: 'transparent', color: 'var(--color-danger)', border: '1.5px solid #FECACA', padding: '.5rem 1rem', borderRadius: '.625rem', fontSize: '.78rem', fontWeight: 700, cursor: 'pointer', minHeight: '36px', transition: 'background 0.15s' }}
                             onMouseOver={e => e.currentTarget.style.backgroundColor = '#FEF2F2'}

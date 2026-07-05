@@ -235,6 +235,8 @@ const PaymentGateway = () => {
       const pendingData = JSON.stringify({
         courtId: item.courtId,
         courtName: item.courtName,
+        sport: item.sport,
+        gradient: item.gradient,
         date: item.date,
         timeSlot: item.timeSlot,
         metodo: method === 'bizum' ? 'bizum' : 'tarjeta',
@@ -362,6 +364,8 @@ const PaymentGateway = () => {
       const pendingSplit = JSON.stringify({
         courtId: item.courtId,
         courtName: item.courtName,
+        sport: item.sport,
+        gradient: item.gradient,
         date: item.date,
         timeSlot: item.timeSlot,
         metodo: 'tarjeta',
