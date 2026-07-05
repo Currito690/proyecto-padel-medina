@@ -4,6 +4,10 @@ import { supabase } from '../../services/supabase';
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+// Etiqueta del método de pago de una reserva (reservas antiguas sin método → fallback).
+const METODO_LABELS = { tarjeta: '💳 Tarjeta', bizum: '📱 Bizum', club: '🏪 Club', manual: '✍️ Manual', gratis: '🎁 Gratis' };
+const metodoLabel = (b) => METODO_LABELS[b.metodo_pago] || (b.is_free ? '✍️ Manual' : '—');
+
 const PERIODS = [
   { key: 'today', label: 'Hoy' },
   { key: 'week', label: 'Esta semana' },
@@ -135,7 +139,7 @@ export default function FinanceManager() {
     setPage(0);
     Promise.all([
       supabase.from('bookings')
-        .select('id, date, time_slot, status, is_free, court_id, courts(name, sport), profiles(name, email)')
+        .select('id, date, time_slot, status, is_free, metodo_pago, court_id, courts(name, sport, price), profiles(name, email)')
         .eq('status', 'confirmed')
         .gte('date', fromDate)
         .lte('date', toDate)
@@ -151,7 +155,13 @@ export default function FinanceManager() {
 
   const paidBookings = useMemo(() => bookings.filter(b => !b.is_free), [bookings]);
   const freeBookings = useMemo(() => bookings.filter(b => b.is_free), [bookings]);
-  const totalRevenue = paidBookings.length * courtPrice;
+  // Importe real de cada reserva: el precio propio de la pista si lo tiene; si no, el global.
+  const bookingAmount = (b) => {
+    if (b.is_free) return 0;
+    const p = parseFloat(b.courts?.price);
+    return Number.isFinite(p) ? p : courtPrice;
+  };
+  const totalRevenue = paidBookings.reduce((sum, b) => sum + bookingAmount(b), 0);
 
   // Previous period revenue for comparison
   const prevRevenue = useMemo(() => {
@@ -170,7 +180,7 @@ export default function FinanceManager() {
   const chartData = useMemo(() => {
     if (!fromDate || !toDate) return [];
     const map = {};
-    paidBookings.forEach(b => { map[b.date] = (map[b.date] || 0) + courtPrice; });
+    paidBookings.forEach(b => { map[b.date] = (map[b.date] || 0) + bookingAmount(b); });
     const days = [];
     const from = new Date(fromDate + 'T12:00:00');
     const to = new Date(toDate + 'T12:00:00');
@@ -217,7 +227,7 @@ export default function FinanceManager() {
       let bv = b[sortField] ?? '';
       if (sortField === 'player') { av = a.profiles?.name ?? ''; bv = b.profiles?.name ?? ''; }
       if (sortField === 'court') { av = a.courts?.name ?? ''; bv = b.courts?.name ?? ''; }
-      if (sortField === 'amount') { av = a.is_free ? 0 : courtPrice; bv = b.is_free ? 0 : courtPrice; }
+      if (sortField === 'amount') { av = bookingAmount(a); bv = bookingAmount(b); }
       return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
     });
     return rows;
@@ -232,14 +242,15 @@ export default function FinanceManager() {
   };
 
   const exportCSV = () => {
-    const header = 'Fecha,Hora,Pista,Jugador,Email,Tipo,Importe';
+    const header = 'Fecha,Hora,Pista,Jugador,Email,Tipo,Metodo,Importe';
     const rows = tableRows.map(b => [
       b.date, b.time_slot,
       b.courts?.name || '',
       b.profiles?.name || '',
       b.profiles?.email || '',
       b.is_free ? 'Gratuita' : 'De pago',
-      b.is_free ? '0.00' : courtPrice.toFixed(2),
+      b.metodo_pago || (b.is_free ? 'manual' : ''),
+      bookingAmount(b).toFixed(2),
     ].join(','));
     const csv = [header, ...rows].join('\n');
     const a = document.createElement('a');
@@ -404,6 +415,7 @@ export default function FinanceManager() {
                       { field: 'court', label: 'Pista' },
                       { field: 'player', label: 'Jugador' },
                       { field: 'is_free', label: 'Tipo' },
+                      { field: 'metodo_pago', label: 'Método' },
                       { field: 'amount', label: 'Importe' },
                     ].map(({ field, label }) => (
                       <th key={field} style={thStyle(field)} onClick={() => toggleSort(field)}>
@@ -415,7 +427,7 @@ export default function FinanceManager() {
                 <tbody>
                   {pageRows.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8', fontWeight: 600 }}>
+                      <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8', fontWeight: 600 }}>
                         Sin reservas en este período
                       </td>
                     </tr>
@@ -439,8 +451,11 @@ export default function FinanceManager() {
                           {b.is_free ? 'Gratuita' : 'De pago'}
                         </span>
                       </td>
+                      <td style={{ padding: '0.6rem 0.875rem', color: '#475569', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        {metodoLabel(b)}
+                      </td>
                       <td style={{ padding: '0.6rem 0.875rem', fontWeight: 800, color: b.is_free ? '#94A3B8' : '#16A34A', whiteSpace: 'nowrap' }}>
-                        {b.is_free ? '—' : `${courtPrice.toFixed(2)} €`}
+                        {b.is_free ? '—' : `${bookingAmount(b).toFixed(2)} €`}
                       </td>
                     </tr>
                   ))}
