@@ -61,7 +61,8 @@ serve(async (req) => {
     try {
       let rawMd = decoded.Ds_MerchantData ?? '{}';
       if (typeof rawMd === 'string' && !rawMd.trim().startsWith('{') && rawMd.includes('%')) {
-        rawMd = decodeURIComponent(rawMd);
+        // Form-encoding: '+' representa un ESPACIO (un '+' literal llegaría como %2B).
+        rawMd = decodeURIComponent(rawMd.replace(/\+/g, ' '));
       }
       merchantData = typeof rawMd === 'string' ? JSON.parse(rawMd) : (rawMd ?? {});
     } catch (_e) {
