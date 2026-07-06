@@ -24,6 +24,15 @@ const TIPO = {
   entreno: { label: 'Entreno', emoji: '🏋️', bg: '#EFF6FF', border: '#BFDBFE', color: '#2563EB' },
 };
 
+// Cómo se pagó la reserva (mismas etiquetas que en el panel del admin)
+const METODO = {
+  tarjeta: '💳 Tarjeta',
+  bizum: '📱 Bizum',
+  club: '🏪 Pago en club',
+  gratis: '🎁 Gratis',
+  manual: '✍️ Manual',
+};
+
 export default function MonitorView() {
   const { user, logout } = useAuth();
   const [date, setDate] = useState(() => toYMD(new Date()));
@@ -34,7 +43,7 @@ export default function MonitorView() {
     setLoading(true);
     try {
       const [bk, bl, ct] = await Promise.all([
-        supabase.from('bookings').select('court_id, time_slot, observaciones, status, user_id').eq('date', d),
+        supabase.from('bookings').select('court_id, time_slot, observaciones, status, user_id, metodo_pago').eq('date', d),
         supabase.from('blocked_slots').select('court_id, time_slot, tipo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
@@ -53,7 +62,7 @@ export default function MonitorView() {
       (bk.data || []).forEach((b) => {
         if (b.status === 'cancelled') return;
         const who = b.observaciones || nameById[b.user_id] || '';
-        ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: who });
+        ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago });
       });
       (bl.data || []).forEach((s) => {
         ensure(s.court_id).slots.push({ time: s.time_slot, tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo', note: '' });
@@ -159,6 +168,9 @@ export default function MonitorView() {
                         <div className="slot-time">{s.time}</div>
                         <div className="slot-tag" style={{ color: m.color }}>{m.emoji} {m.label}</div>
                         {s.note && <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: 2, fontWeight: 600 }}>{s.tipo === 'reserva' ? '👤 ' : ''}{s.note}</div>}
+                        {s.tipo === 'reserva' && METODO[s.metodo] && (
+                          <div style={{ fontSize: '0.68rem', color: '#64748B', marginTop: 2, fontWeight: 700 }}>{METODO[s.metodo]}</div>
+                        )}
                       </div>
                     );
                   })
