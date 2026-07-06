@@ -124,14 +124,14 @@ export default function ShopCheckout() {
           <div key={n} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             {i > 0 && <div style={{ width: 22, height: 2, background: step >= n ? SHOP.lime : SHOP.line }} />}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <span style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', fontWeight: 900, background: step >= n ? SHOP.lime : SHOP.card, color: step >= n ? '#0D0D0D' : SHOP.muted, border: `1.5px solid ${step >= n ? SHOP.lime : SHOP.line}` }}>{step > n ? '✓' : n}</span>
+              <span style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', fontWeight: 900, background: step >= n ? SHOP.accent : SHOP.card, color: step >= n ? 'white' : SHOP.muted, border: `1.5px solid ${step >= n ? SHOP.accent : SHOP.line}` }}>{step > n ? '✓' : n}</span>
               <span style={{ fontSize: '0.75rem', fontWeight: 800, color: step >= n ? SHOP.white : SHOP.muted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{l}</span>
             </div>
           </div>
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: '1.5rem', alignItems: 'start' }}>
         {/* Formulario */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <Card title="1 · Tus datos">

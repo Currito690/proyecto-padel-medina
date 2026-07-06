@@ -99,7 +99,7 @@ export default function Tienda() {
         .shop-card:hover .shop-quickadd { opacity: 1; transform: translateY(0); }
         .shop-quickadd { opacity: 0; transform: translateY(6px); transition: opacity .18s, transform .18s; }
         @media (hover: none) { .shop-quickadd { opacity: 1; transform: none; } }
-        .shop-cta:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(200,240,49,0.35); }
+        .shop-cta:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(22,163,74,0.4); }
         .shop-catcard { transition: transform .18s, border-color .18s; }
         .shop-catcard:hover { transform: translateY(-3px); border-color: ${SHOP.lime} !important; }
         .shop-row { display: flex; gap: 0.9rem; overflow-x: auto; scrollbar-width: none; padding-bottom: 0.4rem; }
@@ -107,16 +107,21 @@ export default function Tienda() {
         .shop-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; }
         @media (min-width: 720px) { .shop-grid { grid-template-columns: repeat(3, 1fr); } }
         @media (min-width: 1000px) { .shop-grid { grid-template-columns: repeat(4, 1fr); gap: 1.1rem; } }
+        @media (max-width: 640px) {
+          .shop-filters input { flex: 1 1 100% !important; max-width: none !important; }
+          .shop-filters select { flex: 1 1 46%; min-width: 0; width: auto !important; }
+        }
+        @media (max-width: 380px) { .shop-grid { gap: 0.6rem; } }
       `}</style>
 
       {/* ── HERO ── */}
       <section className="shop-hero-in" style={{
         position: 'relative', overflow: 'hidden', borderRadius: '1.4rem', marginBottom: '1.75rem',
-        background: `radial-gradient(1200px 400px at 85% -10%, rgba(200,240,49,0.18), transparent 60%), linear-gradient(140deg, #151515 0%, #0D0D0D 70%)`,
+        background: `radial-gradient(1200px 400px at 85% -10%, rgba(34,197,94,0.16), transparent 60%), linear-gradient(140deg, #1B3A6E 0%, #0A1830 70%)`,
         border: `1px solid ${SHOP.line}`, padding: 'clamp(2.2rem, 6vw, 4rem) clamp(1.25rem, 5vw, 3rem)',
       }}>
-        <div style={{ position: 'absolute', right: -60, top: -60, width: 260, height: 260, borderRadius: '50%', border: '2px solid rgba(200,240,49,0.15)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', right: 40, bottom: -90, width: 200, height: 200, borderRadius: '50%', border: '2px solid rgba(200,240,49,0.08)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', right: -60, top: -60, width: 260, height: 260, borderRadius: '50%', border: '2px solid rgba(74,222,128,0.15)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', right: 40, bottom: -90, width: 200, height: 200, borderRadius: '50%', border: '2px solid rgba(74,222,128,0.08)', pointerEvents: 'none' }} />
         <span style={badge(SHOP.limeSoft, SHOP.lime)}>Tienda oficial del club</span>
         <h1 style={{ ...displayFont('clamp(2rem, 7vw, 3.4rem)'), margin: '0.9rem 0 0.6rem', maxWidth: '14ch' }}>
           Equípate como <span style={{ color: SHOP.lime }}>un pro</span>
@@ -134,7 +139,7 @@ export default function Tienda() {
       {maxDiscount > 0 && cat !== 'ofertas' && (
         <button onClick={() => { setCat('ofertas'); scrollToGrid(); }} style={{
           width: '100%', border: 'none', cursor: 'pointer', borderRadius: '1rem', marginBottom: '1.75rem',
-          background: SHOP.lime, color: '#0D0D0D', padding: '0.9rem 1.25rem',
+          background: SHOP.accent, color: 'white', padding: '0.9rem 1.25rem',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem', flexWrap: 'wrap',
           fontFamily: SHOP.display, textTransform: 'uppercase', fontSize: 'clamp(0.85rem, 3vw, 1.05rem)', letterSpacing: '0.02em',
         }}>
@@ -194,7 +199,7 @@ export default function Tienda() {
         </h2>
 
         {/* Filtros */}
-        <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+        <div className="shop-filters" style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto…"
             style={darkInput({ flex: '1 1 200px', maxWidth: 340 })} />
           <select value={cat} onChange={e => setCat(e.target.value)} style={darkInput({ width: 'auto', cursor: 'pointer' })}>
@@ -248,7 +253,7 @@ function ProductCard({ p, onQuickAdd, fixed = false }) {
   return (
     <Link to={`/tienda/${p.slug}`} style={{ textDecoration: 'none', color: 'inherit', flexShrink: 0, width: fixed ? 190 : 'auto', display: 'block' }}>
       <div className="shop-card" style={darkCard({ overflow: 'hidden', height: '100%', display: 'flex', flexDirection: 'column' })}>
-        <div style={{ position: 'relative', aspectRatio: '1 / 1', background: '#111111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'relative', aspectRatio: '1 / 1', background: SHOP.imgBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {img
             ? <img src={img} alt={p.nombre} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: agotado ? 0.45 : 1 }} />
             : <span style={{ fontSize: '2.6rem' }}>🎾</span>}
@@ -258,7 +263,7 @@ function ProductCard({ p, onQuickAdd, fixed = false }) {
           {!agotado && (
             <button onClick={(e) => onQuickAdd(e, p)} className="shop-quickadd" style={{
               position: 'absolute', left: 8, right: 8, bottom: 8, padding: '0.55rem',
-              background: SHOP.lime, color: '#0D0D0D', border: 'none', borderRadius: '0.65rem',
+              background: SHOP.accent, color: 'white', border: 'none', borderRadius: '0.65rem',
               fontWeight: 900, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em',
               cursor: 'pointer', fontFamily: SHOP.body,
             }}>

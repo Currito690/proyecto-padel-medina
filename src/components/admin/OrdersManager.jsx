@@ -64,7 +64,7 @@ export default function OrdersManager() {
     const now = new Date();
     const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    let ventasHoy = 0, ventasMes = 0, pagados = 0, pendientes = 0;
+    let ventasHoy = 0, ventasMes = 0, pagados = 0, pendientes = 0, porGestionar = 0;
     for (const o of orders) {
       const paid = PAID_STATES.includes(o.estado);
       if (paid) {
@@ -74,8 +74,16 @@ export default function OrdersManager() {
         if (t >= startMonth) ventasMes += o.total_centimos || 0;
       }
       if (o.estado === 'pendiente_pago') pendientes++;
+      if (o.estado === 'pagado' || o.estado === 'preparando') porGestionar++;
     }
-    return { ventasHoy, ventasMes, pagados, pendientes };
+    return { ventasHoy, ventasMes, pagados, pendientes, porGestionar };
+  }, [orders]);
+
+  // Contador de pedidos por estado (para los chips de filtro)
+  const countByState = useMemo(() => {
+    const m = {};
+    for (const o of orders) m[o.estado] = (m[o.estado] || 0) + 1;
+    return m;
   }, [orders]);
 
   const filtered = useMemo(() => {
@@ -106,21 +114,30 @@ export default function OrdersManager() {
       <p className="section-label" style={{ marginBottom: '1rem' }}>Pedidos de la tienda</p>
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
         <Kpi label="Ventas hoy" value={fmtEur(kpis.ventasHoy)} color="#16A34A" />
         <Kpi label="Ventas este mes" value={fmtEur(kpis.ventasMes)} color="#1B3A6E" />
+        <Kpi label="Por gestionar" value={kpis.porGestionar} color={kpis.porGestionar > 0 ? '#D97706' : '#0F172A'} hint="pagados sin enviar/entregar" />
         <Kpi label="Pedidos pagados" value={kpis.pagados} color="#0F172A" />
         <Kpi label="Stock bajo" value={lowStock} color={lowStock > 0 ? '#D97706' : '#0F172A'} hint={`≤ ${LOW_STOCK} uds`} />
       </div>
 
-      {/* Filtros */}
-      <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+      {/* Buscador + chips de estado con contadores */}
+      <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
         <input placeholder="Buscar por nº pedido, email o nombre…" value={search} onChange={e => setSearch(e.target.value)}
           style={{ ...inputStyle, flex: '1 1 220px', maxWidth: '360px' }} />
-        <select value={estadoFilter} onChange={e => setEstadoFilter(e.target.value)} style={{ ...inputStyle, width: 'auto', cursor: 'pointer' }}>
-          <option value="all">Todos los estados</option>
-          {Object.entries(ESTADOS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-        </select>
+      </div>
+      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+        <button onClick={() => setEstadoFilter('all')}
+          style={chip(estadoFilter === 'all', '#F1F5F9', '#334155')}>
+          Todos ({orders.length})
+        </button>
+        {Object.entries(ESTADOS).filter(([k]) => (countByState[k] || 0) > 0).map(([k, v]) => (
+          <button key={k} onClick={() => setEstadoFilter(prev => prev === k ? 'all' : k)}
+            style={chip(estadoFilter === k, v.bg, v.color)}>
+            {v.label} ({countByState[k]})
+          </button>
+        ))}
       </div>
 
       {/* Lista */}
@@ -274,3 +291,8 @@ const modalHeader = { display: 'flex', alignItems: 'flex-start', justifyContent:
 const closeBtn = { background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' };
 const badge = (bg, color) => ({ fontSize: '0.62rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: '999px', backgroundColor: bg, color, textTransform: 'uppercase', letterSpacing: '0.04em' });
 const pillBtn = (border, bg, color) => ({ padding: '0.55rem 0.9rem', borderRadius: '0.55rem', border: `1.5px solid ${border}`, backgroundColor: bg, color, fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' });
+const chip = (active, bg, color) => ({
+  padding: '0.45rem 0.8rem', borderRadius: '999px', fontWeight: 800, fontSize: '0.76rem', cursor: 'pointer',
+  backgroundColor: active ? bg : 'white', color, border: `1.5px solid ${active ? color : '#E2E8F0'}`,
+  transition: 'all .12s',
+});

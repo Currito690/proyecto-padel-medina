@@ -22,12 +22,12 @@ export default function ShopCart() {
     <div>
       <h1 style={{ ...displayFont('1.5rem'), marginBottom: '1.25rem' }}>Tu <span style={{ color: SHOP.lime }}>carrito</span></h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', gap: '1.5rem', alignItems: 'start' }}>
         {/* Items */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {items.map(it => (
             <div key={it.key} style={darkCard({ display: 'flex', gap: '0.85rem', padding: '0.8rem' })}>
-              <div style={{ width: 76, height: 76, flexShrink: 0, borderRadius: '0.7rem', overflow: 'hidden', background: '#111111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ width: 76, height: 76, flexShrink: 0, borderRadius: '0.7rem', overflow: 'hidden', background: SHOP.imgBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {it.imagen ? <img src={imgUrl(it.imagen)} alt={it.nombre} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: '1.6rem' }}>🎾</span>}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>

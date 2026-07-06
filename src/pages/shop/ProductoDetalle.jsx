@@ -118,10 +118,10 @@ export default function ProductoDetalle() {
 
       <Link to="/tienda" style={{ color: SHOP.muted, fontWeight: 600, fontSize: '0.85rem', textDecoration: 'none' }}>← Tienda</Link>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: '1.75rem', marginTop: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(290px, 100%), 1fr))', gap: '1.75rem', marginTop: '1rem' }}>
         {/* ── Galería ── */}
         <div>
-          <div style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: '1.25rem', overflow: 'hidden', background: '#111111', border: `1px solid ${SHOP.line}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: '1.25rem', overflow: 'hidden', background: SHOP.imgBg, border: `1px solid ${SHOP.line}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {images.length
               ? <img src={imgUrl(images[activeImg]?.ruta_imagen)} alt={product.nombre} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               : <span style={{ fontSize: '4rem' }}>🎾</span>}
@@ -132,7 +132,7 @@ export default function ProductoDetalle() {
           {images.length > 1 && (
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
               {images.map((im, i) => (
-                <button key={im.id} onClick={() => setActiveImg(i)} className="pd-thumb" style={{ width: 62, height: 62, borderRadius: '0.6rem', overflow: 'hidden', border: `2px solid ${i === activeImg ? SHOP.lime : SHOP.line}`, padding: 0, cursor: 'pointer', background: '#111111' }}>
+                <button key={im.id} onClick={() => setActiveImg(i)} className="pd-thumb" style={{ width: 62, height: 62, borderRadius: '0.6rem', overflow: 'hidden', border: `2px solid ${i === activeImg ? SHOP.lime : SHOP.line}`, padding: 0, cursor: 'pointer', background: SHOP.imgBg }}>
                   <img src={imgUrl(im.ruta_imagen)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </button>
               ))}
@@ -228,7 +228,7 @@ export default function ProductoDetalle() {
               return (
                 <Link key={r.id} to={`/tienda/${r.slug}`} style={{ textDecoration: 'none' }}>
                   <div className="pd-rel-card" style={darkCard({ overflow: 'hidden' })}>
-                    <div style={{ aspectRatio: '1/1', background: '#111111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ aspectRatio: '1/1', background: SHOP.imgBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {img ? <img src={img} alt={r.nombre} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: '2rem' }}>🎾</span>}
                     </div>
                     <div style={{ padding: '0.6rem 0.7rem' }}>
@@ -245,7 +245,7 @@ export default function ProductoDetalle() {
 
       {/* ── CTA fija en móvil ── */}
       {!agotado && (
-        <div className="pd-sticky" style={{ gap: '0.6rem', alignItems: 'center', background: 'rgba(20,20,20,0.97)', border: `1px solid ${SHOP.line}`, borderRadius: '1rem', padding: '0.6rem 0.8rem', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+        <div className="pd-sticky" style={{ gap: '0.6rem', alignItems: 'center', background: 'rgba(14,33,67,0.97)', border: `1px solid ${SHOP.line}`, borderRadius: '1rem', padding: '0.6rem 0.8rem', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ color: SHOP.white, fontWeight: 800, fontSize: '0.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 130 }}>{product.nombre}</div>
             <div style={{ color: SHOP.lime, fontWeight: 900, fontSize: '0.95rem' }}>{fmtEur(price)}</div>

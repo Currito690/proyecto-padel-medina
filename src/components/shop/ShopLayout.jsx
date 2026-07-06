@@ -27,15 +27,19 @@ export default function ShopLayout() {
         .shop-catlink { flex-shrink: 0; padding: 0.42rem 0.95rem; border-radius: 999px; border: 1.5px solid ${SHOP.line}; color: ${SHOP.muted}; font-size: 0.78rem; font-weight: 800; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em; transition: all .15s; background: transparent; }
         .shop-catlink:hover, .shop-catlink.active { border-color: ${SHOP.lime}; color: ${SHOP.lime}; }
         .shop-cart-btn:hover { border-color: ${SHOP.lime}; }
+        @media (max-width: 440px) {
+          .shop-brand-full { display: none; }
+          .shop-brand { font-size: 0.9rem !important; }
+        }
       `}</style>
 
       {/* ── Navbar sticky ── */}
-      <header style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(13,13,13,0.92)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', borderBottom: `1px solid ${SHOP.line}` }}>
+      <header style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(10,24,48,0.93)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', borderBottom: `1px solid ${SHOP.line}` }}>
         <div style={{ maxWidth: 1120, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.7rem 1rem', gap: '0.75rem' }}>
           <Link to="/tienda" style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', textDecoration: 'none', minWidth: 0 }}>
-            <img src="/logo.png" alt="Padel Medina" style={{ height: 34, width: 'auto', filter: 'drop-shadow(0 0 6px rgba(200,240,49,0.25))' }} />
-            <span style={{ fontFamily: SHOP.display, color: SHOP.white, fontSize: '0.98rem', textTransform: 'uppercase', letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>
-              Tienda <span style={{ color: SHOP.lime }}>·</span> Padel Medina
+            <img src="/logo.png" alt="Padel Medina" style={{ height: 34, width: 'auto', filter: 'drop-shadow(0 0 6px rgba(74,222,128,0.3))' }} />
+            <span className="shop-brand" style={{ fontFamily: SHOP.display, color: SHOP.white, fontSize: '0.98rem', textTransform: 'uppercase', letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>
+              Tienda<span className="shop-brand-full"> <span style={{ color: SHOP.lime }}>·</span> Padel Medina</span>
             </span>
           </Link>
 
@@ -52,7 +56,7 @@ export default function ShopLayout() {
             {count > 0 && (
               <span style={{
                 position: 'absolute', top: -6, right: -6, minWidth: 19, height: 19, padding: '0 5px',
-                borderRadius: 10, background: SHOP.lime, color: '#0D0D0D', fontSize: '0.64rem', fontWeight: 900,
+                borderRadius: 10, background: SHOP.accent, color: 'white', fontSize: '0.64rem', fontWeight: 900,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px solid ${SHOP.bg}`,
               }}>{count > 99 ? '99+' : count}</span>
             )}
@@ -66,7 +70,7 @@ export default function ShopLayout() {
             {categories.map(c => (
               <Link key={c.id} to={`/tienda?cat=${c.id}`} className="shop-catlink">{c.nombre}</Link>
             ))}
-            <Link to="/tienda?cat=ofertas" className="shop-catlink" style={{ color: SHOP.lime, borderColor: 'rgba(200,240,49,0.4)' }}>% Ofertas</Link>
+            <Link to="/tienda?cat=ofertas" className="shop-catlink" style={{ color: SHOP.lime, borderColor: 'rgba(74,222,128,0.45)' }}>% Ofertas</Link>
           </nav>
         )}
       </header>

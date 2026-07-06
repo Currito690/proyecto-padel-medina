@@ -1,30 +1,34 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN SYSTEM · Tienda Padel Medina (estética "dark premium indoor")
 // ─────────────────────────────────────────────────────────────────────────────
-// Paleta
-//   bg      #0D0D0D  negro carbón   → fondo principal
-//   card    #1E1E1E  gris grafito   → tarjetas y secciones
-//   lime    #C8F031  verde pista    → acento: CTAs, precios, badges
-//   white   #FFFFFF  textos principales · muted #A3A3A3 secundarios
+// Paleta — alineada con la identidad del RESTO de la web (hero navy de la app
+// #1B3A6E→#0F2550 y verde corporativo #16A34A):
+//   bg      #0A1830  azul marino profundo → fondo principal
+//   card    #13294E  navy tarjeta          → tarjetas y secciones
+//   accent  #16A34A  verde corporativo     → CTAs (fondo, texto blanco)
+//   lime    #4ADE80  verde claro           → precios, bordes activos, detalles
+//   white   #FFFFFF  textos principales · muted #9FB0CC secundarios
 // Tipografía
 //   display 'Archivo Black' (titulares en mayúsculas, sensación de estadio)
 //   body    'Inter' (la del resto de la web)
 // Estilo: bordes redondeados generosos (1rem+), mucho aire, hovers con borde
-// lima y elevación sutil. Los badges siempre en mayúsculas.
+// verde y elevación sutil. Los badges siempre en mayúsculas.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SHOP = {
-  bg: '#0D0D0D',
-  card: '#1E1E1E',
-  cardSoft: '#161616',
-  line: '#2B2B2B',
-  lime: '#C8F031',
-  limeSoft: 'rgba(200, 240, 49, 0.12)',
+  bg: '#0A1830',
+  card: '#13294E',
+  cardSoft: '#0E2143',
+  line: '#27436F',
+  accent: '#16A34A',
+  lime: '#4ADE80',
+  limeSoft: 'rgba(74, 222, 128, 0.14)',
   white: '#FFFFFF',
-  text: '#F5F5F5',
-  muted: '#A3A3A3',
+  text: '#F1F5F9',
+  muted: '#9FB0CC',
   danger: '#F87171',
   amber: '#FBBF24',
+  imgBg: '#0D2044',
   display: "'Archivo Black', 'Inter', system-ui, sans-serif",
   body: "'Inter', system-ui, sans-serif",
 };
@@ -40,15 +44,15 @@ export const displayFont = (size = '2rem') => ({
   margin: 0,
 });
 
-// Botón principal (verde lima, grande y claro)
+// Botón principal (verde corporativo, grande y claro — como los CTAs del resto de la web)
 export const ctaBtn = (extra = {}) => ({
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
   gap: '0.5rem',
   padding: '0.95rem 1.8rem',
-  background: SHOP.lime,
-  color: '#0D0D0D',
+  background: SHOP.accent,
+  color: 'white',
   border: 'none',
   borderRadius: '0.9rem',
   fontFamily: SHOP.body,
@@ -59,7 +63,7 @@ export const ctaBtn = (extra = {}) => ({
   cursor: 'pointer',
   textDecoration: 'none',
   transition: 'transform .15s, box-shadow .15s, background .15s',
-  boxShadow: '0 8px 24px rgba(200,240,49,0.25)',
+  boxShadow: '0 8px 24px rgba(22,163,74,0.35)',
   ...extra,
 });
 
@@ -92,7 +96,7 @@ export const darkCard = (extra = {}) => ({
 });
 
 // Badge de producto ("NOVEDAD", "-20%", "TOP VENTAS", "ÚLTIMAS UNIDADES"…)
-export const badge = (bg = SHOP.lime, color = '#0D0D0D') => ({
+export const badge = (bg = SHOP.accent, color = 'white') => ({
   display: 'inline-block',
   background: bg,
   color,
@@ -131,14 +135,14 @@ export const productBadges = (product, stockTotal) => {
   }
   if (product.precio_oferta_centimos != null && product.precio_centimos > 0) {
     const pct = Math.round((1 - product.precio_oferta_centimos / product.precio_centimos) * 100);
-    if (pct > 0) out.push({ label: `-${pct}%`, bg: SHOP.lime, color: '#0D0D0D' });
+    if (pct > 0) out.push({ label: `-${pct}%`, bg: SHOP.accent, color: 'white' });
   }
-  if (product.destacado) out.push({ label: 'Top ventas', bg: '#FFFFFF', color: '#0D0D0D' });
+  if (product.destacado) out.push({ label: 'Top ventas', bg: '#FFFFFF', color: '#1B3A6E' });
   if (product.created_at && (Date.now() - new Date(product.created_at).getTime()) < 30 * 86400000) {
     out.push({ label: 'Novedad', bg: '#0EA5E9', color: 'white' });
   }
   if (stockTotal > 0 && stockTotal <= 3) {
-    out.push({ label: 'Últimas unidades', bg: '#F59E0B', color: '#0D0D0D' });
+    out.push({ label: 'Últimas unidades', bg: '#F59E0B', color: '#0A1830' });
   }
   return out.slice(0, 2); // máximo 2 para no tapar la foto
 };

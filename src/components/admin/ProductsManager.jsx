@@ -41,6 +41,8 @@ const imgUrl = (path) => {
   return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 };
 
+const totalStockOf = (p) => (p.product_variants || []).reduce((s, v) => s + (v.stock || 0), 0);
+
 // Redimensiona a maxW y convierte a WebP en el navegador (sin plan Pro).
 async function optimizeImage(file, maxW = 1280, quality = 0.82) {
   const dataUrl = await new Promise((res, rej) => {
@@ -87,7 +89,8 @@ export default function ProductsManager() {
   // filtros
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all'); // all | active | inactive
+  const [statusFilter, setStatusFilter] = useState('all'); // all | active | inactive | agotado | low | oferta | destacado
+  const [sortBy, setSortBy] = useState('orden'); // orden | nombre | precio-asc | precio-desc | stock
 
   // form
   const [showForm, setShowForm] = useState(false);
@@ -335,6 +338,12 @@ export default function ProductsManager() {
     setProducts(prev => prev.map(x => (x.id === p.id ? { ...x, activo: !p.activo } : x)));
   };
 
+  const toggleDestacado = async (p) => {
+    const { error } = await supabase.from('products').update({ destacado: !p.destacado }).eq('id', p.id);
+    if (error) { toast('No se pudo actualizar', 'error'); return; }
+    setProducts(prev => prev.map(x => (x.id === p.id ? { ...x, destacado: !p.destacado } : x)));
+  };
+
   const deleteProduct = async (p) => {
     const ok = await confirmDialog(
       `¿Eliminar "${p.nombre}"? Se borrarán sus variantes e imágenes. Esta acción no se puede deshacer.\n\nConsejo: si solo quieres ocultarlo, usa "Desactivar".`,
@@ -350,19 +359,44 @@ export default function ProductsManager() {
     toast('Producto eliminado', 'success');
   };
 
-  // ── filtrado ──
+  // ── KPIs del catálogo (clicables: filtran la lista) ──
+  const stats = useMemo(() => {
+    let activos = 0, agotados = 0, low = 0, oferta = 0, destacados = 0;
+    for (const p of products) {
+      const st = totalStockOf(p);
+      if (p.activo) activos++;
+      if (st <= 0) agotados++;
+      else if (st <= LOW_STOCK) low++;
+      if (p.precio_oferta_centimos != null) oferta++;
+      if (p.destacado) destacados++;
+    }
+    return { total: products.length, activos, agotados, low, oferta, destacados };
+  }, [products]);
+
+  // ── filtrado + ordenación ──
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return products.filter(p => {
+    const priceOf = (p) => p.precio_oferta_centimos ?? p.precio_centimos ?? 0;
+    let list = products.filter(p => {
+      const st = totalStockOf(p);
       if (catFilter !== 'all' && p.categoria_id !== catFilter) return false;
       if (statusFilter === 'active' && !p.activo) return false;
       if (statusFilter === 'inactive' && p.activo) return false;
+      if (statusFilter === 'agotado' && st > 0) return false;
+      if (statusFilter === 'low' && (st <= 0 || st > LOW_STOCK)) return false;
+      if (statusFilter === 'oferta' && p.precio_oferta_centimos == null) return false;
+      if (statusFilter === 'destacado' && !p.destacado) return false;
       if (q && !(`${p.nombre} ${p.descripcion || ''}`.toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [products, search, catFilter, statusFilter]);
+    if (sortBy === 'nombre') list = [...list].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+    if (sortBy === 'precio-asc') list = [...list].sort((a, b) => priceOf(a) - priceOf(b));
+    if (sortBy === 'precio-desc') list = [...list].sort((a, b) => priceOf(b) - priceOf(a));
+    if (sortBy === 'stock') list = [...list].sort((a, b) => totalStockOf(a) - totalStockOf(b));
+    return list;
+  }, [products, search, catFilter, statusFilter, sortBy]);
 
-  const totalStock = (p) => (p.product_variants || []).reduce((s, v) => s + (v.stock || 0), 0);
+  const totalStock = totalStockOf;
   const principalImg = (p) => {
     const imgs = p.product_images || [];
     const pr = imgs.find(i => i.es_principal) || imgs[0];
@@ -383,6 +417,26 @@ export default function ProductsManager() {
         </div>
       </div>
 
+      {/* KPIs del catálogo (clic = filtrar) */}
+      {!loading && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.6rem', marginBottom: '1.25rem' }}>
+          {[
+            { label: 'Productos', value: stats.total, color: '#0F172A', f: 'all' },
+            { label: 'Activos', value: stats.activos, color: '#16A34A', f: 'active' },
+            { label: 'Agotados', value: stats.agotados, color: stats.agotados > 0 ? '#DC2626' : '#94A3B8', f: 'agotado' },
+            { label: 'Stock bajo', value: stats.low, color: stats.low > 0 ? '#D97706' : '#94A3B8', f: 'low' },
+            { label: 'En oferta', value: stats.oferta, color: '#7C3AED', f: 'oferta' },
+            { label: 'Destacados', value: stats.destacados, color: '#B45309', f: 'destacado' },
+          ].map(k => (
+            <button key={k.f} onClick={() => setStatusFilter(prev => prev === k.f ? 'all' : k.f)}
+              style={{ background: 'white', border: `1.5px solid ${statusFilter === k.f ? '#16A34A' : '#E2E8F0'}`, borderRadius: '0.875rem', padding: '0.7rem 0.6rem', cursor: 'pointer', textAlign: 'center' }}>
+              <div style={{ fontSize: '1.3rem', fontWeight: 900, color: k.color, lineHeight: 1.1 }}>{k.value}</div>
+              <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '0.15rem' }}>{k.label}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Filtros */}
       <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
         <input placeholder="Buscar producto…" value={search} onChange={e => setSearch(e.target.value)}
@@ -395,6 +449,17 @@ export default function ProductsManager() {
           <option value="all">Todos</option>
           <option value="active">Activos</option>
           <option value="inactive">Inactivos</option>
+          <option value="agotado">Agotados</option>
+          <option value="low">Stock bajo</option>
+          <option value="oferta">En oferta</option>
+          <option value="destacado">Destacados</option>
+        </select>
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: 'auto', cursor: 'pointer' }}>
+          <option value="orden">Orden del catálogo</option>
+          <option value="nombre">Nombre A-Z</option>
+          <option value="precio-asc">Precio ↑</option>
+          <option value="precio-desc">Precio ↓</option>
+          <option value="stock">Menos stock primero</option>
         </select>
       </div>
 
@@ -440,6 +505,10 @@ export default function ProductsManager() {
                   </div>
                   <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.7rem', flexWrap: 'wrap' }}>
                     <button onClick={() => openEdit(p)} style={pillBtn('#E2E8F0', 'white', '#475569')}>✎ Editar</button>
+                    <button onClick={() => toggleDestacado(p)} title={p.destacado ? 'Quitar de destacados' : 'Marcar como destacado'}
+                      style={pillBtn(p.destacado ? '#FDE68A' : '#E2E8F0', p.destacado ? '#FEF3C7' : 'white', p.destacado ? '#B45309' : '#94A3B8')}>
+                      {p.destacado ? '★ Destacado' : '☆ Destacar'}
+                    </button>
                     <button onClick={() => toggleActive(p)} style={pillBtn(p.activo ? '#FED7AA' : '#BBF7D0', p.activo ? '#FFF7ED' : '#F0FDF4', p.activo ? '#9A3412' : '#15803D')}>
                       {p.activo ? 'Desactivar' : 'Activar'}
                     </button>
