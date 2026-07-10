@@ -704,10 +704,18 @@ const AdminDashboard = () => {
       await loadSlots(selectedDate);
       if (activeTab === 'bookings') {
         const today = serverToday();
+        // profiles NO se puede incrustar desde bookings (no hay FK): se cargan aparte.
         const { data } = await supabase.from('bookings')
-          .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)')
+          .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)')
           .eq('status', 'confirmed').gte('date', today).order('date').order('time_slot');
-        setAllDbBookings(data || []);
+        const rows = data || [];
+        const uids = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
+        let pmap = {};
+        if (uids.length) {
+          const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', uids);
+          (profs || []).forEach(p => { pmap[p.id] = p; });
+        }
+        setAllDbBookings(rows.map(b => ({ ...b, profiles: pmap[b.user_id] || null })));
       }
     }
     setIsProcessing(false);

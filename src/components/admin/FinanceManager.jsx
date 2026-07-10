@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../services/supabase';
+import { toast, confirmDialog } from '../../utils/notify';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -16,8 +17,8 @@ const PERIODS = [
   { key: 'custom', label: 'Personalizado' },
 ];
 
-const KPI = ({ label, value, sub, color = '#0F172A', bg = 'white', border = '#E2E8F0' }) => (
-  <div style={{ backgroundColor: bg, padding: '1.25rem 1.5rem', borderRadius: '1rem', border: `1px solid ${border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+const KPI = ({ label, value, sub, color = '#0F172A', bg = 'white', border = '#E2E8F0', onClick, active }) => (
+  <div onClick={onClick} style={{ backgroundColor: bg, padding: '1.25rem 1.5rem', borderRadius: '1rem', border: `1.5px solid ${active ? '#16A34A' : border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', gap: '0.25rem', cursor: onClick ? 'pointer' : 'default' }}>
     <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</p>
     <p style={{ margin: 0, fontSize: '2rem', fontWeight: 900, color, letterSpacing: '-0.03em', lineHeight: 1.1 }}>{value}</p>
     {sub && <p style={{ margin: 0, fontSize: '0.75rem', color: '#94A3B8', fontWeight: 500 }}>{sub}</p>}
@@ -137,20 +138,32 @@ export default function FinanceManager() {
     if (!fromDate || !toDate) return;
     setLoading(true);
     setPage(0);
-    Promise.all([
-      supabase.from('bookings')
-        .select('id, date, time_slot, status, is_free, metodo_pago, court_id, courts(name, sport, price), profiles(name, email)')
-        .eq('status', 'confirmed')
-        .gte('date', fromDate)
-        .lte('date', toDate)
-        .order('date', { ascending: false })
-        .order('time_slot', { ascending: false }),
-      supabase.from('site_settings').select('court_price').single(),
-    ]).then(([{ data: bData }, { data: sData }]) => {
-      setBookings(bData || []);
+    (async () => {
+      const [{ data: bData, error: bErr }, { data: sData }] = await Promise.all([
+        // OJO: profiles NO se puede "incrustar" desde bookings (no hay FK
+        // bookings→profiles); si se intenta, la consulta entera falla y el
+        // panel sale vacío. Se cargan aparte y se asocian a mano.
+        supabase.from('bookings')
+          .select('*, courts(name, sport, price)')
+          .eq('status', 'confirmed')
+          .gte('date', fromDate)
+          .lte('date', toDate)
+          .order('date', { ascending: false })
+          .order('time_slot', { ascending: false }),
+        supabase.from('site_settings').select('court_price').single(),
+      ]);
+      if (bErr) console.error('Finanzas bookings:', bErr);
+      let rows = bData || [];
+      const userIds = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
+      if (userIds.length) {
+        const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
+        const map = Object.fromEntries((profs || []).map(p => [p.id, p]));
+        rows = rows.map(b => ({ ...b, profiles: map[b.user_id] || null }));
+      }
+      setBookings(rows);
       if (sData?.court_price) setCourtPrice(parseFloat(sData.court_price));
       setLoading(false);
-    });
+    })();
   }, [fromDate, toDate]);
 
   const paidBookings = useMemo(() => bookings.filter(b => !b.is_free), [bookings]);
@@ -162,6 +175,39 @@ export default function FinanceManager() {
     return Number.isFinite(p) ? p : courtPrice;
   };
   const totalRevenue = paidBookings.reduce((sum, b) => sum + bookingAmount(b), 0);
+
+  // ── Cobro real ──
+  // Tarjeta/bizum se cobran solas al pagar online. Las de CLUB o MANUAL las
+  // confirma el admin desde aquí cuando el dinero entra de verdad.
+  const esOnline = (b) => b.metodo_pago === 'tarjeta' || b.metodo_pago === 'bizum';
+  const confirmable = (b) => b.metodo_pago === 'club' || b.metodo_pago === 'manual';
+  const [soloPendientes, setSoloPendientes] = useState(false);
+  const pendientesCobro = useMemo(
+    () => bookings.filter(b => confirmable(b) && !b.cobro_confirmado),
+    [bookings]
+  );
+  const pendienteSum = pendientesCobro.filter(b => !b.is_free).reduce((s, b) => s + bookingAmount(b), 0);
+  const cobradoSum = totalRevenue - pendienteSum;
+
+  const confirmarCobro = async (b) => {
+    const patch = { cobro_confirmado: true, cobrado_at: new Date().toISOString() };
+    // Una reserva manual confirmada pasa a contar como ingreso (deja de ser "gratuita")
+    if (b.metodo_pago === 'manual' && b.is_free) patch.is_free = false;
+    const { error } = await supabase.from('bookings').update(patch).eq('id', b.id);
+    if (error) { toast('No se pudo confirmar: ' + error.message, 'error'); return; }
+    setBookings(prev => prev.map(x => (x.id === b.id ? { ...x, ...patch } : x)));
+    toast('Cobro confirmado ✓', 'success');
+  };
+
+  const deshacerCobro = async (b) => {
+    const ok = await confirmDialog('¿Volver a marcar este cobro como pendiente?', { title: 'Deshacer cobro', okText: 'Deshacer' });
+    if (!ok) return;
+    const patch = { cobro_confirmado: false, cobrado_at: null };
+    if (b.metodo_pago === 'manual') patch.is_free = true;
+    const { error } = await supabase.from('bookings').update(patch).eq('id', b.id);
+    if (error) { toast('Error: ' + error.message, 'error'); return; }
+    setBookings(prev => prev.map(x => (x.id === b.id ? { ...x, ...patch } : x)));
+  };
 
   // Previous period revenue for comparison
   const prevRevenue = useMemo(() => {
@@ -213,6 +259,7 @@ export default function FinanceManager() {
   // Sorted + filtered table
   const tableRows = useMemo(() => {
     let rows = [...bookings];
+    if (soloPendientes) rows = rows.filter(b => confirmable(b) && !b.cobro_confirmado);
     if (search.trim()) {
       const q = search.toLowerCase();
       rows = rows.filter(b =>
@@ -231,7 +278,7 @@ export default function FinanceManager() {
       return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
     });
     return rows;
-  }, [bookings, search, sortField, sortDir, courtPrice]);
+  }, [bookings, search, sortField, sortDir, courtPrice, soloPendientes]);
 
   const totalPages = Math.ceil(tableRows.length / PAGE_SIZE);
   const pageRows = tableRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -242,14 +289,15 @@ export default function FinanceManager() {
   };
 
   const exportCSV = () => {
-    const header = 'Fecha,Hora,Pista,Jugador,Email,Tipo,Metodo,Importe';
+    const header = 'Fecha,Hora,Pista,Jugador,Email,Tipo,Metodo,Cobro,Importe';
     const rows = tableRows.map(b => [
       b.date, b.time_slot,
       b.courts?.name || '',
-      b.profiles?.name || '',
+      b.observaciones || b.profiles?.name || '',
       b.profiles?.email || '',
       b.is_free ? 'Gratuita' : 'De pago',
       b.metodo_pago || (b.is_free ? 'manual' : ''),
+      esOnline(b) ? 'online' : confirmable(b) ? (b.cobro_confirmado ? 'cobrada' : 'pendiente') : '',
       bookingAmount(b).toFixed(2),
     ].join(','));
     const csv = [header, ...rows].join('\n');
@@ -327,8 +375,12 @@ export default function FinanceManager() {
       ) : (
         <>
           {/* KPIs */}
-          <div className="fin-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.75rem' }}>
+          <div className="fin-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.75rem' }}>
             <KPI label="Ingresos del período" value={`${totalRevenue.toFixed(2)} €`} sub={`${paidBookings.length} reservas de pago`} color="#16A34A" bg="#F0FDF4" border="#BBF7D0" />
+            <KPI label="💶 Cobrado" value={`${cobradoSum.toFixed(2)} €`} sub="online + confirmado en club" color="#15803D" />
+            <KPI label="🕐 Pendiente de cobro" value={`${pendienteSum.toFixed(2)} €`} sub={`${pendientesCobro.length} reservas club/manual · clic para ver`}
+              color={pendientesCobro.length > 0 ? '#D97706' : '#94A3B8'} bg={soloPendientes ? '#FFFBEB' : 'white'} active={soloPendientes}
+              onClick={() => setSoloPendientes(v => !v)} />
             <KPI label="Reservas totales" value={bookings.length} sub={`${paidBookings.length} de pago · ${freeBookings.length} gratuitas`} color="#0F172A" />
             <KPI label="Ingresos por día" value={daysInRange > 0 ? `${(totalRevenue / daysInRange).toFixed(2)} €` : '—'} sub="media del período" color="#0EA5E9" />
             <KPI label="Precio por pista" value={`${courtPrice.toFixed(2)} €`} sub="tarifa actual" color="#7C3AED" />
@@ -416,6 +468,7 @@ export default function FinanceManager() {
                       { field: 'player', label: 'Jugador' },
                       { field: 'is_free', label: 'Tipo' },
                       { field: 'metodo_pago', label: 'Método' },
+                      { field: 'cobro_confirmado', label: 'Cobro' },
                       { field: 'amount', label: 'Importe' },
                     ].map(({ field, label }) => (
                       <th key={field} style={thStyle(field)} onClick={() => toggleSort(field)}>
@@ -427,7 +480,7 @@ export default function FinanceManager() {
                 <tbody>
                   {pageRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8', fontWeight: 600 }}>
+                      <td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8', fontWeight: 600 }}>
                         Sin reservas en este período
                       </td>
                     </tr>
@@ -439,7 +492,7 @@ export default function FinanceManager() {
                       <td style={{ padding: '0.6rem 0.875rem', color: '#475569', whiteSpace: 'nowrap' }}>{b.time_slot}</td>
                       <td style={{ padding: '0.6rem 0.875rem', color: '#475569' }}>{b.courts?.name || '—'}</td>
                       <td style={{ padding: '0.6rem 0.875rem', color: '#0F172A', fontWeight: 600 }}>
-                        <div>{b.profiles?.name || '—'}</div>
+                        <div>{b.observaciones || b.profiles?.name || '—'}</div>
                         {b.profiles?.email && <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 400 }}>{b.profiles.email}</div>}
                       </td>
                       <td style={{ padding: '0.6rem 0.875rem' }}>
@@ -453,6 +506,25 @@ export default function FinanceManager() {
                       </td>
                       <td style={{ padding: '0.6rem 0.875rem', color: '#475569', fontWeight: 600, whiteSpace: 'nowrap' }}>
                         {metodoLabel(b)}
+                      </td>
+                      <td style={{ padding: '0.6rem 0.875rem', whiteSpace: 'nowrap' }}>
+                        {esOnline(b) ? (
+                          <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#15803D' }}>✓ Online</span>
+                        ) : confirmable(b) ? (
+                          b.cobro_confirmado ? (
+                            <button onClick={() => deshacerCobro(b)} title="Clic para deshacer"
+                              style={{ padding: '0.3rem 0.7rem', borderRadius: '999px', border: '1.5px solid #BBF7D0', background: '#F0FDF4', color: '#15803D', fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer' }}>
+                              ✓ Cobrada
+                            </button>
+                          ) : (
+                            <button onClick={() => confirmarCobro(b)}
+                              style={{ padding: '0.3rem 0.7rem', borderRadius: '999px', border: '1.5px solid #FDE68A', background: '#FFFBEB', color: '#B45309', fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer' }}>
+                              💶 Confirmar cobro
+                            </button>
+                          )
+                        ) : (
+                          <span style={{ fontSize: '0.72rem', color: '#CBD5E1' }}>—</span>
+                        )}
                       </td>
                       <td style={{ padding: '0.6rem 0.875rem', fontWeight: 800, color: b.is_free ? '#94A3B8' : '#16A34A', whiteSpace: 'nowrap' }}>
                         {b.is_free ? '—' : `${bookingAmount(b).toFixed(2)} €`}
