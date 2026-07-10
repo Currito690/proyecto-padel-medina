@@ -4,6 +4,11 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
 
+// Fecha YYYY-MM-DD en hora LOCAL (toISOString es UTC: de 00:00 a 02:00 en
+// España devolvería el día anterior).
+const localYMD = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 // Sección de pago compartido dentro de una reserva: estado X/4 + enlaces de
 // WhatsApp para que el creador mande su parte a cada jugador.
 function SplitInfo({ booking, tokens }) {
@@ -230,7 +235,7 @@ const MyBookings = () => {
     setBookings(prev => prev.filter(b => b.id !== booking.id));
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = localYMD(new Date());
   const upcoming = bookings.filter(b => b.date >= today);
   const past = bookings.filter(b => b.date < today);
   // La reserva optimista va la primera, salvo que la fila real ya haya llegado.
@@ -240,8 +245,8 @@ const MyBookings = () => {
 
   const formatDate = (dateStr) => {
     const d = new Date(dateStr + 'T12:00:00');
-    const todayStr = new Date().toISOString().split('T')[0];
-    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    const todayStr = localYMD(new Date());
+    const tomorrowStr = localYMD(new Date(Date.now() + 86400000));
     if (dateStr === todayStr) return 'Hoy';
     if (dateStr === tomorrowStr) return 'Mañana';
     return d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });

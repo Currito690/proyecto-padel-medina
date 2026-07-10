@@ -8,6 +8,7 @@ import ProductsManager from '../components/admin/ProductsManager';
 import OrdersManager from '../components/admin/OrdersManager';
 import DateSelector from '../components/booking/DateSelector';
 import { toast, confirmDialog } from '../utils/notify';
+import { serverToday } from '../utils/serverTime';
 
 const TIMES = ['09:00 - 10:30', '10:30 - 12:00', '12:00 - 13:30', '16:00 - 17:30', '17:30 - 19:00', '19:00 - 20:30', '20:30 - 22:00'];
 
@@ -26,12 +27,10 @@ const slotColors = {
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
-// Color de una reserva según su método de pago: tarjeta/bizum = azul, club = ámbar,
-// el resto (manual, gratis, reservas antiguas sin método) = rojo genérico.
+// Color de una reserva según su método de pago: tarjeta/bizum = AZUL;
+// todo lo demás (pago en club, manual del admin, gratis, antiguas) = ROJO.
 const metodoColor = (metodo) =>
-  metodo === 'tarjeta' || metodo === 'bizum' ? slotColors.online
-    : metodo === 'club' ? slotColors.club
-      : slotColors.booked;
+  metodo === 'tarjeta' || metodo === 'bizum' ? slotColors.online : slotColors.booked;
 
 // Etiqueta del método de pago de una reserva (con fallback para reservas antiguas).
 const METODO_PAGO_LABELS = {
@@ -360,7 +359,7 @@ const AdminDashboard = () => {
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS, cancellation_enabled: true, cancellation_hours: 24 });
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(serverToday());
   const [courts, setCourts] = useState([]);
   const [slots, setSlots] = useState({});
   const [activeSlot, setActiveSlot] = useState(null);
@@ -373,7 +372,23 @@ const AdminDashboard = () => {
   const [bookObs, setBookObs] = useState(''); // nombre/observaciones para reserva manual (no registrados)
   const [allDbBookings, setAllDbBookings] = useState([]);
   const [loadingAllBookings, setLoadingAllBookings] = useState(false);
-  const [bookingsDate, setBookingsDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bookingsDate, setBookingsDate] = useState(serverToday());
+
+  // Cambio de día a MEDIANOCHE: si el admin estaba mirando "hoy" y la fecha
+  // cambia (deja la web abierta o entra a las 00:0x), saltar al día nuevo solo.
+  useEffect(() => {
+    let prevToday = serverToday();
+    const id = setInterval(() => {
+      const t = serverToday();
+      if (t !== prevToday) {
+        const old = prevToday;
+        prevToday = t;
+        setSelectedDate(d => (d === old ? t : d));
+        setBookingsDate(d => (d === old ? t : d));
+      }
+    }, 30 * 1000);
+    return () => clearInterval(id);
+  }, []);
   const [moveBooking, setMoveBooking] = useState(null); // { id, courtId, courtName, date, time, client }
   const [moveTargetDate, setMoveTargetDate] = useState('');
   const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
@@ -688,7 +703,7 @@ const AdminDashboard = () => {
       setMoveBooking(null);
       await loadSlots(selectedDate);
       if (activeTab === 'bookings') {
-        const today = new Date().toISOString().split('T')[0];
+        const today = serverToday();
         const { data } = await supabase.from('bookings')
           .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient), profiles(name, email)')
           .eq('status', 'confirmed').gte('date', today).order('date').order('time_slot');
@@ -991,8 +1006,7 @@ const AdminDashboard = () => {
                     {[
                       { label: 'Libre', s: slotColors.available },
                       { label: '💳 Tarjeta/Bizum', s: slotColors.online },
-                      { label: '🏪 Club', s: slotColors.club },
-                      { label: 'Otras reservas', s: slotColors.booked },
+                      { label: '🏪 Club / ✍️ Manual', s: slotColors.booked },
                       { label: '🔒 Bloqueada', s: slotColors.blocked },
                       { label: '🏋️ Entreno', s: slotColors.entreno },
                     ].map(({ label, s }) => (
@@ -1156,7 +1170,7 @@ const AdminDashboard = () => {
 
               {/* ── TAB: RESERVAS ── */}
               {activeTab === 'bookings' && (() => {
-                const today = new Date().toISOString().split('T')[0];
+                const today = serverToday();
                 const maxDate = new Date(); maxDate.setDate(maxDate.getDate() + 60);
                 const maxDateStr = maxDate.getFullYear() + '-' + String(maxDate.getMonth()+1).padStart(2,'0') + '-' + String(maxDate.getDate()).padStart(2,'0');
                 const startDate = new Date(); startDate.setDate(startDate.getDate() - 30);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import TimeSlotList from '../components/booking/TimeSlotList';
@@ -6,7 +6,7 @@ import DateSelector from '../components/booking/DateSelector';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
-import { serverNow, serverNowMs } from '../utils/serverTime';
+import { serverNow, serverNowMs, serverToday } from '../utils/serverTime';
 
 const SCHEDULE_TIMES = [
   '09:00 - 10:30',
@@ -54,7 +54,7 @@ const BookingDashboard = () => {
       setSearchParams(searchParams, { replace: true });
     }
   }, []);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(serverToday());
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00' });
   const [slotsLocked, setSlotsLocked] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
@@ -248,6 +248,29 @@ const BookingDashboard = () => {
     });
     navigate('/carrito');
   };
+
+  // Cambio de día a MEDIANOCHE: si el usuario estaba mirando "hoy" y cambia la
+  // fecha (deja la web abierta), saltar al día nuevo y recargar sus huecos.
+  const dateRef = useRef(selectedDate);
+  useEffect(() => { dateRef.current = selectedDate; }, [selectedDate]);
+  const courtRef = useRef(selectedCourt);
+  useEffect(() => { courtRef.current = selectedCourt; }, [selectedCourt]);
+  useEffect(() => {
+    let prevToday = serverToday();
+    const id = setInterval(() => {
+      const t = serverToday();
+      if (t !== prevToday) {
+        const old = prevToday;
+        prevToday = t;
+        if (dateRef.current === old) {
+          setSelectedDate(t);
+          if (courtRef.current) loadSlots(courtRef.current, t);
+        }
+      }
+    }, 30 * 1000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Cada 30s: re-lee la hora de apertura de la BD (así, si el admin la cambia,
   // se aplica sin tener que recargar la página) y re-evalúa el bloqueo con la

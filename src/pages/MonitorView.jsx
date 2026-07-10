@@ -18,11 +18,21 @@ function formatLong(ymd) {
   return `${DAYS[date.getDay()]}, ${d} de ${MONTHS[m - 1]}`;
 }
 
+// Mismos colores que el horario del admin: azul = pagada con tarjeta/bizum,
+// rojo = pago en club / manual, gris = bloqueada, morado = entreno.
 const TIPO = {
-  reserva: { label: 'Reservada', emoji: '🎾', bg: '#FEF2F2', border: '#FECACA', color: '#DC2626' },
-  bloqueo: { label: 'Bloqueada', emoji: '🔒', bg: '#FFFBEB', border: '#FDE68A', color: '#D97706' },
-  entreno: { label: 'Entreno', emoji: '🏋️', bg: '#EFF6FF', border: '#BFDBFE', color: '#2563EB' },
+  reservaOnline: { label: 'Reservada', emoji: '💳', bg: '#EFF6FF', border: '#93C5FD', color: '#2563EB' },
+  reserva: { label: 'Reservada', emoji: '🎾', bg: '#FEF2F2', border: '#FCA5A5', color: '#DC2626' },
+  bloqueo: { label: 'Bloqueada', emoji: '🔒', bg: '#F1F5F9', border: '#CBD5E1', color: '#64748B' },
+  entreno: { label: 'Entreno', emoji: '🏋️', bg: '#FAF5FF', border: '#D8B4FE', color: '#9333EA' },
 };
+
+const LEYENDA = [
+  { label: 'Tarjeta / Bizum', t: TIPO.reservaOnline },
+  { label: 'Club / Manual', t: TIPO.reserva },
+  { label: 'Bloqueada', t: TIPO.bloqueo },
+  { label: 'Entreno', t: TIPO.entreno },
+];
 
 // Cómo se pagó la reserva (mismas etiquetas que en el panel del admin)
 const METODO = {
@@ -79,6 +89,20 @@ export default function MonitorView() {
 
   useEffect(() => { load(date); }, [date, load]);
 
+  // Cambio de día a MEDIANOCHE: si lolo estaba mirando "hoy", saltar al día nuevo.
+  useEffect(() => {
+    let prevToday = toYMD(new Date());
+    const id = setInterval(() => {
+      const t = toYMD(new Date());
+      if (t !== prevToday) {
+        const old = prevToday;
+        prevToday = t;
+        setDate(d => (d === old ? t : d));
+      }
+    }, 30 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const shiftDay = (delta) => {
     const [y, m, d] = date.split('-').map(Number);
     setDate(toYMD(new Date(y, m - 1, d + delta)));
@@ -130,9 +154,9 @@ export default function MonitorView() {
 
         {/* Leyenda */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
-          {Object.values(TIPO).map((t) => (
-            <span key={t.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 700, color: t.color, background: t.bg, border: `1px solid ${t.border}`, padding: '0.28rem 0.6rem', borderRadius: 999 }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: t.color, display: 'inline-block' }} /> {t.label}
+          {LEYENDA.map(({ label, t }) => (
+            <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 700, color: t.color, background: t.bg, border: `1px solid ${t.border}`, padding: '0.28rem 0.6rem', borderRadius: 999 }}>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', background: t.color, display: 'inline-block' }} /> {label}
             </span>
           ))}
         </div>
@@ -162,7 +186,9 @@ export default function MonitorView() {
                   </div>
                 ) : (
                   c.slots.map((s, i) => {
-                    const m = TIPO[s.tipo] || TIPO.bloqueo;
+                    const m = (s.tipo === 'reserva' && (s.metodo === 'tarjeta' || s.metodo === 'bizum'))
+                      ? TIPO.reservaOnline
+                      : (TIPO[s.tipo] || TIPO.bloqueo);
                     return (
                       <div key={i} className="slot" style={{ background: m.bg, border: `1px solid ${m.border}`, borderLeft: `3px solid ${m.color}` }}>
                         <div className="slot-time">{s.time}</div>

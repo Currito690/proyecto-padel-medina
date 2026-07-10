@@ -59,6 +59,14 @@ export const serverNow = () => new Date(Date.now() + offset);
 export const serverNowMs = () => Date.now() + offset;
 export const isServerTimeSynced = () => synced;
 
+// Fecha de HOY en formato YYYY-MM-DD usando la hora LOCAL (nunca toISOString,
+// que es UTC: en España, de 00:00 a 02:00 devolvería el día ANTERIOR y la app
+// "no se enteraría" de que ya cambió el día).
+export const serverToday = () => {
+  const d = serverNow();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 // Hook React: re-renderiza periódicamente con la hora oficial.
 // refreshMs por defecto 30s — suficiente para un reloj visible al admin.
 export const useServerTime = (refreshMs = 30000) => {
