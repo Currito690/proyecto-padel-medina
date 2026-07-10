@@ -309,7 +309,7 @@ const MyBookings = () => {
               <>
                 <p className="section-label">Próximas</p>
                 {upcomingList.map(booking => (
-                  <div key={booking.id} style={{ backgroundColor: 'white', borderRadius: '1.25rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(22,163,74,.1)', border: '1px solid var(--color-border-accent)' }}>
+                  <div key={booking.id} className="hover-lift anim-fade-up" style={{ backgroundColor: 'white', borderRadius: '1.25rem', overflow: 'hidden', boxShadow: '0 4px 16px rgba(22,163,74,.1)', border: '1px solid var(--color-border-accent)' }}>
                     <div style={{ height: '4px', background: booking.courts?.gradient || 'linear-gradient(90deg,#16A34A,#059669)' }} />
                     <div style={{ padding: '1.25rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>

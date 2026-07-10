@@ -138,6 +138,7 @@ const Tournaments = () => {
             return (
               <div
                 key={t.id}
+                className="hover-lift anim-fade-up"
                 style={{
                   backgroundColor: 'white',
                   borderRadius: '1.25rem',

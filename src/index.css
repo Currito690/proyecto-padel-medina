@@ -298,6 +298,16 @@ table {
   gap: 0.75rem;
 }
 
+/* Hover de las horas LIBRES: guiño verde de "se puede reservar"
+   (!important para ganar a los estilos inline del botón) */
+@media (hover: hover) {
+  .time-slot-grid .slot-free:hover:not(:disabled) {
+    border-color: #16A34A !important;
+    box-shadow: 0 6px 18px rgba(22, 163, 74, 0.18) !important;
+    transform: translateY(-2px) !important;
+  }
+}
+
 @media (min-width: 640px) {
   .time-slot-grid {
     grid-template-columns: repeat(3, 1fr);
@@ -355,6 +365,12 @@ table {
   to { opacity: 1; transform: translateY(0); }
 }
 .anim-fade-up { animation: fadeUp 0.35s ease both; }
+
+/* Utilidad: elevación sutil al pasar el ratón (solo dispositivos con puntero) */
+.hover-lift { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+@media (hover: hover) {
+  .hover-lift:hover { transform: translateY(-3px); }
+}
 
 /* Utility: Primary Button */
 .btn-primary {

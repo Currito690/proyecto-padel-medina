@@ -10,6 +10,7 @@ const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook, price = 18 })
             <button
               key={slot.id}
               disabled={isOccupied}
+              className={isSelected ? 'slot-sel' : 'slot-free'}
               onClick={() => onSelectSlot(slot.id)}
               style={{
                 padding: '1rem 0.75rem',
