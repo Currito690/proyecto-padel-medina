@@ -35,6 +35,15 @@ const MainLayout = () => {
           object-fit: contain;
           display: block;
         }
+        /* Filo de marca bajo la cabecera (navy → verde) */
+        .top-header::after {
+          content: '';
+          position: absolute;
+          left: 0; right: 0; bottom: -1px;
+          height: 2.5px;
+          background: linear-gradient(90deg, #1B3A6E 0%, #16A34A 60%, #4ADE80 100%);
+          opacity: 0.85;
+        }
 
         .main-content {
           padding-top: calc(56px + env(safe-area-inset-top));

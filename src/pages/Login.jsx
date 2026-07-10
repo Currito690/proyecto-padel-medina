@@ -79,6 +79,7 @@ const Login = () => {
       {/* Decorative blobs */}
       <div className="login-blob login-blob-1" />
       <div className="login-blob login-blob-2" />
+      <div className="login-blob login-blob-3" />
 
       <h1 className="login-brand-title">Padel Medina</h1>
       <p className="login-brand-sub">Tu pista te espera</p>
@@ -128,6 +129,7 @@ const Login = () => {
         }
         .login-blob-1 { width: 200px; height: 200px; top: -60px; right: -60px; }
         .login-blob-2 { width: 160px; height: 160px; bottom: -50px; left: -40px; background: rgba(255,255,255,0.05); }
+        .login-blob-3 { width: 300px; height: 300px; top: 20%; left: 55%; background: radial-gradient(circle, rgba(74,222,128,0.16), transparent 68%); }
 
         .login-logo {
           width: 68px; height: 68px; border-radius: 50%;
@@ -175,9 +177,19 @@ const Login = () => {
           background: white;
           border-radius: 1.5rem;
           padding: 1.75rem;
-          box-shadow: 0 4px 24px rgba(0,0,0,0.09);
+          box-shadow: 0 12px 36px rgba(15, 30, 60, 0.12);
           border: 1px solid #E2E8F0;
           margin-top: 1.5rem;
+          position: relative;
+          overflow: hidden;
+        }
+        /* Filo de marca en lo alto de la tarjeta (navy → verde) */
+        .login-card::before {
+          content: '';
+          position: absolute;
+          top: 0; left: 0; right: 0;
+          height: 3.5px;
+          background: linear-gradient(90deg, #1B3A6E 0%, #16A34A 60%, #4ADE80 100%);
         }
 
         /* Tab toggle */

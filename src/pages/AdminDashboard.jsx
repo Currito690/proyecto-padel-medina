@@ -868,6 +868,30 @@ const AdminDashboard = () => {
           cursor: pointer;
           padding: 0;
         }
+        .admin-burger:hover { border-color: #16A34A; color: #16A34A; }
+
+        /* Filo de marca bajo la cabecera del panel (navy → verde) */
+        .admin-header::after {
+          content: '';
+          position: absolute;
+          left: 0; right: 0; bottom: -1px;
+          height: 2.5px;
+          background: linear-gradient(90deg, #1B3A6E 0%, #16A34A 60%, #4ADE80 100%);
+          opacity: 0.85;
+        }
+
+        /* Items del menú: hover suave + barra verde en el activo */
+        .admin-nav-item { position: relative; }
+        .admin-nav-item:hover:not(.active) { background: #F1F5F9 !important; color: #0F172A !important; }
+        .admin-nav-item.active::before {
+          content: '';
+          position: absolute;
+          left: -1rem; top: 22%; bottom: 22%;
+          width: 3.5px;
+          border-radius: 0 4px 4px 0;
+          background: linear-gradient(180deg, #16A34A, #4ADE80);
+        }
+        .admin-logout:hover { border-color: #FECACA !important; color: #DC2626 !important; background: #FEF2F2 !important; }
         .admin-body { flex: 1; padding: 1.5rem 1rem; max-width: 100%; width: 100%; padding-left: calc(1rem + env(safe-area-inset-left)); padding-right: calc(1rem + env(safe-area-inset-right)); }
 
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
@@ -922,6 +946,7 @@ const AdminDashboard = () => {
               return (
                 <button
                   key={item.key}
+                  className={`admin-nav-item${isActive ? ' active' : ''}`}
                   onClick={() => { setActiveTab(item.key); localStorage.setItem('adminActiveTab', item.key); setIsSidebarOpen(false); }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%',
@@ -941,7 +966,7 @@ const AdminDashboard = () => {
           </div>
 
           <div style={{ padding: '1.25rem', borderTop: '1px solid var(--color-border)' }}>
-            <button onClick={logout} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.875rem', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+            <button onClick={logout} className="admin-logout" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.875rem', border: '1.5px solid #E2E8F0', borderRadius: '0.75rem', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
               Cerrar Sesión
             </button>
