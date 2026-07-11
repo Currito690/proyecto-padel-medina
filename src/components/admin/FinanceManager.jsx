@@ -118,18 +118,23 @@ export default function FinanceManager() {
       const t = fmt(now);
       return { fromDate: t, toDate: t };
     }
+    // Los períodos cubren la semana/mes/año COMPLETOS (incluidos días futuros):
+    // una reserva ya pagada para mañana también es un ingreso del período.
     if (period === 'week') {
       const dow = now.getDay();
       const diff = dow === 0 ? -6 : 1 - dow;
       const mon = new Date(now);
       mon.setDate(now.getDate() + diff);
-      return { fromDate: fmt(mon), toDate: fmt(now) };
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      return { fromDate: fmt(mon), toDate: fmt(sun) };
     }
     if (period === 'month') {
-      return { fromDate: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, toDate: fmt(now) };
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { fromDate: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, toDate: fmt(last) };
     }
     if (period === 'year') {
-      return { fromDate: `${now.getFullYear()}-01-01`, toDate: fmt(now) };
+      return { fromDate: `${now.getFullYear()}-01-01`, toDate: `${now.getFullYear()}-12-31` };
     }
     return { fromDate: customFrom, toDate: customTo };
   }, [period, customFrom, customTo]);
