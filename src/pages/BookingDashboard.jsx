@@ -156,8 +156,8 @@ const BookingDashboard = () => {
     setLoadingCourts(false);
   };
 
-  const loadSlots = async (courtId, date) => {
-    setLoadingSlots(true);
+  const loadSlots = async (courtId, date, silent = false) => {
+    if (!silent) setLoadingSlots(true);
     const [{ data: bookings }, { data: blocked }] = await Promise.all([
       supabase.from('bookings').select('time_slot, status, created_at').eq('court_id', courtId).eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
@@ -300,6 +300,9 @@ const BookingDashboard = () => {
       const now = serverNow();
       const [rH, rM] = (siteSettings.slots_release_time || '00:00').split(':').map(Number);
       setSlotsLocked(now.getHours() * 60 + now.getMinutes() < rH * 60 + rM);
+      // Refrescar disponibilidad EN VIVO (sin parpadeo): si otro jugador ocupa
+      // o retiene un hueco, desaparece de la pantalla en ≤30s.
+      if (courtRef.current && dateRef.current) loadSlots(courtRef.current, dateRef.current, true);
     };
     evaluate();
     const id = setInterval(evaluate, 30 * 1000);

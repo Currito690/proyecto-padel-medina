@@ -193,7 +193,11 @@ const PaymentGateway = () => {
         metodo_pago: method === 'bizum' ? 'bizum' : 'tarjeta',
       }).select('id').single();
       if (holdErr) {
-        throw new Error(holdErr.message || 'Este hueco ya no está disponible');
+        // 23505 = candado único de la BD: otro jugador tiene ese hueco retenido/confirmado
+        const msg = holdErr.code === '23505'
+          ? 'Otro jugador está pagando ese hueco ahora mismo. Elige otra hora, por favor.'
+          : (holdErr.message || 'Este hueco ya no está disponible');
+        throw new Error(msg);
       }
       holdId = holdRow.id;
 
