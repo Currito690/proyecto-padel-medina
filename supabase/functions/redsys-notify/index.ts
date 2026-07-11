@@ -240,7 +240,15 @@ serve(async (req) => {
 
       if (error) {
         console.error('Error guardando reserva Redsys:', error);
-        await alertaCobroSinReserva(orderId, `${date} ${timeSlot}. Error BD: ${error.message}`.slice(0, 150));
+        // Alerta con TODOS los datos para poder recrear la reserva a mano.
+        const [cRes, uRes] = await Promise.all([
+          supabase.from('courts').select('name').eq('id', courtId).single(),
+          supabase.from('profiles').select('name, email').eq('id', userId).single(),
+        ]);
+        await alertaCobroSinReserva(
+          orderId,
+          `${cRes.data?.name || courtId} · ${date} ${timeSlot} · ${uRes.data?.name || ''} (${uRes.data?.email || userId}). Error BD: ${error.message}`.slice(0, 200)
+        );
         return new Response('KO', { status: 500 });
       }
 
