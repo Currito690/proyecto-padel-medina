@@ -159,10 +159,15 @@ const BookingDashboard = () => {
   const loadSlots = async (courtId, date) => {
     setLoadingSlots(true);
     const [{ data: bookings }, { data: blocked }] = await Promise.all([
-      supabase.from('bookings').select('time_slot').eq('court_id', courtId).eq('date', date).eq('status', 'confirmed'),
+      supabase.from('bookings').select('time_slot, status, created_at').eq('court_id', courtId).eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
     ]);
-    const bookedTimes = new Set(bookings?.map(b => b.time_slot) || []);
+    // Un hold 'pendiente_pago' bloquea el hueco 15 min (mientras el jugador está
+    // en el banco); si abandona el pago, caduca solo y el hueco se libera.
+    const HOLD_MS = 15 * 60 * 1000;
+    const bookedTimes = new Set((bookings || [])
+      .filter(b => b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS)
+      .map(b => b.time_slot));
     const blockedTimes = new Set(blocked?.map(b => b.time_slot) || []);
 
     const now = new Date();

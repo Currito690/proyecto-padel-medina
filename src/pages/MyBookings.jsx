@@ -135,7 +135,7 @@ const MyBookings = () => {
         }
 
         // Redsys/Bizum: esperar a que redsys-notify cree la reserva (para UI)
-        const { courtId, date, timeSlot, metodo, isSplit } = JSON.parse(raw);
+        const { bookingId, courtId, date, timeSlot, metodo, isSplit } = JSON.parse(raw);
         for (let i = 0; i < 6; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
           if (found) { clearPending(); setOptimistic(null); return; }
@@ -148,17 +148,26 @@ const MyBookings = () => {
         // Pago compartido: NO crear fallback (perdería los tokens/teléfonos del split). Solo esperar.
         if (isSplit) { clearPending(); setOptimistic(null); return; }
 
-        // Fallback: redsys-notify no creó la reserva → crearla desde el frontend
-        const { error } = await supabase.from('bookings').insert({
-          court_id: courtId,
-          user_id: user.id,
-          date,
-          time_slot: timeSlot,
-          status: 'confirmed',
-          is_free: false,
-          metodo_pago: metodo || 'tarjeta',
-        });
-        if (!error) await fetchBookingsSilent();
+        // Fallback: redsys-notify no llegó → confirmar el hold pre-creado (flujo
+        // tolerancia cero) o, si el pago venía del flujo antiguo, crear la fila.
+        if (bookingId) {
+          const { error } = await supabase.from('bookings')
+            .update({ status: 'confirmed' })
+            .eq('id', bookingId)
+            .eq('user_id', user.id);
+          if (!error) await fetchBookingsSilent();
+        } else {
+          const { error } = await supabase.from('bookings').insert({
+            court_id: courtId,
+            user_id: user.id,
+            date,
+            time_slot: timeSlot,
+            status: 'confirmed',
+            is_free: false,
+            metodo_pago: metodo || 'tarjeta',
+          });
+          if (!error) await fetchBookingsSilent();
+        }
         clearPending();
         setOptimistic(null);
       })();

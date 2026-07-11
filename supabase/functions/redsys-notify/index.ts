@@ -112,7 +112,7 @@ serve(async (req) => {
     } catch (_e) {
       console.error(`MerchantData no parseable (pedido ${orderId}):`, decoded.Ds_MerchantData);
     }
-    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones, kind, registrationId } = merchantData as Record<string, any>;
+    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones, kind, registrationId, bookingId } = merchantData as Record<string, any>;
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -225,31 +225,59 @@ serve(async (req) => {
       }
       // Redsys devuelve Ds_PayMethod='z' cuando se pagó con Bizum; si no, fue tarjeta.
       const esBizum = decoded.Ds_PayMethod === 'z';
-      const { data: bookingRow, error } = await supabase.from('bookings').insert({
-        court_id:  courtId,
-        user_id:   userId,
-        date:      date,
-        time_slot: timeSlot,
-        status:    'confirmed',
-        is_free:   false,
-        payment_type: isSharedPayment ? 'split' : 'full',
-        split_phones: isSharedPayment ? sharedPhones : [],
-        split_paid: isSharedPayment ? 1 : 4, // 1 pagado (el creador)
-        metodo_pago: esBizum ? 'bizum' : 'tarjeta',
-      }).select().single();
+      let bookingRow: Record<string, any> | null = null;
 
-      if (error) {
-        console.error('Error guardando reserva Redsys:', error);
-        // Alerta con TODOS los datos para poder recrear la reserva a mano.
-        const [cRes, uRes] = await Promise.all([
-          supabase.from('courts').select('name').eq('id', courtId).single(),
-          supabase.from('profiles').select('name, email').eq('id', userId).single(),
-        ]);
-        await alertaCobroSinReserva(
-          orderId,
-          `${cRes.data?.name || courtId} · ${date} ${timeSlot} · ${uRes.data?.name || ''} (${uRes.data?.email || userId}). Error BD: ${error.message}`.slice(0, 200)
-        );
-        return new Response('KO', { status: 500 });
+      if (bookingId) {
+        // ── Flujo TOLERANCIA CERO: la reserva ya existe como 'pendiente_pago'
+        // (creada antes de ir al banco) → solo hay que CONFIRMARLA. Nunca puede
+        // ser rechazada por reglas de apertura porque se validó al crearla.
+        const { data: existing } = await supabase
+          .from('bookings').select('*').eq('id', bookingId).single();
+        if (existing && existing.status === 'confirmed') {
+          console.log(`notify duplicado: reserva ${bookingId} ya confirmada (idempotente)`);
+          return new Response('OK', { status: 200 });
+        }
+        const { data: upd, error: updErr } = await supabase
+          .from('bookings')
+          .update({ status: 'confirmed', metodo_pago: esBizum ? 'bizum' : 'tarjeta' })
+          .eq('id', bookingId)
+          .select()
+          .single();
+        if (updErr || !upd) {
+          console.error('Error confirmando hold:', updErr);
+          await alertaCobroSinReserva(orderId, `${date} ${timeSlot}. No se pudo confirmar la reserva ${bookingId}: ${updErr?.message || 'no encontrada'}`.slice(0, 200));
+          return new Response('KO', { status: 500 });
+        }
+        bookingRow = upd;
+      } else {
+        // ── Flujo antiguo (pagos iniciados antes del despliegue): insertar.
+        const { data: inserted, error } = await supabase.from('bookings').insert({
+          court_id:  courtId,
+          user_id:   userId,
+          date:      date,
+          time_slot: timeSlot,
+          status:    'confirmed',
+          is_free:   false,
+          payment_type: isSharedPayment ? 'split' : 'full',
+          split_phones: isSharedPayment ? sharedPhones : [],
+          split_paid: isSharedPayment ? 1 : 4, // 1 pagado (el creador)
+          metodo_pago: esBizum ? 'bizum' : 'tarjeta',
+        }).select().single();
+
+        if (error) {
+          console.error('Error guardando reserva Redsys:', error);
+          // Alerta con TODOS los datos para poder recrear la reserva a mano.
+          const [cRes, uRes] = await Promise.all([
+            supabase.from('courts').select('name').eq('id', courtId).single(),
+            supabase.from('profiles').select('name, email').eq('id', userId).single(),
+          ]);
+          await alertaCobroSinReserva(
+            orderId,
+            `${cRes.data?.name || courtId} · ${date} ${timeSlot} · ${uRes.data?.name || ''} (${uRes.data?.email || userId}). Error BD: ${error.message}`.slice(0, 200)
+          );
+          return new Response('KO', { status: 500 });
+        }
+        bookingRow = inserted;
       }
 
       // Obtener nombre de pista y usuario (necesario para SMS y push)
@@ -364,7 +392,16 @@ serve(async (req) => {
 
       console.log(`Redsys OK: reserva creada para ${userName} - ${courtName} ${date} ${timeSlot}`);
     } else {
-      console.log(`Redsys: pago rechazado con código ${responseCode} para pedido ${orderId}`);
+      // Pago rechazado/cancelado: liberar el hueco retenido (si había hold)
+      if (bookingId) {
+        await supabase.from('bookings')
+          .update({ status: 'cancelled' })
+          .eq('id', bookingId)
+          .eq('status', 'pendiente_pago');
+        console.log(`Redsys: pago rechazado (${responseCode}) → hold ${bookingId} liberado`);
+      } else {
+        console.log(`Redsys: pago rechazado con código ${responseCode} para pedido ${orderId}`);
+      }
     }
 
     return new Response('OK', { status: 200 });

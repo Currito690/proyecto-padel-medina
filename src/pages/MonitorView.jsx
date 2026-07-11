@@ -53,7 +53,7 @@ export default function MonitorView() {
     setLoading(true);
     try {
       const [bk, bl, ct] = await Promise.all([
-        supabase.from('bookings').select('court_id, time_slot, observaciones, status, user_id, metodo_pago').eq('date', d),
+        supabase.from('bookings').select('court_id, time_slot, observaciones, status, user_id, metodo_pago, created_at').eq('date', d),
         supabase.from('blocked_slots').select('court_id, time_slot, tipo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
@@ -71,7 +71,9 @@ export default function MonitorView() {
       const ensure = (cid) => byCourt[cid] || (byCourt[cid] = { id: cid, name: 'Pista', slots: [] });
       (bk.data || []).forEach((b) => {
         if (b.status === 'cancelled') return;
-        const who = b.observaciones || nameById[b.user_id] || '';
+        // Holds 'pendiente_pago' solo cuentan 15 min (jugador pagando en el banco)
+        if (b.status === 'pendiente_pago' && (Date.now() - new Date(b.created_at).getTime()) > 15 * 60 * 1000) return;
+        const who = b.status === 'pendiente_pago' ? '⏳ Pago en curso' : (b.observaciones || nameById[b.user_id] || '');
         ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago });
       });
       (bl.data || []).forEach((s) => {

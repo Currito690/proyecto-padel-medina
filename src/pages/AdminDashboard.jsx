@@ -472,7 +472,7 @@ const AdminDashboard = () => {
 
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked] = await Promise.all([
-      supabase.from('bookings').select('*').eq('date', date).eq('status', 'confirmed'),
+      supabase.from('bookings').select('*').eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('*').eq('date', date),
     ]);
 
@@ -481,7 +481,11 @@ const AdminDashboard = () => {
       toast('Error cargando reservas de BD: ' + resBookings.error.message);
     }
 
-    let bookings = resBookings.data || [];
+    // Holds 'pendiente_pago': bloquean el hueco 15 min (jugador pagando en el banco)
+    const HOLD_MS = 15 * 60 * 1000;
+    let bookings = (resBookings.data || []).filter(b =>
+      b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS
+    );
     const blocked = resBlocked.data || [];
 
     if (bookings.length > 0) {
@@ -502,7 +506,13 @@ const AdminDashboard = () => {
     });
     bookings?.forEach(b => {
       if (newSlots[b.court_id]) {
-        newSlots[b.court_id][b.time_slot] = { status: 'booked', client: b.observaciones || b.profiles?.name || 'Cliente', bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type };
+        newSlots[b.court_id][b.time_slot] = {
+          status: 'booked',
+          client: b.status === 'pendiente_pago'
+            ? `⏳ ${b.profiles?.name || 'Pago en curso'}`
+            : (b.observaciones || b.profiles?.name || 'Cliente'),
+          bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type,
+        };
       }
     });
     blocked?.forEach(b => {

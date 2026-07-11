@@ -59,7 +59,7 @@ serve(async (req) => {
   }
 
   try {
-    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones, splitToken, kind, registrationId, tournamentName } = await req.json();
+    const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones, splitToken, kind, registrationId, tournamentName, bookingId } = await req.json();
 
     const orderId = customOrderId ?? generateOrderId();
     const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
@@ -72,6 +72,7 @@ serve(async (req) => {
       ? { kind: 'tournament', registrationId }
       : {
           kind: 'booking',
+          bookingId: bookingId || null, // reserva 'pendiente_pago' pre-creada (tolerancia cero)
           courtId,
           userId,
           date,

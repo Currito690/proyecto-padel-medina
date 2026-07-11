@@ -128,6 +128,7 @@ const PaymentGateway = () => {
     payLockRef.current = true;
     setLoading(true);
     setError(null);
+    let holdId = null; // reserva 'pendiente_pago' creada antes de ir al banco
 
     try {
       const finalAmount = item.price;
@@ -176,6 +177,26 @@ const PaymentGateway = () => {
         return;
       }
 
+      // ── TOLERANCIA CERO: la reserva se crea ANTES de ir al banco ──
+      // Se guarda como 'pendiente_pago' (bloquea el hueco 15 min). Si el hueco
+      // no se puede reservar (apertura, ya ocupado…), NO se llega a pagar nunca.
+      const { data: holdRow, error: holdErr } = await supabase.from('bookings').insert({
+        court_id: item.courtId,
+        user_id: user.id,
+        date: item.date,
+        time_slot: item.timeSlot,
+        status: 'pendiente_pago',
+        is_free: false,
+        payment_type: 'full',
+        split_phones: [],
+        split_paid: 4,
+        metodo_pago: method === 'bizum' ? 'bizum' : 'tarjeta',
+      }).select('id').single();
+      if (holdErr) {
+        throw new Error(holdErr.message || 'Este hueco ya no está disponible');
+      }
+      holdId = holdRow.id;
+
       const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
       const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok`)}`;
       const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
@@ -188,6 +209,7 @@ const PaymentGateway = () => {
           userId: user.id,
           date: item.date,
           timeSlot: item.timeSlot,
+          bookingId: holdId,
           successUrl,
           failUrl,
           notifyUrl,
@@ -233,6 +255,7 @@ const PaymentGateway = () => {
       // pestaña durante el pago y sessionStorage se pierde → sin este respaldo,
       // si el aviso de Redsys tampoco llega, el cobro queda sin reserva.
       const pendingData = JSON.stringify({
+        bookingId: holdId,
         courtId: item.courtId,
         courtName: item.courtName,
         sport: item.sport,
@@ -248,6 +271,8 @@ const PaymentGateway = () => {
       form.submit();
     } catch (err) {
       console.error('Error Redsys:', err);
+      // Liberar el hueco retenido si no llegamos al banco
+      if (holdId) supabase.from('bookings').update({ status: 'cancelled' }).eq('id', holdId).then(() => {}, () => {});
       setError(`Error: ${err.message}`);
       setLoading(false);
       payLockRef.current = false; // permitir reintento si la pasarela falló
