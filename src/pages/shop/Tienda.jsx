@@ -192,7 +192,16 @@ export default function Tienda() {
         ))}
       </section>
 
-      {/* ── Catálogo completo ── */}
+      {/* ── Catálogo aún sin productos: estado "en preparación" (no parece roto) ── */}
+      {!loading && products.length === 0 ? (
+        <section ref={gridRef} style={{ scrollMarginTop: 110, textAlign: 'center', padding: '3rem 1rem', ...darkCard({}) }}>
+          <div style={{ fontSize: '2.8rem', marginBottom: '0.75rem' }}>🛍️</div>
+          <h2 style={{ ...displayFont('1.2rem'), marginBottom: '0.6rem' }}>Estamos preparando el catálogo</h2>
+          <p style={{ color: SHOP.muted, fontSize: '0.9rem', lineHeight: 1.6, maxWidth: '42ch', margin: '0 auto' }}>
+            Muy pronto podrás comprar aquí palas, ropa y accesorios seleccionados por el club. ¡Vuelve en unos días!
+          </p>
+        </section>
+      ) : (
       <section ref={gridRef} style={{ scrollMarginTop: 110 }}>
         <h2 style={{ ...displayFont('1.15rem'), marginBottom: '0.9rem' }}>
           {cat === 'ofertas' ? <>Ofertas <span style={{ color: SHOP.lime }}>%</span></> : 'Colección'}
@@ -235,6 +244,7 @@ export default function Tienda() {
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }

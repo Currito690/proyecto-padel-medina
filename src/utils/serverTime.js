@@ -22,8 +22,10 @@ const listeners = new Set();
 export const syncServerTime = async () => {
   try {
     const t0 = Date.now();
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/`, {
-      method: 'HEAD',
+    // /auth/v1/health responde 200 (el raíz de /rest/v1/ devolvía 401 y
+    // ensuciaba la consola en cada carga; solo necesitamos la cabecera Date).
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/health`, {
+      method: 'GET',
       headers: { apikey: ANON_KEY },
     });
     const t1 = Date.now();
