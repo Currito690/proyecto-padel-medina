@@ -506,6 +506,8 @@ const Login = () => {
         </div>
         <p style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.75rem', color: '#94A3B8' }}>
           <Link to="/privacidad" style={{ color: '#94A3B8', textDecoration: 'underline' }}>Política de Privacidad</Link>
+          {' '}· Diseñada por{' '}
+          <a href="https://astoraweb.es" target="_blank" rel="noopener noreferrer" style={{ color: '#1B3A6E', fontWeight: 700, textDecoration: 'none' }}>Astora</a>
         </p>
       </div>
     </>

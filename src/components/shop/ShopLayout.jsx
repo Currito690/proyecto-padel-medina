@@ -110,7 +110,8 @@ export default function ShopLayout() {
           </div>
         </div>
         <p style={{ textAlign: 'center', color: '#525252', fontSize: '0.72rem', margin: '1.75rem 0 0' }}>
-          © {new Date().getFullYear()} Padel Medina · IVA incluido en todos los precios
+          © {new Date().getFullYear()} Padel Medina · IVA incluido en todos los precios · Diseñada por{' '}
+          <a href="https://astoraweb.es" target="_blank" rel="noopener noreferrer" style={{ color: SHOP.lime, fontWeight: 700, textDecoration: 'none' }}>Astora</a>
         </p>
       </footer>
 
