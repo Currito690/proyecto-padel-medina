@@ -240,8 +240,35 @@ const MyBookings = () => {
     }
     const ok = await confirmDialog('¿Cancelar esta reserva?', { title: 'Cancelar reserva', okText: 'Cancelar reserva', danger: true });
     if (!ok) return;
-    await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', booking.id);
+    const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', booking.id);
+    if (error) { toast('No se pudo cancelar: ' + error.message, 'error'); return; }
     setBookings(prev => prev.filter(b => b.id !== booking.id));
+
+    // Avisar al admin (push + email) de la cancelación, con el método de pago
+    // original: si estaba pagada con tarjeta/bizum puede tocar devolución.
+    const courtName = booking.courts?.name || 'Pista';
+    const METODO = { tarjeta: '💳 Tarjeta', bizum: '📱 Bizum', club: '🏪 Club', gratis: '🎁 Gratis', manual: '✍️ Manual' };
+    const metodoLabel = METODO[booking.metodo_pago] || '—';
+    const [y, m, d] = (booking.date || '').split('-');
+    const fecha = d ? `${d}/${m}/${y}` : booking.date;
+    supabase.functions.invoke('send-push', {
+      body: {
+        title: '❌ Reserva cancelada',
+        body: `${user.name} — ${courtName} · ${fecha} · ${booking.time_slot} · pagada: ${metodoLabel}`,
+        url: '/admin',
+      },
+    }).catch(() => {});
+    supabase.functions.invoke('send-booking-email', {
+      body: {
+        type: 'admin-cancel',
+        email: user.email,
+        userName: user.name,
+        courtName,
+        date: booking.date,
+        timeSlot: booking.time_slot,
+        metodoPago: metodoLabel,
+      },
+    }).catch(() => {});
   };
 
   const today = localYMD(new Date());
