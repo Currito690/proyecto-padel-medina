@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { toast, confirmDialog } from '../utils/notify';
+
+const horaDe = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
 // Vista de SOLO LECTURA para el rol 'monitor' (lolo). Muestra el día separado
 // POR PISTAS (2 columnas), con cada franja ocupada coloreada según su tipo:
@@ -91,6 +94,65 @@ export default function MonitorView() {
 
   useEffect(() => { load(date); }, [date, load]);
 
+  // ── Fichaje (control horario del trabajador) ────────────────────────────
+  // La HORA la pone el servidor (default now() en BD); aquí solo se captura
+  // la ubicación GPS del dispositivo al fichar.
+  const [fichajes, setFichajes] = useState([]); // los de HOY
+  const [fichando, setFichando] = useState(false);
+
+  const loadFichajes = useCallback(async () => {
+    if (!user?.id) return;
+    const hoy = toYMD(new Date());
+    const { data } = await supabase
+      .from('fichajes')
+      .select('id, tipo, fichado_at, lat, lng')
+      .eq('user_id', user.id)
+      .gte('fichado_at', `${hoy}T00:00:00`)
+      .order('fichado_at', { ascending: true });
+    setFichajes(data || []);
+  }, [user?.id]);
+  useEffect(() => { loadFichajes(); }, [loadFichajes]);
+
+  const ultimoFichaje = fichajes[fichajes.length - 1];
+  const trabajando = ultimoFichaje?.tipo === 'entrada';
+
+  const getPosicion = () => new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  });
+
+  const fichar = async () => {
+    if (fichando) return;
+    setFichando(true);
+    const tipo = trabajando ? 'salida' : 'entrada';
+    const pos = await getPosicion();
+    if (!pos) {
+      const ok = await confirmDialog(
+        'No se pudo obtener tu ubicación (¿permiso denegado?). ¿Fichar igualmente sin ubicación?',
+        { title: 'Sin ubicación', okText: 'Fichar igualmente' }
+      );
+      if (!ok) { setFichando(false); return; }
+    }
+    const { error } = await supabase.from('fichajes').insert({
+      user_id: user.id,
+      tipo,
+      lat: pos?.lat ?? null,
+      lng: pos?.lng ?? null,
+      precision_m: pos?.precision_m ?? null,
+    });
+    if (error) {
+      toast('No se pudo fichar: ' + error.message, 'error');
+    } else {
+      toast(tipo === 'entrada' ? '🟢 Entrada fichada. ¡Buen turno!' : '🔴 Salida fichada. ¡Hasta la próxima!', 'success');
+      await loadFichajes();
+    }
+    setFichando(false);
+  };
+
   // Cambio de día a MEDIANOCHE: si lolo estaba mirando "hoy", saltar al día nuevo.
   useEffect(() => {
     let prevToday = toYMD(new Date());
@@ -141,6 +203,34 @@ export default function MonitorView() {
         <p style={{ margin: '0 0 0.85rem', color: '#64748B', fontSize: '0.85rem' }}>
           Hola <strong style={{ color: '#0F172A' }}>{user?.name || 'monitor'}</strong>, pistas ocupadas del día por reservas, bloqueos y entrenos.
         </p>
+
+        {/* ── Fichaje / control horario ── */}
+        <div style={{ background: 'white', border: `1.5px solid ${trabajando ? '#BBF7D0' : '#E2E8F0'}`, borderRadius: '0.95rem', padding: '0.9rem 1rem', marginBottom: '1rem', boxShadow: '0 1px 3px rgba(15,23,42,0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.9rem' }}>🕐 Control horario</div>
+              <div style={{ fontSize: '0.78rem', color: trabajando ? '#15803D' : '#64748B', fontWeight: 700, marginTop: 2 }}>
+                {trabajando ? `Trabajando desde las ${horaDe(ultimoFichaje.fichado_at)}` : 'Turno sin iniciar'}
+              </div>
+            </div>
+            <button onClick={fichar} disabled={fichando} style={{
+              padding: '0.7rem 1.2rem', borderRadius: '0.7rem', border: 'none', cursor: fichando ? 'wait' : 'pointer',
+              background: trabajando ? '#DC2626' : '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.88rem',
+              fontFamily: 'inherit', opacity: fichando ? 0.7 : 1, boxShadow: trabajando ? '0 4px 14px rgba(220,38,38,0.3)' : '0 4px 14px rgba(22,163,74,0.3)',
+            }}>
+              {fichando ? 'Fichando…' : trabajando ? '🔴 Fichar salida' : '🟢 Fichar entrada'}
+            </button>
+          </div>
+          {fichajes.length > 0 && (
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.65rem' }}>
+              {fichajes.map(f => (
+                <span key={f.id} style={{ fontSize: '0.7rem', fontWeight: 800, color: f.tipo === 'entrada' ? '#15803D' : '#B91C1C', background: f.tipo === 'entrada' ? '#F0FDF4' : '#FEF2F2', border: `1px solid ${f.tipo === 'entrada' ? '#BBF7D0' : '#FECACA'}`, borderRadius: 999, padding: '0.22rem 0.6rem' }}>
+                  {f.tipo === 'entrada' ? '🟢 Entrada' : '🔴 Salida'} {horaDe(f.fichado_at)}{f.lat != null ? ' · 📍' : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Selector de día */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#fff', border: '1px solid #E8EDF3', borderRadius: '0.95rem', padding: '0.55rem 0.7rem', marginBottom: '0.8rem', boxShadow: '0 1px 3px rgba(15,23,42,0.05)' }}>
