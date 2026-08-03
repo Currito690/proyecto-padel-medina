@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
@@ -125,7 +125,11 @@ export default function MonitorView() {
     );
   });
 
-  const fichar = async () => {
+  // El fichaje NO es un simple botón: el trabajador debe FIRMAR. El botón abre
+  // el panel de firma y solo al confirmar la firma se registra (con GPS+hora).
+  const [firmando, setFirmando] = useState(false); // tipo pendiente: 'entrada'|'salida'|null
+
+  const registrarFichaje = async (firmaDataUrl) => {
     if (fichando) return;
     setFichando(true);
     const tipo = trabajando ? 'salida' : 'entrada';
@@ -140,6 +144,7 @@ export default function MonitorView() {
     const { error } = await supabase.from('fichajes').insert({
       user_id: user.id,
       tipo,
+      firma: firmaDataUrl,
       lat: pos?.lat ?? null,
       lng: pos?.lng ?? null,
       precision_m: pos?.precision_m ?? null,
@@ -149,6 +154,7 @@ export default function MonitorView() {
     } else {
       toast(tipo === 'entrada' ? '🟢 Entrada fichada. ¡Buen turno!' : '🔴 Salida fichada. ¡Hasta la próxima!', 'success');
       await loadFichajes();
+      setFirmando(false);
     }
     setFichando(false);
   };
@@ -213,12 +219,12 @@ export default function MonitorView() {
                 {trabajando ? `Trabajando desde las ${horaDe(ultimoFichaje.fichado_at)}` : 'Turno sin iniciar'}
               </div>
             </div>
-            <button onClick={fichar} disabled={fichando} style={{
+            <button onClick={() => setFirmando(true)} disabled={fichando} style={{
               padding: '0.7rem 1.2rem', borderRadius: '0.7rem', border: 'none', cursor: fichando ? 'wait' : 'pointer',
               background: trabajando ? '#DC2626' : '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.88rem',
               fontFamily: 'inherit', opacity: fichando ? 0.7 : 1, boxShadow: trabajando ? '0 4px 14px rgba(220,38,38,0.3)' : '0 4px 14px rgba(22,163,74,0.3)',
             }}>
-              {fichando ? 'Fichando…' : trabajando ? '🔴 Fichar salida' : '🟢 Fichar entrada'}
+              {trabajando ? '🔴 Firmar salida' : '🟢 Firmar entrada'}
             </button>
           </div>
           {fichajes.length > 0 && (
@@ -298,6 +304,113 @@ export default function MonitorView() {
           </div>
         )}
       </main>
+
+      {firmando && (
+        <SignaturePad
+          tipo={trabajando ? 'salida' : 'entrada'}
+          saving={fichando}
+          onCancel={() => setFirmando(false)}
+          onConfirm={registrarFichaje}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Panel de firma: el trabajador dibuja su firma con el dedo/ratón ──────────
+function SignaturePad({ tipo, saving, onCancel, onConfirm }) {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const [hasInk, setHasInk] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Ajustar resolución al tamaño real (nitidez en móvil)
+    const ratio = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * ratio;
+    canvas.height = rect.height * ratio;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(ratio, ratio);
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#0F172A';
+  }, []);
+
+  const posFromEvent = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+  };
+  const start = (e) => {
+    e.preventDefault();
+    drawing.current = true;
+    const { x, y } = posFromEvent(e);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+  const move = (e) => {
+    if (!drawing.current) return;
+    e.preventDefault();
+    const { x, y } = posFromEvent(e);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    if (!hasInk) setHasInk(true);
+  };
+  const end = () => { drawing.current = false; };
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasInk(false);
+  };
+
+  const confirm = () => {
+    if (!hasInk) { toast('Dibuja tu firma antes de continuar', 'error'); return; }
+    // Fondo blanco (el canvas es transparente) para que la firma se vea en el email/panel
+    const canvas = canvasRef.current;
+    const out = document.createElement('canvas');
+    out.width = canvas.width; out.height = canvas.height;
+    const octx = out.getContext('2d');
+    octx.fillStyle = '#FFFFFF';
+    octx.fillRect(0, 0, out.width, out.height);
+    octx.drawImage(canvas, 0, 0);
+    onConfirm(out.toDataURL('image/png'));
+  };
+
+  const esEntrada = tipo === 'entrada';
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+      <div style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: 440, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+        <h3 style={{ margin: '0 0 0.3rem', fontSize: '1.1rem', fontWeight: 800, color: esEntrada ? '#15803D' : '#B91C1C' }}>
+          {esEntrada ? '🟢 Firmar ENTRADA' : '🔴 Firmar SALIDA'}
+        </h3>
+        <p style={{ margin: '0 0 0.9rem', fontSize: '0.82rem', color: '#64748B' }}>
+          Firma en el recuadro para confirmar tu {esEntrada ? 'entrada' : 'salida'}. Se registrará con la hora y tu ubicación.
+        </p>
+        <canvas
+          ref={canvasRef}
+          onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+          onTouchStart={start} onTouchMove={move} onTouchEnd={end}
+          style={{ width: '100%', height: 190, border: '2px dashed #CBD5E1', borderRadius: '0.75rem', background: '#F8FAFC', touchAction: 'none', display: 'block', cursor: 'crosshair' }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
+          <button onClick={clear} disabled={saving} style={{ background: 'none', border: 'none', color: '#64748B', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', padding: '0.4rem' }}>↺ Borrar</button>
+          <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>Firma con el dedo o el ratón</span>
+        </div>
+        <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.9rem' }}>
+          <button onClick={onCancel} disabled={saving} style={{ flex: 1, padding: '0.8rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer' }}>Cancelar</button>
+          <button onClick={confirm} disabled={saving} style={{ flex: 2, padding: '0.8rem', borderRadius: '0.7rem', border: 'none', background: esEntrada ? '#16A34A' : '#DC2626', color: 'white', fontWeight: 800, fontSize: '0.9rem', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+            {saving ? 'Fichando…' : 'Confirmar fichaje'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

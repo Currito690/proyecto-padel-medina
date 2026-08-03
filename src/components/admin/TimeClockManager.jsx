@@ -27,6 +27,7 @@ export default function TimeClockManager() {
   const [fichajes, setFichajes] = useState([]);
   const [names, setNames] = useState({});
   const [loading, setLoading] = useState(true);
+  const [zoom, setZoom] = useState(null); // firma ampliada
 
   const shiftMonth = (delta) => {
     const d = new Date(year, month + delta, 1);
@@ -41,7 +42,7 @@ export default function TimeClockManager() {
       const hasta = new Date(year, month + 1, 1).toISOString();
       const { data } = await supabase
         .from('fichajes')
-        .select('id, user_id, tipo, fichado_at, lat, lng, precision_m')
+        .select('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma')
         .gte('fichado_at', desde)
         .lt('fichado_at', hasta)
         .order('fichado_at', { ascending: true });
@@ -164,11 +165,39 @@ export default function TimeClockManager() {
                     <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>📍 sin ubicación</span>
                   )}
                 </div>
+
+                {/* Firmas del trabajador (entrada / salida) */}
+                {(j.entrada?.firma || j.salida?.firma) && (
+                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.7rem', paddingTop: '0.7rem', borderTop: '1px dashed #E2E8F0' }}>
+                    {j.entrada?.firma && <Firma label="Firma entrada" src={j.entrada.firma} onZoom={setZoom} />}
+                    {j.salida?.firma && <Firma label="Firma salida" src={j.salida.firma} onZoom={setZoom} />}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       )}
+
+      {/* Firma ampliada */}
+      {zoom && (
+        <div onClick={() => setZoom(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
+          <div style={{ background: 'white', borderRadius: '1rem', padding: '1rem', maxWidth: 480, width: '100%' }}>
+            <img src={zoom} alt="Firma" style={{ width: '100%', display: 'block', borderRadius: '0.5rem' }} />
+            <p style={{ textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8', margin: '0.6rem 0 0' }}>Toca para cerrar</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Firma({ label, src, onZoom }) {
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{label}</div>
+      <img src={src} alt={label} onClick={() => onZoom(src)}
+        style={{ height: 54, width: 'auto', maxWidth: 160, border: '1px solid #E2E8F0', borderRadius: '0.5rem', background: 'white', cursor: 'zoom-in', objectFit: 'contain' }} />
     </div>
   );
 }
