@@ -65,6 +65,7 @@ export default function TimeClockManager() {
   const [month, setMonth] = useState(now.getMonth()); // 0-11
   const [fichajes, setFichajes] = useState([]);
   const [entrenos, setEntrenos] = useState([]); // blocked_slots tipo=entreno del mes
+  const [confirmadas, setConfirmadas] = useState([]); // clases_monitor: personas confirmadas por el monitor
   const [names, setNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(null); // firma ampliada
@@ -103,7 +104,7 @@ export default function TimeClockManager() {
       setLoading(true);
       const primerYmd = `${year}-${pad(month + 1)}-01`;
       const ultimoYmd = `${year}-${pad(month + 1)}-${pad(new Date(year, month + 1, 0).getDate())}`;
-      const [{ data: fData }, { data: eData }] = await Promise.all([
+      const [{ data: fData }, { data: eData }, { data: cData }] = await Promise.all([
         supabase
           .from('fichajes')
           .select('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma')
@@ -112,14 +113,20 @@ export default function TimeClockManager() {
           .order('fichado_at', { ascending: true }),
         supabase
           .from('blocked_slots')
-          .select('date, time_slot, tipo, entreno_grupo')
+          .select('date, time_slot, court_id, tipo, entreno_grupo')
           .eq('tipo', 'entreno')
+          .gte('date', primerYmd)
+          .lte('date', ultimoYmd),
+        supabase
+          .from('clases_monitor')
+          .select('date, time_slot, court_id, personas')
           .gte('date', primerYmd)
           .lte('date', ultimoYmd),
       ]);
       const rows = fData || [];
       setFichajes(rows);
       setEntrenos(eData || []);
+      setConfirmadas(cData || []);
       const uids = [...new Set(rows.map(f => f.user_id))];
       if (uids.length) {
         const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', uids);
@@ -154,11 +161,17 @@ export default function TimeClockManager() {
 
   const tarifa = (k) => parseEur(rates[k]) ?? 0;
 
-  // Entrenos del mes agrupados por día: intervalos por grupo + unión total
+  // Entrenos del mes agrupados por día: intervalos por grupo + unión total.
+  // El grupo REAL de cada clase: lo confirmado por el monitor (nº de personas)
+  // manda sobre lo planificado por el admin; sin datos → grupo 4.
   const entrenosPorDia = useMemo(() => {
+    const PERSONAS_GRUPO = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
+    const conf = {};
+    for (const c of confirmadas) conf[`${c.date}|${c.time_slot}|${c.court_id}`] = c.personas;
     const m = {}; // ymd -> { grupos: {key: [[a,b],...]}, all: [[a,b],...] }
     for (const e of entrenos) {
-      const g = e.entreno_grupo || 'grupo4'; // entrenos antiguos sin tipo → grupo 4
+      const personas = conf[`${e.date}|${e.time_slot}|${e.court_id}`];
+      const g = PERSONAS_GRUPO[personas] || e.entreno_grupo || 'grupo4';
       if (!m[e.date]) m[e.date] = { grupos: {}, all: [] };
       const iv = slotInterval(e.date, e.time_slot);
       if (!m[e.date].grupos[g]) m[e.date].grupos[g] = [];
@@ -170,7 +183,7 @@ export default function TimeClockManager() {
       m[d].all = mergeIntervals(m[d].all);
     }
     return m;
-  }, [entrenos]);
+  }, [entrenos, confirmadas]);
 
   // Emparejar entrada→salida en jornadas + desglose club/entreno por grupo
   const { jornadas, totalesPorUser } = useMemo(() => {

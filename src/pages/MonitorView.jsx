@@ -85,6 +85,7 @@ export default function MonitorView() {
           time: s.time_slot,
           tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo',
           note: s.tipo === 'entreno' ? (GRUPO[s.entreno_grupo] || '') : '',
+          grupo: s.entreno_grupo || null,
         });
       });
       const list = Object.values(byCourt).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
@@ -164,6 +165,45 @@ export default function MonitorView() {
     setFichando(false);
   };
 
+  // ── Confirmación de clases: cuántas personas tuvo cada entreno del día ──
+  // Lo que confirme lolo manda sobre lo planificado (se guarda en su propia
+  // tabla clases_monitor; el horario sigue siendo solo lectura para él).
+  const [clasesConf, setClasesConf] = useState({}); // "courtId|time" -> personas
+  const [confGuardando, setConfGuardando] = useState(null);
+
+  const loadClasesConf = useCallback(async (d) => {
+    if (!user?.id) return;
+    const { data } = await supabase
+      .from('clases_monitor')
+      .select('court_id, time_slot, personas')
+      .eq('user_id', user.id)
+      .eq('date', d);
+    const m = {};
+    (data || []).forEach(c => { m[`${c.court_id}|${c.time_slot}`] = c.personas; });
+    setClasesConf(m);
+  }, [user?.id]);
+  useEffect(() => { loadClasesConf(date); }, [date, loadClasesConf]);
+
+  const confirmarClase = async (courtId, timeSlot, personas) => {
+    const key = `${courtId}|${timeSlot}`;
+    setConfGuardando(key);
+    const { error } = await supabase.from('clases_monitor').upsert(
+      { user_id: user.id, date, time_slot: timeSlot, court_id: courtId, personas, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,date,time_slot,court_id' }
+    );
+    setConfGuardando(null);
+    if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+    setClasesConf(prev => ({ ...prev, [key]: personas }));
+    toast(`Clase de ${timeSlot} guardada: ${personas} ${personas === 1 ? 'persona' : 'personas'} ✓`, 'success');
+  };
+
+  // Entrenos del día visible (para la tarjeta de clases)
+  const entrenosDelDia = courts.flatMap(c =>
+    c.slots.filter(s => s.tipo === 'entreno').map(s => ({ courtId: c.id, courtName: c.name, time: s.time, grupo: s.grupo }))
+  ).sort((a, b) => a.time.localeCompare(b.time));
+
+  const GRUPO_PERSONAS = { individual: 1, grupo2: 2, grupo3: 3, grupo4: 4 };
+
   // Cambio de día a MEDIANOCHE: si lolo estaba mirando "hoy", saltar al día nuevo.
   useEffect(() => {
     let prevToday = toYMD(new Date());
@@ -242,6 +282,51 @@ export default function MonitorView() {
             </div>
           )}
         </div>
+
+        {/* ── Clases del día: lolo confirma cuántas personas tuvo cada entreno ── */}
+        {entrenosDelDia.length > 0 && (
+          <div style={{ background: 'white', border: '1.5px solid #D8B4FE', borderRadius: '0.95rem', padding: '0.9rem 1rem', marginBottom: '1rem', boxShadow: '0 1px 3px rgba(15,23,42,0.05)' }}>
+            <div style={{ fontWeight: 800, color: '#7E22CE', fontSize: '0.9rem' }}>🎾 Clases del día</div>
+            <p style={{ margin: '0.2rem 0 0.7rem', fontSize: '0.74rem', color: '#64748B' }}>
+              Al terminar, marca cuántas personas ha tenido cada clase (así se calcula bien tu hora).
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+              {entrenosDelDia.map(e => {
+                const key = `${e.courtId}|${e.time}`;
+                const confirmado = clasesConf[key];               // lo que marcó lolo
+                const planificado = GRUPO_PERSONAS[e.grupo] || null; // lo que puso el admin
+                const activo = confirmado ?? null;
+                return (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap', border: '1px solid #F1F5F9', borderRadius: '0.7rem', padding: '0.55rem 0.7rem', background: confirmado ? '#FAF5FF' : '#FFFFFF' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.82rem' }}>{e.time} · {e.courtName}</div>
+                      <div style={{ fontSize: '0.68rem', color: confirmado ? '#7E22CE' : '#94A3B8', fontWeight: 700 }}>
+                        {confirmado
+                          ? `✓ Confirmada: ${confirmado} ${confirmado === 1 ? 'persona' : 'personas'}`
+                          : planificado ? `Prevista: ${planificado} pers. — confirma al terminar` : 'Sin confirmar'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.3rem' }}>
+                      {[1, 2, 3, 4].map(n => (
+                        <button key={n} disabled={confGuardando === key}
+                          onClick={() => confirmarClase(e.courtId, e.time, n)}
+                          style={{
+                            width: 38, height: 38, borderRadius: '0.6rem', fontWeight: 900, fontSize: '0.95rem', cursor: 'pointer', fontFamily: 'inherit',
+                            border: `1.5px solid ${activo === n ? '#9333EA' : '#E2E8F0'}`,
+                            background: activo === n ? '#9333EA' : 'white',
+                            color: activo === n ? 'white' : '#475569',
+                            opacity: confGuardando === key ? 0.6 : 1,
+                          }}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Selector de día */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#fff', border: '1px solid #E8EDF3', borderRadius: '0.95rem', padding: '0.55rem 0.7rem', marginBottom: '0.8rem', boxShadow: '0 1px 3px rgba(15,23,42,0.05)' }}>
