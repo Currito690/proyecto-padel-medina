@@ -3,14 +3,16 @@ import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
 import { toast } from '../../utils/notify';
 
-// CONTROL HORARIO (admin): jornadas del personal a partir de los fichajes de
-// entrada/salida (hora del SERVIDOR + GPS + firma). Además:
-//  - Tarifas editables: €/h en club (atención) y €/h de entreno POR TIPO DE
-//    GRUPO (individual, grupo de 2, de 3 y de 4).
-//  - Las horas de ENTRENO se calculan cruzando cada jornada con los huecos
-//    marcados como 'entreno' en el horario (blocked_slots), cada uno con su
-//    tipo de grupo. El resto de la jornada se paga a tarifa de club.
-//  - Exportación del mes a PDF y a Excel (CSV).
+// CONTROL HORARIO (admin): jornadas del personal a partir de los fichajes
+// (hora del SERVIDOR + GPS + firma).
+// MODELO DE PAGO:
+//  - El trabajador cobra una HORA FIJA (tarifa_hora_club, la fija el admin):
+//    todas sus horas fichadas se pagan igual, esté en clase o atendiendo.
+//  - Los PRECIOS DE LAS CLASES van APARTE: los fija el propio monitor
+//    (tabla monitor_tarifas) y se calculan como concepto separado
+//    (horas de clase por grupo × su precio), sin tocar el sueldo.
+//  - Las horas de clase se detectan cruzando los fichajes con los entrenos
+//    del horario; el nº real de personas lo confirma el monitor cada día.
 
 const pad = (n) => String(n).padStart(2, '0');
 const hora = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
@@ -33,12 +35,12 @@ const parseEur = (str) => {
 const mapsUrl = (f) => (f && f.lat != null ? `https://www.google.com/maps?q=${f.lat},${f.lng}` : null);
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-// Tipos de entreno (columna en site_settings, etiqueta, abreviatura)
+// Tipos de clase (columna en monitor_tarifas, etiqueta, abreviatura)
 const GRUPOS = [
-  { key: 'individual', col: 'tarifa_entreno_individual', label: '🎾 Individual', abr: 'Ind' },
-  { key: 'grupo2', col: 'tarifa_entreno_grupo2', label: '👥 Grupo 2', abr: 'G2' },
-  { key: 'grupo3', col: 'tarifa_entreno_grupo3', label: '👥 Grupo 3', abr: 'G3' },
-  { key: 'grupo4', col: 'tarifa_entreno_grupo4', label: '👥 Grupo 4', abr: 'G4' },
+  { key: 'individual', col: 'tarifa_individual', label: '🎾 Individual', abr: 'Ind' },
+  { key: 'grupo2', col: 'tarifa_grupo2', label: '👥 Grupo 2', abr: 'G2' },
+  { key: 'grupo3', col: 'tarifa_grupo3', label: '👥 Grupo 3', abr: 'G3' },
+  { key: 'grupo4', col: 'tarifa_grupo4', label: '👥 Grupo 4', abr: 'G4' },
 ];
 
 // Intervalo [ini, fin] en ms de un hueco "09:00 - 10:30" de un día
@@ -65,16 +67,17 @@ export default function TimeClockManager() {
   const [month, setMonth] = useState(now.getMonth()); // 0-11
   const [fichajes, setFichajes] = useState([]);
   const [entrenos, setEntrenos] = useState([]); // blocked_slots tipo=entreno del mes
-  const [confirmadas, setConfirmadas] = useState([]); // clases_monitor: personas confirmadas por el monitor
+  const [confirmadas, setConfirmadas] = useState([]); // clases_monitor: personas confirmadas
   const [names, setNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(null); // firma ampliada
 
-  // Tarifas (site_settings): { club, individual, grupo2, grupo3, grupo4 } como texto editable
+  // Tarifa de hora FIJA (site_settings, la fija el admin). Los precios de las
+  // clases los fija cada monitor (monitor_tarifas) y aquí solo se leen.
   const [settingsId, setSettingsId] = useState(null);
-  const [rates, setRates] = useState({ club: '0', individual: '0', grupo2: '0', grupo3: '0', grupo4: '0' });
+  const [rateClub, setRateClub] = useState('0');
   const [savingRates, setSavingRates] = useState(false);
-  const setRate = (k, v) => setRates(prev => ({ ...prev, [k]: v }));
+  const [tarifasMonitor, setTarifasMonitor] = useState({}); // user_id -> {individual, grupo2, grupo3, grupo4}
 
   const shiftMonth = (delta) => {
     const d = new Date(year, month + delta, 1);
@@ -83,19 +86,24 @@ export default function TimeClockManager() {
   };
 
   useEffect(() => {
-    supabase.from('site_settings')
-      .select('id, tarifa_hora_club, tarifa_entreno_individual, tarifa_entreno_grupo2, tarifa_entreno_grupo3, tarifa_entreno_grupo4')
-      .single()
+    supabase.from('site_settings').select('id, tarifa_hora_club').single()
       .then(({ data }) => {
         if (!data) return;
         setSettingsId(data.id);
-        setRates({
-          club: String(data.tarifa_hora_club ?? 0).replace('.', ','),
-          individual: String(data.tarifa_entreno_individual ?? 0).replace('.', ','),
-          grupo2: String(data.tarifa_entreno_grupo2 ?? 0).replace('.', ','),
-          grupo3: String(data.tarifa_entreno_grupo3 ?? 0).replace('.', ','),
-          grupo4: String(data.tarifa_entreno_grupo4 ?? 0).replace('.', ','),
+        setRateClub(String(data.tarifa_hora_club ?? 0).replace('.', ','));
+      });
+    supabase.from('monitor_tarifas').select('*')
+      .then(({ data }) => {
+        const m = {};
+        (data || []).forEach(r => {
+          m[r.user_id] = {
+            individual: Number(r.tarifa_individual) || 0,
+            grupo2: Number(r.tarifa_grupo2) || 0,
+            grupo3: Number(r.tarifa_grupo3) || 0,
+            grupo4: Number(r.tarifa_grupo4) || 0,
+          };
         });
+        setTarifasMonitor(m);
       });
   }, []);
 
@@ -136,34 +144,24 @@ export default function TimeClockManager() {
     })();
   }, [year, month]);
 
-  const guardarTarifas = async () => {
-    const parsed = {};
-    for (const [k, v] of Object.entries(rates)) {
-      const n = parseEur(v);
-      if (n === null) { toast('Tarifa no válida (ej: 8,50)', 'error'); return; }
-      parsed[k] = n;
-    }
+  const guardarTarifa = async () => {
+    const club = parseEur(rateClub);
+    if (club === null) { toast('Tarifa no válida (ej: 8,50)', 'error'); return; }
     if (!settingsId) { toast('No se pudieron cargar los ajustes', 'error'); return; }
     setSavingRates(true);
     const { error } = await supabase.from('site_settings')
-      .update({
-        tarifa_hora_club: parsed.club,
-        tarifa_entreno_individual: parsed.individual,
-        tarifa_entreno_grupo2: parsed.grupo2,
-        tarifa_entreno_grupo3: parsed.grupo3,
-        tarifa_entreno_grupo4: parsed.grupo4,
-      })
+      .update({ tarifa_hora_club: club })
       .eq('id', settingsId);
     setSavingRates(false);
     if (error) toast('Error al guardar: ' + error.message, 'error');
-    else toast('Tarifas guardadas ✓', 'success');
+    else toast('Tarifa guardada ✓', 'success');
   };
 
-  const tarifa = (k) => parseEur(rates[k]) ?? 0;
+  const tarifaFija = parseEur(rateClub) ?? 0;
+  const precioClase = (uid, key) => tarifasMonitor[uid]?.[key] ?? 0;
 
   // Entrenos del mes agrupados por día: intervalos por grupo + unión total.
-  // El grupo REAL de cada clase: lo confirmado por el monitor (nº de personas)
-  // manda sobre lo planificado por el admin; sin datos → grupo 4.
+  // El grupo REAL: lo confirmado por el monitor manda; sin datos → planificado.
   const entrenosPorDia = useMemo(() => {
     const PERSONAS_GRUPO = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
     const conf = {};
@@ -185,7 +183,7 @@ export default function TimeClockManager() {
     return m;
   }, [entrenos, confirmadas]);
 
-  // Emparejar entrada→salida en jornadas + desglose club/entreno por grupo
+  // Emparejar entrada→salida en jornadas + desglose de horas clase/club
   const { jornadas, totalesPorUser } = useMemo(() => {
     const jor = [];
     const abiertos = {};
@@ -201,15 +199,13 @@ export default function TimeClockManager() {
         const fecha = ymdDe(ent.fichado_at);
         const dia = entrenosPorDia[fecha];
         const msPorGrupo = {};
-        let msEntreno = 0;
+        let msClase = 0;
         if (dia) {
-          for (const g of GRUPOS) {
-            msPorGrupo[g.key] = overlapMs(ini, fin, dia.grupos[g.key] || []);
-          }
-          msEntreno = overlapMs(ini, fin, dia.all);
+          for (const g of GRUPOS) msPorGrupo[g.key] = overlapMs(ini, fin, dia.grupos[g.key] || []);
+          msClase = overlapMs(ini, fin, dia.all);
         }
         const ms = fin - ini;
-        jor.push({ userId: f.user_id, fecha, entrada: ent, salida: f, ms, msPorGrupo, msEntreno, msClub: Math.max(0, ms - msEntreno) });
+        jor.push({ userId: f.user_id, fecha, entrada: ent, salida: f, ms, msPorGrupo, msClase, msClub: Math.max(0, ms - msClase) });
       } else {
         jor.push({ userId: f.user_id, fecha: ymdDe(f.fichado_at), entrada: null, salida: f, ms: 0 });
       }
@@ -221,43 +217,35 @@ export default function TimeClockManager() {
 
     const tot = {};
     for (const j of jor) {
-      if (!tot[j.userId]) tot[j.userId] = { ms: 0, msClub: 0, msEntreno: 0, porGrupo: { individual: 0, grupo2: 0, grupo3: 0, grupo4: 0 } };
+      if (!tot[j.userId]) tot[j.userId] = { ms: 0, msClub: 0, msClase: 0, porGrupo: { individual: 0, grupo2: 0, grupo3: 0, grupo4: 0 } };
       tot[j.userId].ms += j.ms || 0;
       tot[j.userId].msClub += j.msClub || 0;
-      tot[j.userId].msEntreno += j.msEntreno || 0;
+      tot[j.userId].msClase += j.msClase || 0;
       for (const g of GRUPOS) tot[j.userId].porGrupo[g.key] += j.msPorGrupo?.[g.key] || 0;
     }
     return { jornadas: jor, totalesPorUser: tot };
   }, [fichajes, entrenosPorDia]);
 
-  const eurosJornada = (j) => {
-    if (!j.ms) return 0;
-    let e = (j.msClub / 3600000) * tarifa('club');
-    for (const g of GRUPOS) e += ((j.msPorGrupo?.[g.key] || 0) / 3600000) * tarifa(g.key);
-    return e;
-  };
-  const eurosTotal = (t) => {
-    let e = (t.msClub / 3600000) * tarifa('club');
-    for (const g of GRUPOS) e += (t.porGrupo[g.key] / 3600000) * tarifa(g.key);
-    return e;
-  };
+  // SUELDO: hora fija × todas las horas fichadas (clase o club, da igual)
+  const sueldoJornada = (j) => (j.ms / 3600000) * tarifaFija;
+  const sueldoTotal = (t) => (t.ms / 3600000) * tarifaFija;
+  // CLASES (aparte): horas de clase por grupo × precio de clase del monitor
+  const clasesAparte = (uid, t) =>
+    GRUPOS.reduce((s, g) => s + (t.porGrupo[g.key] / 3600000) * precioClase(uid, g.key), 0);
 
   // ── Exportar Excel (CSV con ; — abre directo en Excel español) ──
   const exportCsv = () => {
     const nombreMes = `${MESES[month].toLowerCase()}-${year}`;
-    const header = 'Trabajador;Fecha;Entrada;Salida;Horas totales;Horas club;H. individual;H. grupo 2;H. grupo 3;H. grupo 4;Importe (EUR)';
+    const header = 'Trabajador;Fecha;Entrada;Salida;Horas totales;Horas club;Horas clases;Sueldo (EUR)';
     const filas = [...jornadas].reverse().filter(j => j.entrada && j.salida).map(j =>
       [names[j.userId] || 'Trabajador', j.fecha, hora(j.entrada.fichado_at), hora(j.salida.fichado_at),
-        horasDec(j.ms), horasDec(j.msClub),
-        ...GRUPOS.map(g => horasDec(j.msPorGrupo?.[g.key] || 0)),
-        eurosJornada(j).toFixed(2).replace('.', ',')].join(';'));
-    const totales = Object.entries(totalesPorUser).map(([uid, t]) =>
-      `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${GRUPOS.map(g => horasDec(t.porGrupo[g.key])).join(';')};${eurosTotal(t).toFixed(2).replace('.', ',')}`);
-    const tarifasTxt = [
-      `Tarifa club (EUR/h);${tarifa('club').toFixed(2).replace('.', ',')}`,
-      ...GRUPOS.map(g => `Tarifa entreno ${g.abr} (EUR/h);${tarifa(g.key).toFixed(2).replace('.', ',')}`),
-    ];
-    const csv = '﻿' + [header, ...filas, '', ...totales, '', ...tarifasTxt].join('\n');
+        horasDec(j.ms), horasDec(j.msClub), horasDec(j.msClase),
+        sueldoJornada(j).toFixed(2).replace('.', ',')].join(';'));
+    const totales = Object.entries(totalesPorUser).flatMap(([uid, t]) => [
+      `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)};${sueldoTotal(t).toFixed(2).replace('.', ',')}`,
+      `Clases APARTE ${names[uid] || ''};${GRUPOS.map(g => `${g.abr} ${horasDec(t.porGrupo[g.key])}h`).join(';')};;${clasesAparte(uid, t).toFixed(2).replace('.', ',')}`,
+    ]);
+    const csv = '﻿' + [header, ...filas, '', ...totales, '', `Tarifa hora fija (EUR/h);${tarifaFija.toFixed(2).replace('.', ',')}`].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -273,12 +261,12 @@ export default function TimeClockManager() {
     let y = 18;
     doc.setFontSize(16); doc.setFont(undefined, 'bold');
     doc.text(`Control horario — ${nombreMes}`, 14, y); y += 6;
-    doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(100);
-    doc.text(`Padel Medina · Tarifas €/h: club ${tarifa('club').toFixed(2)} · ind ${tarifa('individual').toFixed(2)} · G2 ${tarifa('grupo2').toFixed(2)} · G3 ${tarifa('grupo3').toFixed(2)} · G4 ${tarifa('grupo4').toFixed(2)}`, 14, y); y += 8;
+    doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(100);
+    doc.text(`Padel Medina · Hora fija: ${tarifaFija.toFixed(2)} €/h (todas las horas) · Las clases se facturan aparte`, 14, y); y += 8;
 
     const cols = [
-      { t: 'Fecha', x: 13 }, { t: 'Ent.', x: 40 }, { t: 'Sal.', x: 55 }, { t: 'Club', x: 70 },
-      { t: 'Ind', x: 92 }, { t: 'G2', x: 112 }, { t: 'G3', x: 132 }, { t: 'G4', x: 152 }, { t: 'Importe', x: 172 },
+      { t: 'Fecha', x: 13 }, { t: 'Entrada', x: 44 }, { t: 'Salida', x: 66 }, { t: 'H. club', x: 88 },
+      { t: 'H. clases', x: 116 }, { t: 'Total', x: 144 }, { t: 'Sueldo', x: 170 },
     ];
     const headerRow = () => {
       doc.setFillColor(27, 58, 110);
@@ -293,28 +281,29 @@ export default function TimeClockManager() {
     const cerradas = [...jornadas].reverse().filter(j => j.entrada && j.salida);
     for (const j of cerradas) {
       if (y > 272) { doc.addPage(); y = 18; headerRow(); }
-      doc.setFontSize(8);
+      doc.setFontSize(8.5);
       doc.text(j.fecha, 13, y);
-      doc.text(hora(j.entrada.fichado_at), 40, y);
-      doc.text(hora(j.salida.fichado_at), 55, y);
-      doc.text(fmtHoras(j.msClub), 70, y);
-      GRUPOS.forEach((g, i) => doc.text(fmtHoras(j.msPorGrupo?.[g.key] || 0), [92, 112, 132, 152][i], y));
-      doc.text(eurosJornada(j).toFixed(2) + ' €', 172, y);
+      doc.text(hora(j.entrada.fichado_at), 44, y);
+      doc.text(hora(j.salida.fichado_at), 66, y);
+      doc.text(fmtHoras(j.msClub), 88, y);
+      doc.text(fmtHoras(j.msClase), 116, y);
+      doc.text(fmtHoras(j.ms), 144, y);
+      doc.text(sueldoJornada(j).toFixed(2) + ' €', 170, y);
       y += 5.5;
     }
 
     y += 4;
     doc.setDrawColor(200); doc.line(11, y - 3, 199, y - 3);
-    doc.setFont(undefined, 'bold'); doc.setFontSize(9.5);
     for (const [uid, t] of Object.entries(totalesPorUser)) {
-      if (y > 268) { doc.addPage(); y = 18; }
-      doc.text(`TOTAL ${names[uid] || 'Trabajador'}: ${fmtHoras(t.ms)}  →  ${eurosTotal(t).toFixed(2)} €`, 13, y); y += 5.5;
+      if (y > 260) { doc.addPage(); y = 18; }
+      doc.setFont(undefined, 'bold'); doc.setFontSize(10); doc.setTextColor(30);
+      doc.text(`TOTAL ${names[uid] || 'Trabajador'}: ${fmtHoras(t.ms)}  →  Sueldo ${sueldoTotal(t).toFixed(2)} €`, 13, y); y += 5.5;
       doc.setFont(undefined, 'normal'); doc.setFontSize(8.5); doc.setTextColor(90);
-      doc.text(`club ${fmtHoras(t.msClub)} · ind ${fmtHoras(t.porGrupo.individual)} · G2 ${fmtHoras(t.porGrupo.grupo2)} · G3 ${fmtHoras(t.porGrupo.grupo3)} · G4 ${fmtHoras(t.porGrupo.grupo4)}`, 13, y);
-      doc.setFont(undefined, 'bold'); doc.setFontSize(9.5); doc.setTextColor(30);
-      y += 7;
+      doc.text(`Desglose: club ${fmtHoras(t.msClub)} · clases ${fmtHoras(t.msClase)}`, 13, y); y += 5;
+      doc.text(`Clases APARTE: ${GRUPOS.map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])} × ${precioClase(uid, g.key).toFixed(2)}€`).join(' · ')}  =  ${clasesAparte(uid, t).toFixed(2)} €`, 13, y);
+      y += 8;
     }
-    doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(130);
+    doc.setFontSize(7.5); doc.setTextColor(130);
     doc.text('Fichajes con hora de servidor, ubicación GPS y firma del trabajador (ver panel online).', 13, 290);
     doc.save(`control-horario-${MESES[month].toLowerCase()}-${year}.pdf`);
   };
@@ -326,28 +315,33 @@ export default function TimeClockManager() {
     <div>
       <p className="section-label" style={{ marginBottom: '1rem' }}>Control horario del personal</p>
 
-      {/* Tarifas editables */}
+      {/* Tarifa fija (admin) + precios de clase del monitor (solo lectura) */}
       <div style={{ background: 'white', border: '1.5px solid #E2E8F0', borderRadius: '1rem', padding: '1rem 1.1rem', marginBottom: '1.25rem' }}>
-        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.6rem' }}>💶 Tarifas por hora</div>
+        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.6rem' }}>💶 Tarifa por hora (fija)</div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          {[{ key: 'club', label: '🏢 En club' }, ...GRUPOS.map(g => ({ key: g.key, label: g.label }))].map(({ key, label }) => (
-            <label key={key} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>
-              {label}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                <input value={rates[key]} onChange={e => setRate(key, e.target.value)} inputMode="decimal"
-                  style={{ width: 74, padding: '0.5rem 0.6rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.88rem', fontWeight: 700 }} />
-                <span style={{ color: '#64748B', fontWeight: 700, fontSize: '0.78rem' }}>€/h</span>
-              </div>
-            </label>
-          ))}
-          <button onClick={guardarTarifas} disabled={savingRates}
+          <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>
+            Hora del trabajador (clase o club, se paga igual)
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+              <input value={rateClub} onChange={e => setRateClub(e.target.value)} inputMode="decimal"
+                style={{ width: 90, padding: '0.55rem 0.7rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.9rem', fontWeight: 700 }} />
+              <span style={{ color: '#64748B', fontWeight: 700 }}>€/h</span>
+            </div>
+          </label>
+          <button onClick={guardarTarifa} disabled={savingRates}
             style={{ padding: '0.6rem 1.1rem', borderRadius: '0.7rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', opacity: savingRates ? 0.7 : 1 }}>
-            {savingRates ? 'Guardando…' : 'Guardar tarifas'}
+            {savingRates ? 'Guardando…' : 'Guardar tarifa'}
           </button>
         </div>
-        <p style={{ margin: '0.6rem 0 0', fontSize: '0.72rem', color: '#94A3B8' }}>
-          Al marcar un <strong>entreno</strong> en el horario se elige su grupo (individual, G2, G3, G4) y esas horas se pagan a su tarifa; el resto de la jornada fichada, a tarifa de club.
-        </p>
+        {Object.entries(tarifasMonitor).length > 0 && (
+          <div style={{ marginTop: '0.7rem', paddingTop: '0.7rem', borderTop: '1px dashed #E2E8F0' }}>
+            {Object.entries(tarifasMonitor).map(([uid, t]) => (
+              <div key={uid} style={{ fontSize: '0.76rem', color: '#475569', fontWeight: 600 }}>
+                🎾 Precios de clase de <strong>{names[uid] || 'monitor'}</strong> (los fija él, van aparte del sueldo):
+                {' '}Ind {fmtEur(t.individual)} · G2 {fmtEur(t.grupo2)} · G3 {fmtEur(t.grupo3)} · G4 {fmtEur(t.grupo4)} por hora
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Selector de mes + exportar */}
@@ -367,20 +361,23 @@ export default function TimeClockManager() {
 
       {/* Totales por trabajador */}
       {!loading && Object.keys(totalesPorUser).length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
           {Object.entries(totalesPorUser).map(([uid, t]) => (
             <div key={uid} style={{ background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
               <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{names[uid] || 'Trabajador'}</div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.15rem' }}>
                 <span style={{ fontSize: '1.5rem', fontWeight: 900, color: '#166534' }}>{fmtHoras(t.ms)}</span>
-                <span style={{ fontSize: '1.15rem', fontWeight: 900, color: '#0F172A' }}>{fmtEur(eurosTotal(t))}</span>
+                <span style={{ fontSize: '1.15rem', fontWeight: 900, color: '#0F172A' }}>{fmtEur(sueldoTotal(t))}</span>
               </div>
-              <div style={{ fontSize: '0.7rem', color: '#16A34A', fontWeight: 700, marginTop: '0.25rem', lineHeight: 1.6 }}>
-                🏢 club {fmtHoras(t.msClub)}
-                {GRUPOS.filter(g => t.porGrupo[g.key] > 0).map(g => (
-                  <span key={g.key}> · {g.label} {fmtHoras(t.porGrupo[g.key])}</span>
-                ))}
+              <div style={{ fontSize: '0.7rem', color: '#16A34A', fontWeight: 700, marginTop: '0.25rem' }}>
+                🏢 club {fmtHoras(t.msClub)} · 🎾 clases {fmtHoras(t.msClase)}
               </div>
+              {t.msClase > 0 && (
+                <div style={{ fontSize: '0.7rem', color: '#7E22CE', fontWeight: 700, marginTop: '0.2rem' }}>
+                  💜 Clases aparte: {fmtEur(clasesAparte(uid, t))}
+                  {' '}({GRUPOS.filter(g => t.porGrupo[g.key] > 0).map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])}`).join(' · ')})
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -412,7 +409,7 @@ export default function TimeClockManager() {
                     ) : j.ms > 0 ? (
                       <>
                         <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#16A34A' }}>{fmtHoras(j.ms)}</div>
-                        <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>{fmtEur(eurosJornada(j))}</div>
+                        <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>{fmtEur(sueldoJornada(j))}</div>
                       </>
                     ) : (
                       <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>—</span>

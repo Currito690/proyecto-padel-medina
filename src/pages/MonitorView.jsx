@@ -1,9 +1,39 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { jsPDF } from 'jspdf';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
 
 const horaDe = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+// ── Helpers del informe mensual del monitor ──────────────────────────────────
+const MESES_M = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const fmtHorasM = (ms) => {
+  const h = Math.floor(ms / 3600000);
+  const m = Math.round((ms % 3600000) / 60000);
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+};
+const slotIntervalM = (ymd, slotStr) => {
+  const [a, b] = slotStr.split(' - ');
+  return [new Date(`${ymd}T${a}:00`).getTime(), new Date(`${ymd}T${b}:00`).getTime()];
+};
+const mergeIntsM = (ints) => {
+  const s = [...ints].sort((x, y) => x[0] - y[0]);
+  const out = [];
+  for (const [a, b] of s) {
+    if (out.length && a <= out[out.length - 1][1]) out[out.length - 1][1] = Math.max(out[out.length - 1][1], b);
+    else out.push([a, b]);
+  }
+  return out;
+};
+const overlapM = (a1, a2, ints) =>
+  ints.reduce((s, [b1, b2]) => s + Math.max(0, Math.min(a2, b2) - Math.max(a1, b1)), 0);
+const mondayOf = (ymd) => {
+  const dt = new Date(ymd + 'T12:00:00');
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+};
+const ddmm = (ymd) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
 
 // Vista de SOLO LECTURA para el rol 'monitor' (lolo). Muestra el día separado
 // POR PISTAS (2 columnas), con cada franja ocupada coloreada según su tipo:
@@ -204,6 +234,183 @@ export default function MonitorView() {
 
   const GRUPO_PERSONAS = { individual: 1, grupo2: 2, grupo3: 3, grupo4: 4 };
 
+  // ── Mis tarifas de clase: las fija el PROPIO monitor (tabla monitor_tarifas) ──
+  const [misTarifas, setMisTarifas] = useState({ individual: '0', grupo2: '0', grupo3: '0', grupo4: '0' });
+  const [tarifasAbiertas, setTarifasAbiertas] = useState(false);
+  const [tarifasGuardando, setTarifasGuardando] = useState(false);
+  useEffect(() => {
+    if (!user?.id) return;
+    supabase.from('monitor_tarifas').select('*').eq('user_id', user.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) setMisTarifas({
+          individual: String(data.tarifa_individual ?? 0).replace('.', ','),
+          grupo2: String(data.tarifa_grupo2 ?? 0).replace('.', ','),
+          grupo3: String(data.tarifa_grupo3 ?? 0).replace('.', ','),
+          grupo4: String(data.tarifa_grupo4 ?? 0).replace('.', ','),
+        });
+      });
+  }, [user?.id]);
+
+  const guardarMisTarifas = async () => {
+    const parse = (v) => { const n = Number(String(v).replace(',', '.').trim()); return isFinite(n) && n >= 0 ? n : null; };
+    const vals = {
+      individual: parse(misTarifas.individual), grupo2: parse(misTarifas.grupo2),
+      grupo3: parse(misTarifas.grupo3), grupo4: parse(misTarifas.grupo4),
+    };
+    if (Object.values(vals).some(v => v === null)) { toast('Tarifa no válida (ej: 12,50)', 'error'); return; }
+    setTarifasGuardando(true);
+    const { error } = await supabase.from('monitor_tarifas').upsert({
+      user_id: user.id,
+      tarifa_individual: vals.individual, tarifa_grupo2: vals.grupo2,
+      tarifa_grupo3: vals.grupo3, tarifa_grupo4: vals.grupo4,
+      updated_at: new Date().toISOString(),
+    });
+    setTarifasGuardando(false);
+    if (error) toast('Error al guardar: ' + error.message, 'error');
+    else toast('Tus tarifas se han guardado ✓', 'success');
+  };
+
+  // ── Mi informe del mes (PDF): totales por SEMANA + total del mes, con
+  // desglose de horas de clases vs horas de club. Sueldo = hora FIJA × todas
+  // las horas. Los precios de las clases van APARTE (sección propia).
+  const [generandoPdf, setGenerandoPdf] = useState(false);
+  const generarInforme = async () => {
+    if (generandoPdf) return;
+    setGenerandoPdf(true);
+    try {
+      const base = new Date(date + 'T12:00:00');
+      const yy = base.getFullYear(), mm = base.getMonth();
+      const primer = `${yy}-${String(mm + 1).padStart(2, '0')}-01`;
+      const ultimo = `${yy}-${String(mm + 1).padStart(2, '0')}-${String(new Date(yy, mm + 1, 0).getDate()).padStart(2, '0')}`;
+      const [fRes, eRes, cRes, sRes] = await Promise.all([
+        supabase.from('fichajes').select('tipo, fichado_at').eq('user_id', user.id)
+          .gte('fichado_at', `${primer}T00:00:00`).lt('fichado_at', new Date(yy, mm + 1, 1).toISOString())
+          .order('fichado_at', { ascending: true }),
+        supabase.from('blocked_slots').select('date, time_slot, court_id, entreno_grupo').eq('tipo', 'entreno')
+          .gte('date', primer).lte('date', ultimo),
+        supabase.from('clases_monitor').select('date, time_slot, court_id, personas').eq('user_id', user.id)
+          .gte('date', primer).lte('date', ultimo),
+        supabase.from('site_settings').select('tarifa_hora_club').single(),
+      ]);
+      const tarifaFija = Number(sRes.data?.tarifa_hora_club) || 0;
+      const parse = (v) => Number(String(v).replace(',', '.')) || 0;
+      const misPrecios = {
+        individual: parse(misTarifas.individual), grupo2: parse(misTarifas.grupo2),
+        grupo3: parse(misTarifas.grupo3), grupo4: parse(misTarifas.grupo4),
+      };
+
+      // Entrenos por día con su grupo REAL (mi confirmación manda)
+      const PG = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
+      const conf = {};
+      (cRes.data || []).forEach(c => { conf[`${c.date}|${c.time_slot}|${c.court_id}`] = c.personas; });
+      const porDia = {};
+      (eRes.data || []).forEach(e => {
+        const g = PG[conf[`${e.date}|${e.time_slot}|${e.court_id}`]] || e.entreno_grupo || 'grupo4';
+        if (!porDia[e.date]) porDia[e.date] = { grupos: {}, all: [] };
+        const iv = slotIntervalM(e.date, e.time_slot);
+        (porDia[e.date].grupos[g] = porDia[e.date].grupos[g] || []).push(iv);
+        porDia[e.date].all.push(iv);
+      });
+      for (const d of Object.keys(porDia)) {
+        for (const g of Object.keys(porDia[d].grupos)) porDia[d].grupos[g] = mergeIntsM(porDia[d].grupos[g]);
+        porDia[d].all = mergeIntsM(porDia[d].all);
+      }
+
+      // Jornadas → acumular por semana y total
+      let abierto = null;
+      const sem = {}; // lunesYmd -> { ms, msClase, msClub }
+      const tot = { ms: 0, msClase: 0, msClub: 0, porGrupo: { individual: 0, grupo2: 0, grupo3: 0, grupo4: 0 } };
+      (fRes.data || []).forEach(f => {
+        if (f.tipo === 'entrada') { abierto = f; return; }
+        if (!abierto) return;
+        const ini = new Date(abierto.fichado_at).getTime();
+        const fin = new Date(f.fichado_at).getTime();
+        const fecha = toYMD(new Date(abierto.fichado_at));
+        abierto = null;
+        const ms = fin - ini;
+        const dia = porDia[fecha];
+        const msClase = dia ? overlapM(ini, fin, dia.all) : 0;
+        const wk = mondayOf(fecha);
+        if (!sem[wk]) sem[wk] = { ms: 0, msClase: 0, msClub: 0 };
+        sem[wk].ms += ms; sem[wk].msClase += msClase; sem[wk].msClub += Math.max(0, ms - msClase);
+        tot.ms += ms; tot.msClase += msClase; tot.msClub += Math.max(0, ms - msClase);
+        if (dia) for (const g of Object.keys(tot.porGrupo)) tot.porGrupo[g] += overlapM(ini, fin, dia.grupos[g] || []);
+      });
+
+      if (tot.ms === 0) { toast('No hay jornadas cerradas este mes', 'error'); return; }
+
+      // ── PDF ──
+      const doc = new jsPDF();
+      let py = 20;
+      doc.setFontSize(16); doc.setFont(undefined, 'bold');
+      doc.text(`Mi informe — ${MESES_M[mm]} ${yy}`, 14, py); py += 6;
+      doc.setFontSize(10); doc.setFont(undefined, 'normal'); doc.setTextColor(100);
+      doc.text(`${user?.name || 'Monitor'} · Padel Medina · Hora fija: ${tarifaFija.toFixed(2)} €/h`, 14, py); py += 10;
+
+      // Tabla por semanas
+      doc.setFillColor(27, 58, 110);
+      doc.rect(12, py - 4.5, 186, 7, 'F');
+      doc.setTextColor(255); doc.setFontSize(9); doc.setFont(undefined, 'bold');
+      doc.text('Semana', 14, py); doc.text('Horas totales', 74, py); doc.text('Horas clases', 116, py); doc.text('Horas club', 158, py);
+      doc.setFont(undefined, 'normal'); doc.setTextColor(30); py += 8;
+      for (const wk of Object.keys(sem).sort()) {
+        const finSem = new Date(wk + 'T12:00:00'); finSem.setDate(finSem.getDate() + 6);
+        const finYmd = `${finSem.getFullYear()}-${String(finSem.getMonth() + 1).padStart(2, '0')}-${String(finSem.getDate()).padStart(2, '0')}`;
+        doc.setFontSize(9.5);
+        doc.text(`${ddmm(wk)} – ${ddmm(finYmd)}`, 14, py);
+        doc.text(fmtHorasM(sem[wk].ms), 74, py);
+        doc.text(fmtHorasM(sem[wk].msClase), 116, py);
+        doc.text(fmtHorasM(sem[wk].msClub), 158, py);
+        py += 6.5;
+      }
+      py += 3;
+      doc.setDrawColor(180); doc.line(12, py - 3, 198, py - 3);
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11);
+      doc.text(`TOTAL DEL MES: ${fmtHorasM(tot.ms)}`, 14, py); py += 6;
+      doc.setFontSize(9.5); doc.setTextColor(90); doc.setFont(undefined, 'normal');
+      doc.text(`Como monitor (clases): ${fmtHorasM(tot.msClase)} · En el club (atención): ${fmtHorasM(tot.msClub)}`, 14, py); py += 8;
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(22, 101, 52);
+      doc.text(`Sueldo del mes: ${(tot.ms / 3600000).toFixed(2)} h × ${tarifaFija.toFixed(2)} €/h = ${((tot.ms / 3600000) * tarifaFija).toFixed(2)} €`, 14, py); py += 12;
+
+      // Clases: importe aparte
+      doc.setTextColor(126, 34, 206); doc.setFontSize(11);
+      doc.text('Mis clases (importe aparte del sueldo)', 14, py); py += 6;
+      doc.setFont(undefined, 'normal'); doc.setFontSize(9.5); doc.setTextColor(60);
+      const ETIQ = { individual: 'Individual', grupo2: 'Grupo 2', grupo3: 'Grupo 3', grupo4: 'Grupo 4' };
+      let totalClases = 0;
+      for (const g of Object.keys(tot.porGrupo)) {
+        if (tot.porGrupo[g] <= 0) continue;
+        const imp = (tot.porGrupo[g] / 3600000) * misPrecios[g];
+        totalClases += imp;
+        doc.text(`${ETIQ[g]}: ${fmtHorasM(tot.porGrupo[g])} × ${misPrecios[g].toFixed(2)} €/h = ${imp.toFixed(2)} €`, 14, py);
+        py += 5.5;
+      }
+      doc.setFont(undefined, 'bold');
+      doc.text(`Total clases: ${totalClases.toFixed(2)} €`, 14, py + 1);
+      doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(130);
+      doc.text('Horas según fichajes firmados con hora de servidor y GPS. Nº de personas por clase confirmado por el monitor.', 14, 290);
+      doc.save(`mi-informe-${MESES_M[mm].toLowerCase()}-${yy}.pdf`);
+      toast('Informe descargado 📄', 'success');
+    } catch (e) {
+      console.error(e);
+      toast('No se pudo generar el informe', 'error');
+    } finally {
+      setGenerandoPdf(false);
+    }
+  };
+
+  // ¿Está AHORA dentro de una clase? (para que se vea que el fichaje cae en clase)
+  const enClaseAhora = (() => {
+    if (!trabajando || date !== toYMD(new Date())) return false;
+    const ahora = new Date();
+    const hm = ahora.getHours() * 60 + ahora.getMinutes();
+    const toM = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    return entrenosDelDia.some(e => {
+      const [a, b] = e.time.split(' - ');
+      return hm >= toM(a) && hm < toM(b);
+    });
+  })();
+
   // Cambio de día a MEDIANOCHE: si lolo estaba mirando "hoy", saltar al día nuevo.
   useEffect(() => {
     let prevToday = toYMD(new Date());
@@ -262,6 +469,7 @@ export default function MonitorView() {
               <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.9rem' }}>🕐 Control horario</div>
               <div style={{ fontSize: '0.78rem', color: trabajando ? '#15803D' : '#64748B', fontWeight: 700, marginTop: 2 }}>
                 {trabajando ? `Trabajando desde las ${horaDe(ultimoFichaje.fichado_at)}` : 'Turno sin iniciar'}
+                {enClaseAhora && <span style={{ color: '#7E22CE' }}> · 🎾 ahora en clase</span>}
               </div>
             </div>
             <button onClick={() => setFirmando(true)} disabled={fichando} style={{
@@ -279,6 +487,40 @@ export default function MonitorView() {
                   {f.tipo === 'entrada' ? '🟢 Entrada' : '🔴 Salida'} {horaDe(f.fichado_at)}{f.lat != null ? ' · 📍' : ''}
                 </span>
               ))}
+            </div>
+          )}
+          <button onClick={generarInforme} disabled={generandoPdf} style={{ marginTop: '0.7rem', width: '100%', padding: '0.6rem', borderRadius: '0.65rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#334155', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', opacity: generandoPdf ? 0.6 : 1 }}>
+            {generandoPdf ? 'Generando…' : '📄 Mi informe del mes (horas por semana y clases)'}
+          </button>
+        </div>
+
+        {/* ── Mis tarifas de clase (las pone el propio monitor; van aparte del sueldo) ── */}
+        <div style={{ background: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.95rem', padding: '0.75rem 1rem', marginBottom: '1rem', boxShadow: '0 1px 3px rgba(15,23,42,0.05)' }}>
+          <button onClick={() => setTarifasAbiertas(v => !v)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
+            <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.9rem' }}>💶 Mis precios de clase</span>
+            <span style={{ color: '#94A3B8', fontSize: '0.78rem', fontWeight: 700 }}>{tarifasAbiertas ? '▲ cerrar' : '▼ editar'}</span>
+          </button>
+          {tarifasAbiertas && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                {[['individual', '🎾 Individual'], ['grupo2', '👥 Grupo 2'], ['grupo3', '👥 Grupo 3'], ['grupo4', '👥 Grupo 4']].map(([k, label]) => (
+                  <label key={k} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>
+                    {label}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                      <input value={misTarifas[k]} onChange={e => setMisTarifas(prev => ({ ...prev, [k]: e.target.value }))} inputMode="decimal"
+                        style={{ width: 70, padding: '0.5rem 0.6rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.88rem', fontWeight: 700 }} />
+                      <span style={{ color: '#64748B', fontWeight: 700, fontSize: '0.75rem' }}>€/h</span>
+                    </div>
+                  </label>
+                ))}
+                <button onClick={guardarMisTarifas} disabled={tarifasGuardando}
+                  style={{ padding: '0.55rem 1rem', borderRadius: '0.7rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.82rem', cursor: 'pointer', opacity: tarifasGuardando ? 0.7 : 1, fontFamily: 'inherit' }}>
+                  {tarifasGuardando ? 'Guardando…' : 'Guardar'}
+                </button>
+              </div>
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.7rem', color: '#94A3B8' }}>
+                Estos precios son de tus clases y van <strong>aparte de tu sueldo</strong> (tu hora de trabajo se paga siempre igual).
+              </p>
             </div>
           )}
         </div>
