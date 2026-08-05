@@ -257,54 +257,87 @@ export default function TimeClockManager() {
   // ── Exportar PDF ──
   const exportPdf = () => {
     const doc = new jsPDF();
-    const nombreMes = `${MESES[month]} ${year}`;
-    let y = 18;
-    doc.setFontSize(16); doc.setFont(undefined, 'bold');
-    doc.text(`Control horario — ${nombreMes}`, 14, y); y += 6;
-    doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(100);
-    doc.text(`Padel Medina · Hora fija: ${tarifaFija.toFixed(2)} €/h (todas las horas) · Las clases se facturan aparte`, 14, y); y += 8;
+    const NAVY = [27, 58, 110], GREEN = [22, 163, 74], INK = [15, 23, 42], MUTED = [100, 116, 139];
 
-    const cols = [
-      { t: 'Fecha', x: 13 }, { t: 'Entrada', x: 44 }, { t: 'Salida', x: 66 }, { t: 'H. club', x: 88 },
-      { t: 'H. clases', x: 116 }, { t: 'Total', x: 144 }, { t: 'Sueldo', x: 170 },
-    ];
-    const headerRow = () => {
-      doc.setFillColor(27, 58, 110);
-      doc.rect(11, y - 4.5, 188, 7, 'F');
-      doc.setTextColor(255); doc.setFontSize(8.5); doc.setFont(undefined, 'bold');
-      cols.forEach(c => doc.text(c.t, c.x, y));
-      doc.setFont(undefined, 'normal'); doc.setTextColor(30);
-      y += 7;
+    // Cabecera de marca
+    const cabecera = () => {
+      doc.setFillColor(...NAVY);
+      doc.rect(0, 0, 210, 34, 'F');
+      doc.setFillColor(...GREEN);
+      doc.rect(0, 34, 210, 1.6, 'F');
+      doc.setTextColor(255);
+      doc.setFontSize(9); doc.setFont(undefined, 'bold');
+      doc.text('PADEL MEDINA · ADMINISTRACIÓN', 14, 13);
+      doc.setFontSize(19);
+      doc.text(`Control horario — ${MESES[month]} ${year}`, 14, 24);
+      doc.setFont(undefined, 'normal'); doc.setFontSize(9); doc.setTextColor(200, 215, 235);
+      doc.text(`Hora fija del trabajador: ${tarifaFija.toFixed(2)} €/h (todas las horas) · Las clases se facturan aparte`, 14, 30);
     };
-    headerRow();
+    cabecera();
+
+    // Tabla de jornadas
+    let y = 46;
+    const thead = () => {
+      doc.setFillColor(...NAVY);
+      doc.roundedRect(12, y - 5.5, 186, 8.5, 1.5, 1.5, 'F');
+      doc.setTextColor(255); doc.setFontSize(8); doc.setFont(undefined, 'bold');
+      doc.text('FECHA', 15, y);
+      doc.text('ENTRADA', 58, y, { align: 'right' });
+      doc.text('SALIDA', 78, y, { align: 'right' });
+      doc.text('CLUB', 103, y, { align: 'right' });
+      doc.text('CLASES', 128, y, { align: 'right' });
+      doc.text('TOTAL', 153, y, { align: 'right' });
+      doc.text('SUELDO', 194, y, { align: 'right' });
+      y += 9;
+    };
+    thead();
 
     const cerradas = [...jornadas].reverse().filter(j => j.entrada && j.salida);
-    for (const j of cerradas) {
-      if (y > 272) { doc.addPage(); y = 18; headerRow(); }
-      doc.setFontSize(8.5);
-      doc.text(j.fecha, 13, y);
-      doc.text(hora(j.entrada.fichado_at), 44, y);
-      doc.text(hora(j.salida.fichado_at), 66, y);
-      doc.text(fmtHoras(j.msClub), 88, y);
-      doc.text(fmtHoras(j.msClase), 116, y);
-      doc.text(fmtHoras(j.ms), 144, y);
-      doc.text(sueldoJornada(j).toFixed(2) + ' €', 170, y);
-      y += 5.5;
+    cerradas.forEach((j, i) => {
+      if (y > 270) { doc.addPage(); y = 20; thead(); }
+      if (i % 2 === 0) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(12, y - 4.6, 186, 6.8, 'F');
+      }
+      doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(...INK);
+      doc.text(j.fecha, 15, y);
+      doc.text(hora(j.entrada.fichado_at), 58, y, { align: 'right' });
+      doc.text(hora(j.salida.fichado_at), 78, y, { align: 'right' });
+      doc.setTextColor(...MUTED);
+      doc.text(fmtHoras(j.msClub), 103, y, { align: 'right' });
+      doc.setTextColor(126, 34, 206);
+      doc.text(fmtHoras(j.msClase), 128, y, { align: 'right' });
+      doc.setFont(undefined, 'bold'); doc.setTextColor(...INK);
+      doc.text(fmtHoras(j.ms), 153, y, { align: 'right' });
+      doc.setTextColor(22, 101, 52);
+      doc.text(sueldoJornada(j).toFixed(2) + ' €', 194, y, { align: 'right' });
+      y += 6.8;
+    });
+
+    // Tarjeta de total por trabajador
+    y += 5;
+    for (const [uid, t] of Object.entries(totalesPorUser)) {
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setFillColor(240, 253, 244);
+      doc.setDrawColor(187, 247, 208);
+      doc.roundedRect(12, y - 5, 186, 26, 2.5, 2.5, 'FD');
+      doc.setFont(undefined, 'bold'); doc.setFontSize(10.5); doc.setTextColor(22, 101, 52);
+      doc.text(`${names[uid] || 'Trabajador'} — ${fmtHoras(t.ms)}`, 17, y + 1.5);
+      doc.text(`Sueldo: ${sueldoTotal(t).toFixed(2)} €`, 193, y + 1.5, { align: 'right' });
+      doc.setFont(undefined, 'normal'); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+      doc.text(`Desglose: en club ${fmtHoras(t.msClub)} · en clases ${fmtHoras(t.msClase)}`, 17, y + 8);
+      doc.setTextColor(126, 34, 206);
+      doc.text(
+        `Clases aparte: ${GRUPOS.filter(g => t.porGrupo[g.key] > 0).map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])} × ${precioClase(uid, g.key).toFixed(2)}€`).join(' · ') || 'sin clases'}  =  ${clasesAparte(uid, t).toFixed(2)} €`,
+        17, y + 14.5
+      );
+      y += 32;
     }
 
-    y += 4;
-    doc.setDrawColor(200); doc.line(11, y - 3, 199, y - 3);
-    for (const [uid, t] of Object.entries(totalesPorUser)) {
-      if (y > 260) { doc.addPage(); y = 18; }
-      doc.setFont(undefined, 'bold'); doc.setFontSize(10); doc.setTextColor(30);
-      doc.text(`TOTAL ${names[uid] || 'Trabajador'}: ${fmtHoras(t.ms)}  →  Sueldo ${sueldoTotal(t).toFixed(2)} €`, 13, y); y += 5.5;
-      doc.setFont(undefined, 'normal'); doc.setFontSize(8.5); doc.setTextColor(90);
-      doc.text(`Desglose: club ${fmtHoras(t.msClub)} · clases ${fmtHoras(t.msClase)}`, 13, y); y += 5;
-      doc.text(`Clases APARTE: ${GRUPOS.map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])} × ${precioClase(uid, g.key).toFixed(2)}€`).join(' · ')}  =  ${clasesAparte(uid, t).toFixed(2)} €`, 13, y);
-      y += 8;
-    }
-    doc.setFontSize(7.5); doc.setTextColor(130);
-    doc.text('Fichajes con hora de servidor, ubicación GPS y firma del trabajador (ver panel online).', 13, 290);
+    // Pie
+    doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+    doc.text('Fichajes con hora de servidor, ubicación GPS y firma del trabajador (ver panel online).', 14, 285);
+    doc.text(`Generado el ${new Date().toLocaleDateString('es-ES')} · Padel Medina`, 14, 290);
     doc.save(`control-horario-${MESES[month].toLowerCase()}-${year}.pdf`);
   };
 

@@ -282,44 +282,25 @@ export default function MonitorView() {
       const yy = base.getFullYear(), mm = base.getMonth();
       const primer = `${yy}-${String(mm + 1).padStart(2, '0')}-01`;
       const ultimo = `${yy}-${String(mm + 1).padStart(2, '0')}-${String(new Date(yy, mm + 1, 0).getDate()).padStart(2, '0')}`;
-      const [fRes, eRes, cRes, sRes] = await Promise.all([
+      const [fRes, eRes] = await Promise.all([
         supabase.from('fichajes').select('tipo, fichado_at').eq('user_id', user.id)
           .gte('fichado_at', `${primer}T00:00:00`).lt('fichado_at', new Date(yy, mm + 1, 1).toISOString())
           .order('fichado_at', { ascending: true }),
-        supabase.from('blocked_slots').select('date, time_slot, court_id, entreno_grupo').eq('tipo', 'entreno')
+        supabase.from('blocked_slots').select('date, time_slot').eq('tipo', 'entreno')
           .gte('date', primer).lte('date', ultimo),
-        supabase.from('clases_monitor').select('date, time_slot, court_id, personas').eq('user_id', user.id)
-          .gte('date', primer).lte('date', ultimo),
-        supabase.from('site_settings').select('tarifa_hora_club').single(),
       ]);
-      const tarifaFija = Number(sRes.data?.tarifa_hora_club) || 0;
-      const parse = (v) => Number(String(v).replace(',', '.')) || 0;
-      const misPrecios = {
-        individual: parse(misTarifas.individual), grupo2: parse(misTarifas.grupo2),
-        grupo3: parse(misTarifas.grupo3), grupo4: parse(misTarifas.grupo4),
-      };
 
-      // Entrenos por día con su grupo REAL (mi confirmación manda)
-      const PG = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
-      const conf = {};
-      (cRes.data || []).forEach(c => { conf[`${c.date}|${c.time_slot}|${c.court_id}`] = c.personas; });
+      // Entrenos por día (unión de intervalos: para separar horas de clase)
       const porDia = {};
       (eRes.data || []).forEach(e => {
-        const g = PG[conf[`${e.date}|${e.time_slot}|${e.court_id}`]] || e.entreno_grupo || 'grupo4';
-        if (!porDia[e.date]) porDia[e.date] = { grupos: {}, all: [] };
-        const iv = slotIntervalM(e.date, e.time_slot);
-        (porDia[e.date].grupos[g] = porDia[e.date].grupos[g] || []).push(iv);
-        porDia[e.date].all.push(iv);
+        (porDia[e.date] = porDia[e.date] || []).push(slotIntervalM(e.date, e.time_slot));
       });
-      for (const d of Object.keys(porDia)) {
-        for (const g of Object.keys(porDia[d].grupos)) porDia[d].grupos[g] = mergeIntsM(porDia[d].grupos[g]);
-        porDia[d].all = mergeIntsM(porDia[d].all);
-      }
+      for (const d of Object.keys(porDia)) porDia[d] = mergeIntsM(porDia[d]);
 
-      // Jornadas → acumular por semana y total
+      // Jornadas → acumular por semana y total (SOLO HORAS)
       let abierto = null;
       const sem = {}; // lunesYmd -> { ms, msClase, msClub }
-      const tot = { ms: 0, msClase: 0, msClub: 0, porGrupo: { individual: 0, grupo2: 0, grupo3: 0, grupo4: 0 } };
+      const tot = { ms: 0, msClase: 0, msClub: 0 };
       (fRes.data || []).forEach(f => {
         if (f.tipo === 'entrada') { abierto = f; return; }
         if (!abierto) return;
@@ -328,68 +309,91 @@ export default function MonitorView() {
         const fecha = toYMD(new Date(abierto.fichado_at));
         abierto = null;
         const ms = fin - ini;
-        const dia = porDia[fecha];
-        const msClase = dia ? overlapM(ini, fin, dia.all) : 0;
+        const msClase = porDia[fecha] ? overlapM(ini, fin, porDia[fecha]) : 0;
         const wk = mondayOf(fecha);
         if (!sem[wk]) sem[wk] = { ms: 0, msClase: 0, msClub: 0 };
         sem[wk].ms += ms; sem[wk].msClase += msClase; sem[wk].msClub += Math.max(0, ms - msClase);
         tot.ms += ms; tot.msClase += msClase; tot.msClub += Math.max(0, ms - msClase);
-        if (dia) for (const g of Object.keys(tot.porGrupo)) tot.porGrupo[g] += overlapM(ini, fin, dia.grupos[g] || []);
       });
 
       if (tot.ms === 0) { toast('No hay jornadas cerradas este mes', 'error'); return; }
 
-      // ── PDF ──
+      // ── PDF (solo horas, sin dinero) ──
       const doc = new jsPDF();
-      let py = 20;
-      doc.setFontSize(16); doc.setFont(undefined, 'bold');
-      doc.text(`Mi informe — ${MESES_M[mm]} ${yy}`, 14, py); py += 6;
-      doc.setFontSize(10); doc.setFont(undefined, 'normal'); doc.setTextColor(100);
-      doc.text(`${user?.name || 'Monitor'} · Padel Medina · Hora fija: ${tarifaFija.toFixed(2)} €/h`, 14, py); py += 10;
+      const NAVY = [27, 58, 110], GREEN = [22, 163, 74], INK = [15, 23, 42], MUTED = [100, 116, 139];
+
+      // Cabecera de marca
+      doc.setFillColor(...NAVY);
+      doc.rect(0, 0, 210, 34, 'F');
+      doc.setFillColor(...GREEN);
+      doc.rect(0, 34, 210, 1.6, 'F');
+      doc.setTextColor(255);
+      doc.setFontSize(9); doc.setFont(undefined, 'bold');
+      doc.text('PADEL MEDINA · CONTROL HORARIO', 14, 13);
+      doc.setFontSize(19);
+      doc.text(`Informe de horas — ${MESES_M[mm]} ${yy}`, 14, 24);
+      doc.setFont(undefined, 'normal'); doc.setFontSize(9.5); doc.setTextColor(200, 215, 235);
+      doc.text(`${user?.name || 'Monitor'}`, 14, 30);
+
+      // Cajas de resumen (3): total, clases, club
+      const cajas = [
+        { titulo: 'TOTAL DEL MES', valor: fmtHorasM(tot.ms), fill: [240, 253, 244], borde: [187, 247, 208], color: [22, 101, 52] },
+        { titulo: 'HORAS COMO MONITOR', valor: fmtHorasM(tot.msClase), fill: [250, 245, 255], borde: [216, 180, 254], color: [126, 34, 206] },
+        { titulo: 'HORAS EN EL CLUB', valor: fmtHorasM(tot.msClub), fill: [248, 250, 252], borde: [226, 232, 240], color: [51, 65, 85] },
+      ];
+      let cx = 14;
+      cajas.forEach(c => {
+        doc.setFillColor(...c.fill);
+        doc.setDrawColor(...c.borde);
+        doc.roundedRect(cx, 42, 58, 22, 2.5, 2.5, 'FD');
+        doc.setFontSize(6.8); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
+        doc.text(c.titulo, cx + 4, 49);
+        doc.setFontSize(15); doc.setTextColor(...c.color);
+        doc.text(c.valor, cx + 4, 59);
+        cx += 61;
+      });
 
       // Tabla por semanas
-      doc.setFillColor(27, 58, 110);
-      doc.rect(12, py - 4.5, 186, 7, 'F');
-      doc.setTextColor(255); doc.setFontSize(9); doc.setFont(undefined, 'bold');
-      doc.text('Semana', 14, py); doc.text('Horas totales', 74, py); doc.text('Horas clases', 116, py); doc.text('Horas club', 158, py);
-      doc.setFont(undefined, 'normal'); doc.setTextColor(30); py += 8;
-      for (const wk of Object.keys(sem).sort()) {
+      let py = 78;
+      doc.setFillColor(...NAVY);
+      doc.roundedRect(14, py - 5.5, 182, 8.5, 1.5, 1.5, 'F');
+      doc.setTextColor(255); doc.setFontSize(8.5); doc.setFont(undefined, 'bold');
+      doc.text('SEMANA', 18, py);
+      doc.text('HORAS TOTALES', 106, py, { align: 'right' });
+      doc.text('CLASES', 146, py, { align: 'right' });
+      doc.text('CLUB', 188, py, { align: 'right' });
+      py += 9;
+      const semanas = Object.keys(sem).sort();
+      semanas.forEach((wk, i) => {
         const finSem = new Date(wk + 'T12:00:00'); finSem.setDate(finSem.getDate() + 6);
         const finYmd = `${finSem.getFullYear()}-${String(finSem.getMonth() + 1).padStart(2, '0')}-${String(finSem.getDate()).padStart(2, '0')}`;
-        doc.setFontSize(9.5);
-        doc.text(`${ddmm(wk)} – ${ddmm(finYmd)}`, 14, py);
-        doc.text(fmtHorasM(sem[wk].ms), 74, py);
-        doc.text(fmtHorasM(sem[wk].msClase), 116, py);
-        doc.text(fmtHorasM(sem[wk].msClub), 158, py);
-        py += 6.5;
-      }
-      py += 3;
-      doc.setDrawColor(180); doc.line(12, py - 3, 198, py - 3);
-      doc.setFont(undefined, 'bold'); doc.setFontSize(11);
-      doc.text(`TOTAL DEL MES: ${fmtHorasM(tot.ms)}`, 14, py); py += 6;
-      doc.setFontSize(9.5); doc.setTextColor(90); doc.setFont(undefined, 'normal');
-      doc.text(`Como monitor (clases): ${fmtHorasM(tot.msClase)} · En el club (atención): ${fmtHorasM(tot.msClub)}`, 14, py); py += 8;
-      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(22, 101, 52);
-      doc.text(`Sueldo del mes: ${(tot.ms / 3600000).toFixed(2)} h × ${tarifaFija.toFixed(2)} €/h = ${((tot.ms / 3600000) * tarifaFija).toFixed(2)} €`, 14, py); py += 12;
+        if (i % 2 === 0) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(14, py - 5, 182, 7.5, 'F');
+        }
+        doc.setFont(undefined, 'bold'); doc.setFontSize(9.5); doc.setTextColor(...INK);
+        doc.text(`Semana del ${ddmm(wk)} al ${ddmm(finYmd)}`, 18, py);
+        doc.text(fmtHorasM(sem[wk].ms), 106, py, { align: 'right' });
+        doc.setFont(undefined, 'normal'); doc.setTextColor(126, 34, 206);
+        doc.text(fmtHorasM(sem[wk].msClase), 146, py, { align: 'right' });
+        doc.setTextColor(...MUTED);
+        doc.text(fmtHorasM(sem[wk].msClub), 188, py, { align: 'right' });
+        py += 7.5;
+      });
+      // Fila TOTAL
+      doc.setFillColor(220, 252, 231);
+      doc.roundedRect(14, py - 5, 182, 8.5, 1.5, 1.5, 'F');
+      doc.setFont(undefined, 'bold'); doc.setFontSize(10); doc.setTextColor(22, 101, 52);
+      doc.text('TOTAL DEL MES', 18, py + 0.5);
+      doc.text(fmtHorasM(tot.ms), 106, py + 0.5, { align: 'right' });
+      doc.text(fmtHorasM(tot.msClase), 146, py + 0.5, { align: 'right' });
+      doc.text(fmtHorasM(tot.msClub), 188, py + 0.5, { align: 'right' });
 
-      // Clases: importe aparte
-      doc.setTextColor(126, 34, 206); doc.setFontSize(11);
-      doc.text('Mis clases (importe aparte del sueldo)', 14, py); py += 6;
-      doc.setFont(undefined, 'normal'); doc.setFontSize(9.5); doc.setTextColor(60);
-      const ETIQ = { individual: 'Individual', grupo2: 'Grupo 2', grupo3: 'Grupo 3', grupo4: 'Grupo 4' };
-      let totalClases = 0;
-      for (const g of Object.keys(tot.porGrupo)) {
-        if (tot.porGrupo[g] <= 0) continue;
-        const imp = (tot.porGrupo[g] / 3600000) * misPrecios[g];
-        totalClases += imp;
-        doc.text(`${ETIQ[g]}: ${fmtHorasM(tot.porGrupo[g])} × ${misPrecios[g].toFixed(2)} €/h = ${imp.toFixed(2)} €`, 14, py);
-        py += 5.5;
-      }
-      doc.setFont(undefined, 'bold');
-      doc.text(`Total clases: ${totalClases.toFixed(2)} €`, 14, py + 1);
-      doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(130);
-      doc.text('Horas según fichajes firmados con hora de servidor y GPS. Nº de personas por clase confirmado por el monitor.', 14, 290);
-      doc.save(`mi-informe-${MESES_M[mm].toLowerCase()}-${yy}.pdf`);
+      // Pie
+      doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+      doc.text('Horas según fichajes firmados, con hora de servidor y ubicación GPS.', 14, 285);
+      doc.text(`Generado el ${new Date().toLocaleDateString('es-ES')} · Padel Medina`, 14, 290);
+      doc.save(`mis-horas-${MESES_M[mm].toLowerCase()}-${yy}.pdf`);
       toast('Informe descargado 📄', 'success');
     } catch (e) {
       console.error(e);
