@@ -158,9 +158,10 @@ const BookingDashboard = () => {
 
   const loadSlots = async (courtId, date, silent = false) => {
     if (!silent) setLoadingSlots(true);
-    const [{ data: bookings }, { data: blocked }] = await Promise.all([
+    const [{ data: bookings }, { data: blocked }, { data: customs }] = await Promise.all([
       supabase.from('bookings').select('time_slot, status, created_at').eq('court_id', courtId).eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
+      supabase.from('custom_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
     ]);
     // Un hold 'pendiente_pago' bloquea el hueco 15 min (mientras el jugador está
     // en el banco); si abandona el pago, caduca solo y el hueco se libera.
@@ -176,7 +177,13 @@ const BookingDashboard = () => {
     const currentHours = now.getHours();
     const currentMinutes = now.getMinutes();
 
-    const newSlots = SCHEDULE_TIMES.map((time, idx) => {
+    // Huecos personalizados del admin (ej: "21:00 - 22:30") mezclados con la
+    // parrilla fija, ordenados por hora de inicio.
+    const allTimes = [...SCHEDULE_TIMES];
+    (customs || []).forEach(c => { if (!allTimes.includes(c.time_slot)) allTimes.push(c.time_slot); });
+    allTimes.sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)));
+
+    const newSlots = allTimes.map((time, idx) => {
       let isPast = false;
       if (isTodayOrPast) {
         if (date < todayDateStr) {

@@ -390,6 +390,11 @@ const AdminDashboard = () => {
     }, 30 * 1000);
     return () => clearInterval(id);
   }, []);
+  // Huecos personalizados (fuera de la parrilla fija) del día seleccionado
+  const [customByCourt, setCustomByCourt] = useState({}); // courtId -> [{id, time}]
+  const [customModal, setCustomModal] = useState(null); // { courtId, courtName } | null
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
   const [moveBooking, setMoveBooking] = useState(null); // { id, courtId, courtName, date, time, client }
   const [moveTargetDate, setMoveTargetDate] = useState('');
   const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
@@ -471,10 +476,35 @@ const AdminDashboard = () => {
     }
   };
 
+  // ── Huecos personalizados: crear y quitar ──
+  const crearCustomSlot = async () => {
+    if (!customStart || !customEnd || customEnd <= customStart) { toast('Pon una hora de inicio y una de fin válidas', 'error'); return; }
+    const time_slot = `${customStart} - ${customEnd}`;
+    const { error } = await supabase.from('custom_slots').insert({
+      court_id: customModal.courtId, date: selectedDate, time_slot, created_by: user.id,
+    });
+    if (error) { toast(error.code === '23505' ? 'Ese hueco ya existe ese día' : 'Error: ' + error.message, 'error'); return; }
+    toast(`Hueco ${time_slot} añadido a ${customModal.courtName} ✓`, 'success');
+    setCustomModal(null);
+    await loadSlots(selectedDate);
+  };
+
+  const eliminarCustomSlot = async () => {
+    const cs = (customByCourt[activeSlot?.courtId] || []).find(c => c.time === activeSlot?.time);
+    if (!cs) return;
+    const ok = await confirmDialog(`¿Quitar el hueco personalizado ${activeSlot.time}? Dejará de ofrecerse a los jugadores.`, { title: 'Quitar hueco', okText: 'Quitar', danger: true });
+    if (!ok) return;
+    const { error } = await supabase.from('custom_slots').delete().eq('id', cs.id);
+    if (error) { toast('Error: ' + error.message, 'error'); return; }
+    setActiveSlot(null);
+    await loadSlots(selectedDate);
+  };
+
   const loadSlots = useCallback(async (date) => {
-    const [resBookings, resBlocked] = await Promise.all([
+    const [resBookings, resBlocked, resCustoms] = await Promise.all([
       supabase.from('bookings').select('*').eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('*').eq('date', date),
+      supabase.from('custom_slots').select('id, court_id, time_slot').eq('date', date),
     ]);
 
     if (resBookings.error) {
@@ -505,6 +535,15 @@ const AdminDashboard = () => {
       newSlots[court.id] = {};
       TIMES.forEach(time => { newSlots[court.id][time] = { status: 'available' }; });
     });
+    // Huecos personalizados del día (se añaden a la parrilla como disponibles)
+    const cMap = {};
+    (resCustoms.data || []).forEach(cs => {
+      if (newSlots[cs.court_id] && !newSlots[cs.court_id][cs.time_slot]) {
+        newSlots[cs.court_id][cs.time_slot] = { status: 'available' };
+      }
+      (cMap[cs.court_id] = cMap[cs.court_id] || []).push({ id: cs.id, time: cs.time_slot });
+    });
+    setCustomByCourt(cMap);
     bookings?.forEach(b => {
       if (newSlots[b.court_id]) {
         newSlots[b.court_id][b.time_slot] = {
@@ -925,6 +964,30 @@ const AdminDashboard = () => {
       
       <div className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`} onClick={() => setIsSidebarOpen(false)} />
 
+      {/* Modal: nuevo hueco personalizado */}
+      {customModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: 'white', borderRadius: '1.1rem', width: '100%', maxWidth: 380, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🕐 Nuevo hueco — {customModal.courtName}</h3>
+            <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B' }}>
+              Para el día {selectedDate.split('-').reverse().join('/')}. Ej.: si hay clase de 20:00 a 21:00, ofrece de 21:00 a 22:30.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+              <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Desde
+                <input type="time" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </label>
+              <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Hasta
+                <input type="time" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1.1rem' }}>
+              <button onClick={() => setCustomModal(null)} style={{ flex: 1, padding: '0.7rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Cancelar</button>
+              <button onClick={crearCustomSlot} style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Crear hueco</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="admin-layout">
         {/* Sidebar */}
         <aside className={`admin-sidebar ${isSidebarOpen ? 'open' : ''}`}>
@@ -1068,18 +1131,30 @@ const AdminDashboard = () => {
                       const selectedSlotData = isCourtActive ? slots[court.id]?.[activeSlot.time] : null;
                       return (
                         <div key={court.id} style={{ backgroundColor: 'white', borderRadius: '1rem', border: '1px solid #E2E8F0', overflow: 'hidden', opacity: court.active ? 1 : 0.5, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-                          <div style={{ background: court.gradient, padding: '0.75rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
+                          <div style={{ background: court.gradient, padding: '0.75rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ minWidth: 0 }}>
                               <span style={{ fontWeight: 800, color: 'white', fontSize: '0.95rem' }}>{court.name}</span>
                               <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>· {court.sport} · {court.location}</span>
                             </div>
-                            {!court.active && <span style={{ fontSize: '0.65rem', fontWeight: 700, backgroundColor: 'rgba(0,0,0,0.25)', color: 'white', padding: '0.2rem 0.5rem', borderRadius: '999px' }}>INACTIVA</span>}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                              {court.active && (
+                                <button onClick={() => { setCustomModal({ courtId: court.id, courtName: court.name }); setCustomStart(''); setCustomEnd(''); }}
+                                  title="Añadir un hueco a medida (ej: 21:00 - 22:30)"
+                                  style={{ fontSize: '0.68rem', fontWeight: 800, backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.45)', padding: '0.25rem 0.6rem', borderRadius: '999px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                                  + Hueco
+                                </button>
+                              )}
+                              {!court.active && <span style={{ fontSize: '0.65rem', fontWeight: 700, backgroundColor: 'rgba(0,0,0,0.25)', color: 'white', padding: '0.2rem 0.5rem', borderRadius: '999px' }}>INACTIVA</span>}
+                            </div>
                           </div>
 
                           <div style={{ padding: '0.875rem' }}>
                             <div className="slots-grid">
-                              {TIMES.map(time => {
+                              {[...TIMES, ...((customByCourt[court.id] || []).map(cs => cs.time).filter(t => !TIMES.includes(t)))]
+                                .sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)))
+                                .map(time => {
                                 const slot = slots[court.id]?.[time];
+                                const esCustom = (customByCourt[court.id] || []).some(cs => cs.time === time);
                                 const isSelected = activeSlot?.courtId === court.id && activeSlot?.time === time;
                                 const c = isSelected ? slotColors.selected
                                   : slot?.status === 'booked' ? metodoColor(slot.metodo)
@@ -1088,9 +1163,9 @@ const AdminDashboard = () => {
                                 return (
                                   <button key={time} disabled={!court.active}
                                     onClick={() => setActiveSlot(prev => prev?.courtId === court.id && prev?.time === time ? null : { courtId: court.id, time })}
-                                    style={{ padding: '0.5rem 0.2rem', borderRadius: '0.5rem', border: `1.5px solid ${c.borderColor}`, backgroundColor: c.backgroundColor, color: c.color, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', textAlign: 'center', cursor: court.active ? 'pointer' : 'not-allowed', transition: 'all 0.15s', lineHeight: 1.3 }}
+                                    style={{ padding: '0.5rem 0.2rem', borderRadius: '0.5rem', border: `1.5px ${esCustom ? 'dashed' : 'solid'} ${c.borderColor}`, backgroundColor: c.backgroundColor, color: c.color, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', textAlign: 'center', cursor: court.active ? 'pointer' : 'not-allowed', transition: 'all 0.15s', lineHeight: 1.3 }}
                                   >
-                                    <div>{time.split(' - ')[0]}</div>
+                                    <div>{esCustom ? '🕐 ' : ''}{time.split(' - ')[0]}</div>
                                     <div style={{ fontSize: '0.58rem', fontWeight: 500, marginTop: '0.15rem', opacity: 0.85 }}>
                                       {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? '🏋️ Entreno' : '🔒 Bloqueada') : 'Libre'}
                                     </div>
@@ -1184,6 +1259,11 @@ const AdminDashboard = () => {
                                               {g.label}
                                             </button>
                                           ))}
+                                          {(customByCourt[court.id] || []).some(cs => cs.time === activeSlot.time) && (
+                                            <button disabled={isProcessing} onClick={eliminarCustomSlot} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                              🗑️ Quitar hueco
+                                            </button>
+                                          )}
                                         </div>
                                       )}
                                     </>

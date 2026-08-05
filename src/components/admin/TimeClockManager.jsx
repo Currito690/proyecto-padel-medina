@@ -1,18 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
-import { toast } from '../../utils/notify';
 
 // CONTROL HORARIO (admin): jornadas del personal a partir de los fichajes
 // (hora del SERVIDOR + GPS + firma).
-// MODELO DE PAGO:
-//  - El trabajador cobra una HORA FIJA (tarifa_hora_club, la fija el admin):
-//    todas sus horas fichadas se pagan igual, esté en clase o atendiendo.
-//  - Los PRECIOS DE LAS CLASES van APARTE: los fija el propio monitor
-//    (tabla monitor_tarifas) y se calculan como concepto separado
-//    (horas de clase por grupo × su precio), sin tocar el sueldo.
-//  - Las horas de clase se detectan cruzando los fichajes con los entrenos
-//    del horario; el nº real de personas lo confirma el monitor cada día.
+// MODELO: el trabajador tiene SUELDO FIJO (fuera de la app) → aquí NO se
+// calcula sueldo por horas. Lo que ve el admin es:
+//  - HORAS TOTALES trabajadas (con desglose en club / en clases)
+//  - LA CAJA DE LOS ENTRENOS: lo que generan las clases (horas de clase por
+//    grupo × el precio de clase que fija el propio monitor en su pantalla).
+// El nº real de personas de cada clase lo confirma el monitor cada día.
 
 const pad = (n) => String(n).padStart(2, '0');
 const hora = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
@@ -28,10 +25,6 @@ const fmtHoras = (ms) => {
 };
 const horasDec = (ms) => (ms / 3600000).toFixed(2).replace('.', ',');
 const fmtEur = (n) => n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
-const parseEur = (str) => {
-  const n = Number(String(str).replace(',', '.').trim());
-  return isFinite(n) && n >= 0 ? n : null;
-};
 const mapsUrl = (f) => (f && f.lat != null ? `https://www.google.com/maps?q=${f.lat},${f.lng}` : null);
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
@@ -71,13 +64,7 @@ export default function TimeClockManager() {
   const [names, setNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(null); // firma ampliada
-
-  // Tarifa de hora FIJA (site_settings, la fija el admin). Los precios de las
-  // clases los fija cada monitor (monitor_tarifas) y aquí solo se leen.
-  const [settingsId, setSettingsId] = useState(null);
-  const [rateClub, setRateClub] = useState('0');
-  const [savingRates, setSavingRates] = useState(false);
-  const [tarifasMonitor, setTarifasMonitor] = useState({}); // user_id -> {individual, grupo2, grupo3, grupo4}
+  const [tarifasMonitor, setTarifasMonitor] = useState({}); // user_id -> precios de clase (los fija el monitor)
 
   const shiftMonth = (delta) => {
     const d = new Date(year, month + delta, 1);
@@ -86,12 +73,6 @@ export default function TimeClockManager() {
   };
 
   useEffect(() => {
-    supabase.from('site_settings').select('id, tarifa_hora_club').single()
-      .then(({ data }) => {
-        if (!data) return;
-        setSettingsId(data.id);
-        setRateClub(String(data.tarifa_hora_club ?? 0).replace('.', ','));
-      });
     supabase.from('monitor_tarifas').select('*')
       .then(({ data }) => {
         const m = {};
@@ -144,20 +125,6 @@ export default function TimeClockManager() {
     })();
   }, [year, month]);
 
-  const guardarTarifa = async () => {
-    const club = parseEur(rateClub);
-    if (club === null) { toast('Tarifa no válida (ej: 8,50)', 'error'); return; }
-    if (!settingsId) { toast('No se pudieron cargar los ajustes', 'error'); return; }
-    setSavingRates(true);
-    const { error } = await supabase.from('site_settings')
-      .update({ tarifa_hora_club: club })
-      .eq('id', settingsId);
-    setSavingRates(false);
-    if (error) toast('Error al guardar: ' + error.message, 'error');
-    else toast('Tarifa guardada ✓', 'success');
-  };
-
-  const tarifaFija = parseEur(rateClub) ?? 0;
   const precioClase = (uid, key) => tarifasMonitor[uid]?.[key] ?? 0;
 
   // Entrenos del mes agrupados por día: intervalos por grupo + unión total.
@@ -226,26 +193,22 @@ export default function TimeClockManager() {
     return { jornadas: jor, totalesPorUser: tot };
   }, [fichajes, entrenosPorDia]);
 
-  // SUELDO: hora fija × todas las horas fichadas (clase o club, da igual)
-  const sueldoJornada = (j) => (j.ms / 3600000) * tarifaFija;
-  const sueldoTotal = (t) => (t.ms / 3600000) * tarifaFija;
-  // CLASES (aparte): horas de clase por grupo × precio de clase del monitor
-  const clasesAparte = (uid, t) =>
+  // CAJA DE LOS ENTRENOS: horas de clase por grupo × precio de clase del monitor
+  const cajaEntrenos = (uid, t) =>
     GRUPOS.reduce((s, g) => s + (t.porGrupo[g.key] / 3600000) * precioClase(uid, g.key), 0);
 
   // ── Exportar Excel (CSV con ; — abre directo en Excel español) ──
   const exportCsv = () => {
     const nombreMes = `${MESES[month].toLowerCase()}-${year}`;
-    const header = 'Trabajador;Fecha;Entrada;Salida;Horas totales;Horas club;Horas clases;Sueldo (EUR)';
+    const header = 'Trabajador;Fecha;Entrada;Salida;Horas totales;Horas club;Horas clases';
     const filas = [...jornadas].reverse().filter(j => j.entrada && j.salida).map(j =>
       [names[j.userId] || 'Trabajador', j.fecha, hora(j.entrada.fichado_at), hora(j.salida.fichado_at),
-        horasDec(j.ms), horasDec(j.msClub), horasDec(j.msClase),
-        sueldoJornada(j).toFixed(2).replace('.', ',')].join(';'));
+        horasDec(j.ms), horasDec(j.msClub), horasDec(j.msClase)].join(';'));
     const totales = Object.entries(totalesPorUser).flatMap(([uid, t]) => [
-      `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)};${sueldoTotal(t).toFixed(2).replace('.', ',')}`,
-      `Clases APARTE ${names[uid] || ''};${GRUPOS.map(g => `${g.abr} ${horasDec(t.porGrupo[g.key])}h`).join(';')};;${clasesAparte(uid, t).toFixed(2).replace('.', ',')}`,
+      `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)}`,
+      `Caja entrenos ${names[uid] || ''};${GRUPOS.map(g => `${g.abr} ${horasDec(t.porGrupo[g.key])}h x ${precioClase(uid, g.key).toFixed(2).replace('.', ',')}`).join(';')};${cajaEntrenos(uid, t).toFixed(2).replace('.', ',')} EUR`,
     ]);
-    const csv = '﻿' + [header, ...filas, '', ...totales, '', `Tarifa hora fija (EUR/h);${tarifaFija.toFixed(2).replace('.', ',')}`].join('\n');
+    const csv = '﻿' + [header, ...filas, '', ...totales].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -260,78 +223,82 @@ export default function TimeClockManager() {
     const NAVY = [27, 58, 110], GREEN = [22, 163, 74], INK = [15, 23, 42], MUTED = [100, 116, 139];
 
     // Cabecera de marca
-    const cabecera = () => {
-      doc.setFillColor(...NAVY);
-      doc.rect(0, 0, 210, 34, 'F');
-      doc.setFillColor(...GREEN);
-      doc.rect(0, 34, 210, 1.6, 'F');
-      doc.setTextColor(255);
-      doc.setFontSize(9); doc.setFont(undefined, 'bold');
-      doc.text('PADEL MEDINA · ADMINISTRACIÓN', 14, 13);
-      doc.setFontSize(19);
-      doc.text(`Control horario — ${MESES[month]} ${year}`, 14, 24);
-      doc.setFont(undefined, 'normal'); doc.setFontSize(9); doc.setTextColor(200, 215, 235);
-      doc.text(`Hora fija del trabajador: ${tarifaFija.toFixed(2)} €/h (todas las horas) · Las clases se facturan aparte`, 14, 30);
-    };
-    cabecera();
+    doc.setFillColor(...NAVY);
+    doc.rect(0, 0, 210, 34, 'F');
+    doc.setFillColor(...GREEN);
+    doc.rect(0, 34, 210, 1.6, 'F');
+    doc.setTextColor(255);
+    doc.setFontSize(9); doc.setFont(undefined, 'bold');
+    doc.text('PADEL MEDINA · ADMINISTRACIÓN', 14, 13);
+    doc.setFontSize(19);
+    doc.text(`Control horario — ${MESES[month]} ${year}`, 14, 24);
+    doc.setFont(undefined, 'normal'); doc.setFontSize(9); doc.setTextColor(200, 215, 235);
+    doc.text('Horas de las pistas y caja de los entrenos (el sueldo del trabajador es fijo)', 14, 30);
 
-    // Tabla de jornadas
+    // Tabla de jornadas (solo horas)
     let y = 46;
     const thead = () => {
       doc.setFillColor(...NAVY);
       doc.roundedRect(12, y - 5.5, 186, 8.5, 1.5, 1.5, 'F');
       doc.setTextColor(255); doc.setFontSize(8); doc.setFont(undefined, 'bold');
       doc.text('FECHA', 15, y);
-      doc.text('ENTRADA', 58, y, { align: 'right' });
-      doc.text('SALIDA', 78, y, { align: 'right' });
-      doc.text('CLUB', 103, y, { align: 'right' });
-      doc.text('CLASES', 128, y, { align: 'right' });
-      doc.text('TOTAL', 153, y, { align: 'right' });
-      doc.text('SUELDO', 194, y, { align: 'right' });
+      doc.text('ENTRADA', 72, y, { align: 'right' });
+      doc.text('SALIDA', 100, y, { align: 'right' });
+      doc.text('H. CLUB', 130, y, { align: 'right' });
+      doc.text('H. CLASES', 162, y, { align: 'right' });
+      doc.text('TOTAL', 194, y, { align: 'right' });
       y += 9;
     };
     thead();
 
     const cerradas = [...jornadas].reverse().filter(j => j.entrada && j.salida);
     cerradas.forEach((j, i) => {
-      if (y > 270) { doc.addPage(); y = 20; thead(); }
+      if (y > 268) { doc.addPage(); y = 20; thead(); }
       if (i % 2 === 0) {
         doc.setFillColor(248, 250, 252);
         doc.rect(12, y - 4.6, 186, 6.8, 'F');
       }
       doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(...INK);
       doc.text(j.fecha, 15, y);
-      doc.text(hora(j.entrada.fichado_at), 58, y, { align: 'right' });
-      doc.text(hora(j.salida.fichado_at), 78, y, { align: 'right' });
+      doc.text(hora(j.entrada.fichado_at), 72, y, { align: 'right' });
+      doc.text(hora(j.salida.fichado_at), 100, y, { align: 'right' });
       doc.setTextColor(...MUTED);
-      doc.text(fmtHoras(j.msClub), 103, y, { align: 'right' });
+      doc.text(fmtHoras(j.msClub), 130, y, { align: 'right' });
       doc.setTextColor(126, 34, 206);
-      doc.text(fmtHoras(j.msClase), 128, y, { align: 'right' });
+      doc.text(fmtHoras(j.msClase), 162, y, { align: 'right' });
       doc.setFont(undefined, 'bold'); doc.setTextColor(...INK);
-      doc.text(fmtHoras(j.ms), 153, y, { align: 'right' });
-      doc.setTextColor(22, 101, 52);
-      doc.text(sueldoJornada(j).toFixed(2) + ' €', 194, y, { align: 'right' });
+      doc.text(fmtHoras(j.ms), 194, y, { align: 'right' });
       y += 6.8;
     });
 
-    // Tarjeta de total por trabajador
-    y += 5;
+    // Tarjetas de resumen por trabajador: horas + caja de entrenos
+    y += 6;
     for (const [uid, t] of Object.entries(totalesPorUser)) {
-      if (y > 250) { doc.addPage(); y = 20; }
+      if (y > 245) { doc.addPage(); y = 20; }
+      // Caja horas
       doc.setFillColor(240, 253, 244);
       doc.setDrawColor(187, 247, 208);
-      doc.roundedRect(12, y - 5, 186, 26, 2.5, 2.5, 'FD');
-      doc.setFont(undefined, 'bold'); doc.setFontSize(10.5); doc.setTextColor(22, 101, 52);
-      doc.text(`${names[uid] || 'Trabajador'} — ${fmtHoras(t.ms)}`, 17, y + 1.5);
-      doc.text(`Sueldo: ${sueldoTotal(t).toFixed(2)} €`, 193, y + 1.5, { align: 'right' });
-      doc.setFont(undefined, 'normal'); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
-      doc.text(`Desglose: en club ${fmtHoras(t.msClub)} · en clases ${fmtHoras(t.msClase)}`, 17, y + 8);
-      doc.setTextColor(126, 34, 206);
-      doc.text(
-        `Clases aparte: ${GRUPOS.filter(g => t.porGrupo[g.key] > 0).map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])} × ${precioClase(uid, g.key).toFixed(2)}€`).join(' · ') || 'sin clases'}  =  ${clasesAparte(uid, t).toFixed(2)} €`,
-        17, y + 14.5
-      );
-      y += 32;
+      doc.roundedRect(12, y - 5, 90, 26, 2.5, 2.5, 'FD');
+      doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
+      doc.text(`HORAS TOTALES · ${(names[uid] || 'TRABAJADOR').toUpperCase()}`, 17, y + 1);
+      doc.setFontSize(16); doc.setTextColor(22, 101, 52);
+      doc.text(fmtHoras(t.ms), 17, y + 10);
+      doc.setFontSize(7.5); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
+      doc.text(`club ${fmtHoras(t.msClub)} · clases ${fmtHoras(t.msClase)}`, 17, y + 16.5);
+
+      // Caja de entrenos
+      doc.setFillColor(250, 245, 255);
+      doc.setDrawColor(216, 180, 254);
+      doc.roundedRect(108, y - 5, 90, 26, 2.5, 2.5, 'FD');
+      doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
+      doc.text('CAJA DE LOS ENTRENOS', 113, y + 1);
+      doc.setFontSize(16); doc.setTextColor(126, 34, 206);
+      doc.text(`${cajaEntrenos(uid, t).toFixed(2)} €`, 113, y + 10);
+      doc.setFontSize(7); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
+      const detalle = GRUPOS.filter(g => t.porGrupo[g.key] > 0)
+        .map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])} × ${precioClase(uid, g.key).toFixed(2)}€`).join(' · ') || 'sin clases este mes';
+      doc.text(detalle.slice(0, 60), 113, y + 16.5);
+      y += 34;
     }
 
     // Pie
@@ -348,34 +315,20 @@ export default function TimeClockManager() {
     <div>
       <p className="section-label" style={{ marginBottom: '1rem' }}>Control horario del personal</p>
 
-      {/* Tarifa fija (admin) + precios de clase del monitor (solo lectura) */}
-      <div style={{ background: 'white', border: '1.5px solid #E2E8F0', borderRadius: '1rem', padding: '1rem 1.1rem', marginBottom: '1.25rem' }}>
-        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.6rem' }}>💶 Tarifa por hora (fija)</div>
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>
-            Hora del trabajador (clase o club, se paga igual)
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-              <input value={rateClub} onChange={e => setRateClub(e.target.value)} inputMode="decimal"
-                style={{ width: 90, padding: '0.55rem 0.7rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.9rem', fontWeight: 700 }} />
-              <span style={{ color: '#64748B', fontWeight: 700 }}>€/h</span>
+      {/* Precios de clase del monitor (los fija él; aquí solo se ven) */}
+      {Object.entries(tarifasMonitor).length > 0 && (
+        <div style={{ background: 'white', border: '1.5px solid #E2E8F0', borderRadius: '1rem', padding: '0.85rem 1.1rem', marginBottom: '1.25rem' }}>
+          {Object.entries(tarifasMonitor).map(([uid, t]) => (
+            <div key={uid} style={{ fontSize: '0.78rem', color: '#475569', fontWeight: 600 }}>
+              🎾 Precios de clase de <strong>{names[uid] || 'monitor'}</strong> (los fija él en su pantalla):
+              {' '}Ind {fmtEur(t.individual)} · G2 {fmtEur(t.grupo2)} · G3 {fmtEur(t.grupo3)} · G4 {fmtEur(t.grupo4)} por hora
             </div>
-          </label>
-          <button onClick={guardarTarifa} disabled={savingRates}
-            style={{ padding: '0.6rem 1.1rem', borderRadius: '0.7rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', opacity: savingRates ? 0.7 : 1 }}>
-            {savingRates ? 'Guardando…' : 'Guardar tarifa'}
-          </button>
+          ))}
+          <p style={{ margin: '0.4rem 0 0', fontSize: '0.7rem', color: '#94A3B8' }}>
+            El sueldo del trabajador es fijo — aquí se controlan sus horas y la caja que generan los entrenos.
+          </p>
         </div>
-        {Object.entries(tarifasMonitor).length > 0 && (
-          <div style={{ marginTop: '0.7rem', paddingTop: '0.7rem', borderTop: '1px dashed #E2E8F0' }}>
-            {Object.entries(tarifasMonitor).map(([uid, t]) => (
-              <div key={uid} style={{ fontSize: '0.76rem', color: '#475569', fontWeight: 600 }}>
-                🎾 Precios de clase de <strong>{names[uid] || 'monitor'}</strong> (los fija él, van aparte del sueldo):
-                {' '}Ind {fmtEur(t.individual)} · G2 {fmtEur(t.grupo2)} · G3 {fmtEur(t.grupo3)} · G4 {fmtEur(t.grupo4)} por hora
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Selector de mes + exportar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
@@ -392,25 +345,25 @@ export default function TimeClockManager() {
         </div>
       </div>
 
-      {/* Totales por trabajador */}
+      {/* Totales por trabajador: horas + caja de entrenos */}
       {!loading && Object.keys(totalesPorUser).length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
           {Object.entries(totalesPorUser).map(([uid, t]) => (
-            <div key={uid} style={{ background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{names[uid] || 'Trabajador'}</div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.15rem' }}>
-                <span style={{ fontSize: '1.5rem', fontWeight: 900, color: '#166534' }}>{fmtHoras(t.ms)}</span>
-                <span style={{ fontSize: '1.15rem', fontWeight: 900, color: '#0F172A' }}>{fmtEur(sueldoTotal(t))}</span>
-              </div>
-              <div style={{ fontSize: '0.7rem', color: '#16A34A', fontWeight: 700, marginTop: '0.25rem' }}>
+            <div key={`h-${uid}`} style={{ background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>⏱ Horas · {names[uid] || 'Trabajador'}</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#166534', marginTop: '0.15rem' }}>{fmtHoras(t.ms)}</div>
+              <div style={{ fontSize: '0.7rem', color: '#16A34A', fontWeight: 700, marginTop: '0.2rem' }}>
                 🏢 club {fmtHoras(t.msClub)} · 🎾 clases {fmtHoras(t.msClase)}
               </div>
-              {t.msClase > 0 && (
-                <div style={{ fontSize: '0.7rem', color: '#7E22CE', fontWeight: 700, marginTop: '0.2rem' }}>
-                  💜 Clases aparte: {fmtEur(clasesAparte(uid, t))}
-                  {' '}({GRUPOS.filter(g => t.porGrupo[g.key] > 0).map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])}`).join(' · ')})
-                </div>
-              )}
+            </div>
+          ))}
+          {Object.entries(totalesPorUser).map(([uid, t]) => (
+            <div key={`c-${uid}`} style={{ background: '#FAF5FF', border: '1.5px solid #D8B4FE', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#7E22CE', textTransform: 'uppercase', letterSpacing: '0.04em' }}>💰 Caja de los entrenos</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#6B21A8', marginTop: '0.15rem' }}>{fmtEur(cajaEntrenos(uid, t))}</div>
+              <div style={{ fontSize: '0.7rem', color: '#9333EA', fontWeight: 700, marginTop: '0.2rem' }}>
+                {GRUPOS.filter(g => t.porGrupo[g.key] > 0).map(g => `${g.abr} ${fmtHoras(t.porGrupo[g.key])}`).join(' · ') || 'sin clases este mes'}
+              </div>
             </div>
           ))}
         </div>
@@ -440,10 +393,7 @@ export default function TimeClockManager() {
                     {j.abierta ? (
                       <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 999, padding: '0.25rem 0.7rem' }}>⏳ Turno abierto</span>
                     ) : j.ms > 0 ? (
-                      <>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#16A34A' }}>{fmtHoras(j.ms)}</div>
-                        <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>{fmtEur(sueldoJornada(j))}</div>
-                      </>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#16A34A' }}>{fmtHoras(j.ms)}</div>
                     ) : (
                       <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>—</span>
                     )}
