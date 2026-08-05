@@ -193,20 +193,20 @@ export default function TimeClockManager() {
     return { jornadas: jor, totalesPorUser: tot };
   }, [fichajes, entrenosPorDia]);
 
-  // CAJA DE LOS ENTRENOS: cada clase del mes cuenta por su PRECIO COMPLETO
-  // (lo que se paga por esa clase), no por la fracción fichada. El grupo real
-  // sale de la confirmación del monitor; sin confirmar, del planificado.
+  // CAJA DE LOS ENTRENOS: SOLO cuentan las clases que el monitor CONFIRMA
+  // (sus botones 1-4 al acabar el día) = las clases que se han dado de verdad.
+  // Cada una entra por su PRECIO COMPLETO según el grupo confirmado (el precio
+  // total de la clase; cómo se lo repartan los alumnos es cosa suya).
+  // Los entrenos planificados sin confirmar NO suman dinero (solo horas).
   const clasesPorGrupo = useMemo(() => {
     const PERSONAS_GRUPO = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
-    const conf = {};
-    for (const c of confirmadas) conf[`${c.date}|${c.time_slot}|${c.court_id}`] = c.personas;
     const cnt = { individual: 0, grupo2: 0, grupo3: 0, grupo4: 0 };
-    for (const e of entrenos) {
-      const g = PERSONAS_GRUPO[conf[`${e.date}|${e.time_slot}|${e.court_id}`]] || e.entreno_grupo || 'grupo4';
-      cnt[g]++;
+    for (const c of confirmadas) {
+      const g = PERSONAS_GRUPO[c.personas];
+      if (g) cnt[g]++;
     }
     return cnt;
-  }, [entrenos, confirmadas]);
+  }, [confirmadas]);
 
   const cajaEntrenos = (uid) =>
     GRUPOS.reduce((s, g) => s + clasesPorGrupo[g.key] * precioClase(uid, g.key), 0);
@@ -306,7 +306,7 @@ export default function TimeClockManager() {
       doc.setDrawColor(216, 180, 254);
       doc.roundedRect(108, y - 5, 90, 26, 2.5, 2.5, 'FD');
       doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
-      doc.text('CAJA DE LOS ENTRENOS (precio completo por clase)', 113, y + 1);
+      doc.text('CAJA DE LOS ENTRENOS (clases confirmadas × precio)', 113, y + 1);
       doc.setFontSize(16); doc.setTextColor(126, 34, 206);
       doc.text(`${cajaEntrenos(uid).toFixed(2)} €`, 113, y + 10);
       doc.setFontSize(7); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
@@ -340,7 +340,8 @@ export default function TimeClockManager() {
             </div>
           ))}
           <p style={{ margin: '0.4rem 0 0', fontSize: '0.7rem', color: '#94A3B8' }}>
-            El sueldo del trabajador es fijo — aquí se controlan sus horas y la caja que generan los entrenos.
+            El sueldo del trabajador es fijo — aquí se controlan sus horas y la caja de los entrenos.
+            En la caja <strong>solo cuentan las clases que el monitor confirma</strong> al acabar el día, cada una por su precio completo.
           </p>
         </div>
       )}
@@ -374,7 +375,7 @@ export default function TimeClockManager() {
           ))}
           {Object.entries(totalesPorUser).map(([uid]) => (
             <div key={`c-${uid}`} style={{ background: '#FAF5FF', border: '1.5px solid #D8B4FE', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#7E22CE', textTransform: 'uppercase', letterSpacing: '0.04em' }}>💰 Caja de los entrenos ({totalClases} {totalClases === 1 ? 'clase' : 'clases'})</div>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#7E22CE', textTransform: 'uppercase', letterSpacing: '0.04em' }}>💰 Caja de los entrenos ({totalClases} {totalClases === 1 ? 'clase confirmada' : 'clases confirmadas'})</div>
               <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#6B21A8', marginTop: '0.15rem' }}>{fmtEur(cajaEntrenos(uid))}</div>
               <div style={{ fontSize: '0.7rem', color: '#9333EA', fontWeight: 700, marginTop: '0.2rem' }}>
                 {GRUPOS.filter(g => clasesPorGrupo[g.key] > 0).map(g => `${clasesPorGrupo[g.key]}× ${g.abr} a ${fmtEur(precioClase(uid, g.key))}`).join(' · ') || 'sin clases este mes'}
