@@ -57,7 +57,7 @@ export default function MonitorView() {
     try {
       const [bk, bl, ct] = await Promise.all([
         supabase.from('bookings').select('court_id, time_slot, observaciones, status, user_id, metodo_pago, created_at').eq('date', d),
-        supabase.from('blocked_slots').select('court_id, time_slot, tipo').eq('date', d),
+        supabase.from('blocked_slots').select('court_id, time_slot, tipo, entreno_grupo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
 
@@ -80,7 +80,12 @@ export default function MonitorView() {
         ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago });
       });
       (bl.data || []).forEach((s) => {
-        ensure(s.court_id).slots.push({ time: s.time_slot, tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo', note: '' });
+        const GRUPO = { individual: 'Individual', grupo2: 'Grupo 2', grupo3: 'Grupo 3', grupo4: 'Grupo 4' };
+        ensure(s.court_id).slots.push({
+          time: s.time_slot,
+          tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo',
+          note: s.tipo === 'entreno' ? (GRUPO[s.entreno_grupo] || '') : '',
+        });
       });
       const list = Object.values(byCourt).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
       list.forEach((c) => c.slots.sort((a, b) => (a.time || '').localeCompare(b.time || '')));

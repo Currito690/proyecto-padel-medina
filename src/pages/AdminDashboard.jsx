@@ -675,7 +675,7 @@ const AdminDashboard = () => {
       setBookObs('');
     } else if (action === 'block') {
       const tipo = opts.tipo === 'entreno' ? 'entreno' : 'bloqueado';
-      const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id, tipo });
+      const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id, tipo, entreno_grupo: tipo === 'entreno' ? (opts.grupo || 'grupo4') : null });
       actionError = error;
     } else if (action === 'cancel') {
       const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', slot.bookingId);
@@ -1173,9 +1173,17 @@ const AdminDashboard = () => {
                                           <button disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'bloqueado' })} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             🔒 Bloquear
                                           </button>
-                                          <button disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'entreno' })} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #FED7AA', backgroundColor: '#FFF7ED', color: '#9A3412', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
-                                            🏋️ Entreno
-                                          </button>
+                                          {/* Entreno: se elige el tipo de grupo (cada uno tiene su tarifa en Control horario) */}
+                                          {[
+                                            { grupo: 'individual', label: '🏋️ Entreno Individual' },
+                                            { grupo: 'grupo2', label: '🏋️ Entreno G2' },
+                                            { grupo: 'grupo3', label: '🏋️ Entreno G3' },
+                                            { grupo: 'grupo4', label: '🏋️ Entreno G4' },
+                                          ].map(g => (
+                                            <button key={g.grupo} disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'entreno', grupo: g.grupo })} style={{ padding: '0.5rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.76rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                              {g.label}
+                                            </button>
+                                          ))}
                                         </div>
                                       )}
                                     </>
