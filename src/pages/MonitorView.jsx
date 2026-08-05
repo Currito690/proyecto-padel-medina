@@ -513,7 +513,7 @@ export default function MonitorView() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
                       <input value={misTarifas[k]} onChange={e => setMisTarifas(prev => ({ ...prev, [k]: e.target.value }))} inputMode="decimal"
                         style={{ width: 70, padding: '0.5rem 0.6rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.88rem', fontWeight: 700 }} />
-                      <span style={{ color: '#64748B', fontWeight: 700, fontSize: '0.75rem' }}>€/h</span>
+                      <span style={{ color: '#64748B', fontWeight: 700, fontSize: '0.75rem' }}>€/clase</span>
                     </div>
                   </label>
                 ))}
@@ -523,7 +523,7 @@ export default function MonitorView() {
                 </button>
               </div>
               <p style={{ margin: '0.5rem 0 0', fontSize: '0.7rem', color: '#94A3B8' }}>
-                Estos precios son de tus clases y van <strong>aparte de tu sueldo</strong> (tu hora de trabajo se paga siempre igual).
+                Precio de <strong>cada clase completa</strong> según el grupo. Van aparte de tu sueldo.
               </p>
             </div>
           )}
