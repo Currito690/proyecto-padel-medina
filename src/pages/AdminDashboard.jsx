@@ -492,10 +492,10 @@ const AdminDashboard = () => {
       time_slot,
       created_by: user.id,
       tipo: 'entreno',
-      entreno_grupo: entrenoModal.grupo,
+      entreno_grupo: null, // el nº de personas lo confirma el monitor
     });
     if (error) { toast('Error: ' + error.message, 'error'); return; }
-    toast(`🏋️ Entreno ${entrenoModal.grupoLabel} de ${time_slot} marcado ✓`, 'success');
+    toast(`🏋️ Entreno de ${time_slot} marcado ✓ (las personas las confirma el monitor)`, 'success');
     setEntrenoModal(null);
     setActiveSlot(null);
     await loadSlots(selectedDate);
@@ -1003,9 +1003,9 @@ const AdminDashboard = () => {
       {entrenoModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
           <div style={{ background: 'white', borderRadius: '1.1rem', width: '100%', maxWidth: 380, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#7E22CE' }}>🏋️ Entreno {entrenoModal.grupoLabel} — {entrenoModal.courtName}</h3>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#7E22CE' }}>🏋️ Entreno — {entrenoModal.courtName}</h3>
             <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B' }}>
-              Ajusta lo que dura de verdad la clase (ej.: de 20:00 a 21:00). Ese tramo quedará ocupado para los jugadores.
+              Marca el horario real de la clase (ej.: de 20:00 a 21:00). Ese tramo queda ocupado para los jugadores. De cuántas personas es lo confirma el monitor al acabar el día.
             </p>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
               <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Desde
@@ -1316,24 +1316,18 @@ const AdminDashboard = () => {
                                           <button disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'bloqueado' })} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             🔒 Bloquear
                                           </button>
-                                          {/* Entreno: se elige el grupo y luego la DURACIÓN real (modal Desde/Hasta) */}
-                                          {[
-                                            { grupo: 'individual', label: '🏋️ Entreno Individual', corto: 'Individual' },
-                                            { grupo: 'grupo2', label: '🏋️ Entreno G2', corto: 'Grupo 2' },
-                                            { grupo: 'grupo3', label: '🏋️ Entreno G3', corto: 'Grupo 3' },
-                                            { grupo: 'grupo4', label: '🏋️ Entreno G4', corto: 'Grupo 4' },
-                                          ].map(g => (
-                                            <button key={g.grupo} disabled={isProcessing}
-                                              onClick={() => {
-                                                const [ini, fin] = activeSlot.time.split(' - ');
-                                                setEntrenoModal({ courtId: court.id, courtName: court.name, grupo: g.grupo, grupoLabel: g.corto });
-                                                setEntrenoStart(ini);
-                                                setEntrenoEnd(fin);
-                                              }}
-                                              style={{ padding: '0.5rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.76rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
-                                              {g.label}
-                                            </button>
-                                          ))}
+                                          {/* Entreno: el admin solo marca QUE hay clase y su horario; de cuántas
+                                              personas es lo confirma el monitor al acabar el día */}
+                                          <button disabled={isProcessing}
+                                            onClick={() => {
+                                              const [ini, fin] = activeSlot.time.split(' - ');
+                                              setEntrenoModal({ courtId: court.id, courtName: court.name });
+                                              setEntrenoStart(ini);
+                                              setEntrenoEnd(fin);
+                                            }}
+                                            style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                            🏋️ Entreno
+                                          </button>
                                           {(customByCourt[court.id] || []).some(cs => cs.time === activeSlot.time) && (
                                             <button disabled={isProcessing} onClick={eliminarCustomSlot} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                               🗑️ Quitar hueco
