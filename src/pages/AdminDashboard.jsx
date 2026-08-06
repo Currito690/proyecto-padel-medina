@@ -10,8 +10,7 @@ import TimeClockManager from '../components/admin/TimeClockManager';
 import DateSelector from '../components/booking/DateSelector';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverToday, serverNow } from '../utils/serverTime';
-
-const TIMES = ['09:00 - 10:30', '10:30 - 12:00', '12:00 - 13:30', '16:00 - 17:30', '17:30 - 19:00', '19:00 - 20:30', '20:30 - 22:00'];
+import { DEFAULT_SCHEDULE_CONFIG, normalizeScheduleConfig, buildScheduleTimes, rebuildAvailableTimes, parseSlot, toMin } from '../utils/schedule';
 
 const formatDate = (dateStr) => {
   const d = new Date(dateStr + 'T12:00:00');
@@ -357,7 +356,12 @@ const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('adminActiveTab') || 'schedule');
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const DEFAULT_CLUB_HOURS = { 0:'00:00', 1:'00:00', 2:'00:00', 3:'00:00', 4:'00:00', 5:'00:00', 6:'00:00' };
-  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS, cancellation_enabled: true, cancellation_hours: 24 });
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', club_open_time: '00:00', club_hours: DEFAULT_CLUB_HOURS, cancellation_enabled: true, cancellation_hours: 24, schedule_config: DEFAULT_SCHEDULE_CONFIG });
+  // Parrilla editable por el admin; loadSlots (useCallback sin deps) la lee de
+  // este ref para usar siempre la última versión guardada.
+  const scheduleCfgRef = useRef(DEFAULT_SCHEDULE_CONFIG);
+  const [schedDraft, setSchedDraft] = useState(null); // null = editor de horario cerrado
+  const [savingSched, setSavingSched] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
   const [selectedDate, setSelectedDate] = useState(serverToday());
@@ -535,6 +539,69 @@ const AdminDashboard = () => {
     await loadSlots(selectedDate);
   };
 
+  // ── Horario de la parrilla: el admin cambia las horas cuando quiere ──
+  // Misma validación para la vista previa y para Guardar: lo que el admin ve
+  // en verde es exactamente lo que se puede guardar.
+  const validarBorradorHorario = (draft) => {
+    const mins = parseInt(draft.slot_minutes, 10);
+    if (!Number.isFinite(mins) || mins < 30 || mins > 240) return { error: 'La duración de cada sesión debe estar entre 30 y 240 minutos' };
+    if (draft.periods.length === 0) return { error: 'Añade al menos un tramo' };
+    if (draft.periods.some(p => !p.start || !p.end)) return { error: 'Completa las horas de todos los tramos' };
+    if (draft.periods.some(p => p.end <= p.start)) return { error: 'En cada tramo, la hora de fin debe ser mayor que la de inicio' };
+    const sorted = [...draft.periods].sort((a, b) => toMin(a.start) - toMin(b.start));
+    for (let i = 1; i < sorted.length; i++) {
+      if (toMin(sorted[i].start) < toMin(sorted[i - 1].end)) {
+        return { error: `Los tramos se solapan: el de las ${sorted[i].start} empieza antes de que acabe el de las ${sorted[i - 1].start}` };
+      }
+    }
+    const clean = { slot_minutes: mins, periods: sorted.map(p => ({ start: p.start, end: p.end })) };
+    if (buildScheduleTimes(clean).length === 0) return { error: `Con esas horas no cabe ninguna sesión de ${mins} min — revisa los tramos` };
+    return { clean };
+  };
+
+  const guardarHorario = async () => {
+    if (!schedDraft) return;
+    const { error: draftError, clean } = validarBorradorHorario(schedDraft);
+    if (draftError) { toast(draftError, 'error'); return; }
+    // Reglas de métodos de pago ligadas a franjas que desaparecen: avisar y
+    // limpiarlas — si quedaran huérfanas, esas horas volverían en silencio a
+    // aceptar todos los métodos sin que el admin pudiera verlo en su tabla.
+    const nuevos = new Set(buildScheduleTimes(clean));
+    const { data: reglas } = await supabase.from('court_payment_rules').select('time_slot');
+    const huerfanas = [...new Set((reglas || []).map(r => r.time_slot).filter(t => !nuevos.has(t)))];
+    if (huerfanas.length > 0) {
+      const ok = await confirmDialog(
+        `Tienes restricciones de métodos de pago en franjas que dejan de existir (${huerfanas.join(', ')}). Se eliminarán y esas horas volverán a aceptar todos los métodos hasta que las configures de nuevo. ¿Guardar igualmente?`,
+        { title: 'Cambiar horario', okText: 'Guardar y limpiar', danger: true }
+      );
+      if (!ok) return;
+    }
+    setSavingSched(true);
+    const { error } = await supabase.from('site_settings').update({ schedule_config: clean }).eq('id', 1);
+    if (!error && huerfanas.length > 0) {
+      const { error: delError } = await supabase.from('court_payment_rules').delete().in('time_slot', huerfanas);
+      if (delError) toast('El horario se guardó, pero no se pudieron limpiar las reglas de pago antiguas: ' + delError.message, 'error');
+      else setPaymentRules(prev => {
+        const next = {};
+        Object.entries(prev).forEach(([courtId, days]) => {
+          next[courtId] = {};
+          Object.entries(days).forEach(([day, slotRules]) => {
+            next[courtId][day] = Object.fromEntries(Object.entries(slotRules).filter(([slot]) => nuevos.has(slot)));
+          });
+        });
+        return next;
+      });
+    }
+    setSavingSched(false);
+    if (error) { toast('Error al guardar el horario: ' + error.message, 'error'); return; }
+    scheduleCfgRef.current = normalizeScheduleConfig(clean);
+    setSiteSettings(s => ({ ...s, schedule_config: clean }));
+    setSchedDraft(null);
+    setActiveSlot(null);
+    await loadSlots(selectedDate);
+    toast('✓ Horario actualizado. La nueva parrilla ya se ofrece a los jugadores.', 'success');
+  };
+
   const loadSlots = useCallback(async (date) => {
     const [resBookings, resBlocked, resCustoms] = await Promise.all([
       supabase.from('bookings').select('*').eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
@@ -568,14 +635,10 @@ const AdminDashboard = () => {
     const newSlots = {};
     courtsRef.current.forEach(court => {
       newSlots[court.id] = {};
-      TIMES.forEach(time => { newSlots[court.id][time] = { status: 'available' }; });
     });
-    // Huecos personalizados del día (se añaden a la parrilla como disponibles)
+    // Huecos personalizados del día (entran a la parrilla como ANCLAS)
     const cMap = {};
     (resCustoms.data || []).forEach(cs => {
-      if (newSlots[cs.court_id] && !newSlots[cs.court_id][cs.time_slot]) {
-        newSlots[cs.court_id][cs.time_slot] = { status: 'available' };
-      }
       (cMap[cs.court_id] = cMap[cs.court_id] || []).push({ id: cs.id, time: cs.time_slot });
     });
     setCustomByCourt(cMap);
@@ -596,42 +659,21 @@ const AdminDashboard = () => {
       }
     });
 
-    // ── RECOLOCACIÓN (idéntica a la vista del jugador) ──
-    // La parrilla de cada pista se reajusta alrededor de clases/bloqueos con
-    // horario a medida: una sola opción por tramo, sin huecos solapados.
-    // Los huecos personalizados del admin son ANCLAS (inamovibles a su hora).
-    const toMin2 = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-    const parseIv2 = (s) => { const [a, b] = s.split(' - '); return [toMin2(a), toMin2(b)]; };
-    const fmtM2 = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    // ── Disponibles (idéntico a la vista del jugador) ──
+    // SIN auto-ajuste: las horas no cambian solas. Un hueco base pisado por
+    // un entreno/reserva queda ocupado a su hora real y no se recoloca; los
+    // huecos personalizados del admin se ofrecen tal cual y tapan al hueco
+    // base que se solape. La parrilla base la define el admin aquí arriba.
     courtsRef.current.forEach(court => {
       const entries = newSlots[court.id] || {};
       const ocupadas = Object.entries(entries).filter(([, v]) => v.status !== 'available');
-      const occupiedIvs = ocupadas.map(([t]) => parseIv2(t));
+      const occupiedIvs = ocupadas.map(([t]) => parseSlot(t));
       const customTimes = (cMap[court.id] || []).map(c => c.time);
-      const anclas = customTimes.filter(t =>
-        !occupiedIvs.some(([a, b]) => { const [i, f] = parseIv2(t); return i < b && a < f; })
-      );
-      const blockIvs = [...occupiedIvs, ...anclas.map(parseIv2)];
-      const baseTimes = [...new Set([...TIMES, ...customTimes])];
-      const dayEnd = Math.max(...baseTimes.map(t => parseIv2(t)[1]));
       const rebuilt = {};
       ocupadas.forEach(([t, v]) => { rebuilt[t] = v; });
-      anclas.forEach(t => { rebuilt[t] = { status: 'available' }; });
-      let cursor = 0;
-      for (const time of TIMES) {
-        const [ini, fin] = parseIv2(time);
-        const dur = fin - ini;
-        let s = Math.max(cursor, ini);
-        for (let guard = 0; guard < 20; guard++) {
-          const ob = blockIvs.find(([a, b]) => s < b && a < s + dur);
-          if (!ob) break;
-          s = Math.max(s, ob[1]);
-        }
-        if (s + dur > dayEnd) continue;
-        const key = `${fmtM2(s)} - ${fmtM2(s + dur)}`;
-        if (!rebuilt[key]) rebuilt[key] = { status: 'available' };
-        cursor = s + dur;
-      }
+      rebuildAvailableTimes(scheduleCfgRef.current, occupiedIvs, customTimes).forEach(t => {
+        if (!rebuilt[t]) rebuilt[t] = { status: 'available' };
+      });
       newSlots[court.id] = rebuilt;
     });
 
@@ -645,6 +687,8 @@ const AdminDashboard = () => {
         // Cargar ajustes globales
         const { data: settingsData } = await supabase.from('site_settings').select('*').single();
         if (settingsData) {
+          const schedCfg = normalizeScheduleConfig(settingsData.schedule_config);
+          scheduleCfgRef.current = schedCfg;
           setSiteSettings({
             booking_window_days: settingsData.booking_window_days,
             court_price: parseFloat(settingsData.court_price),
@@ -653,6 +697,7 @@ const AdminDashboard = () => {
             club_hours: settingsData.club_hours || DEFAULT_CLUB_HOURS,
             cancellation_enabled: settingsData.cancellation_enabled ?? true,
             cancellation_hours: settingsData.cancellation_hours ?? 24,
+            schedule_config: schedCfg,
           });
         }
 
@@ -925,6 +970,9 @@ const AdminDashboard = () => {
 
   const totalBlocked = Object.values(slots).flatMap(c => Object.values(c)).filter(s => s.status === 'blocked').length;
   const activeCourts = courts.filter(c => c.active).length;
+  // Parrilla vigente (para la tabla de métodos de pago y el modal de mover)
+  const scheduleCfgView = normalizeScheduleConfig(siteSettings.schedule_config);
+  const scheduleTimes = buildScheduleTimes(scheduleCfgView);
 
   const menuItems = [
     { key: 'schedule', label: 'Horario', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
@@ -1211,6 +1259,98 @@ const AdminDashboard = () => {
                     <input type="date" value={selectedDate} onChange={handleDateChange}
                       style={{ padding: '0.75rem 1rem', borderRadius: '0.75rem', border: '1.5px solid #E2E8F0', backgroundColor: 'white', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer', width: '100%' }} />
                     <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#94A3B8', textTransform: 'capitalize' }}>{formatDate(selectedDate)}</p>
+                  </div>
+
+                  {/* ── Horario de la parrilla: editable por el admin cuando quiera ── */}
+                  <div style={{ backgroundColor: 'white', borderRadius: '1rem', border: '1px solid #E2E8F0', padding: '1rem 1.25rem', marginBottom: '1.25rem', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+                    {schedDraft === null ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                        <div>
+                          <p style={{ margin: 0, fontWeight: 800, color: '#0F172A', fontSize: '0.9rem' }}>🕐 Horario de la parrilla</p>
+                          <p style={{ margin: '0.25rem 0 0', fontSize: '0.78rem', color: '#64748B' }}>
+                            {scheduleCfgView.periods.map(p => `${p.start}–${p.end}`).join(' · ')} · sesiones de {scheduleCfgView.slot_minutes} min
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setSchedDraft(JSON.parse(JSON.stringify(scheduleCfgView)))}
+                          style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                          ✎ Modificar horas
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <p style={{ margin: 0, fontWeight: 800, color: '#0F172A', fontSize: '0.9rem' }}>🕐 Modificar horario de la parrilla</p>
+                          <button onClick={() => setSchedDraft(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.1rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+                        </div>
+                        <p style={{ margin: '0 0 0.875rem', fontSize: '0.78rem', color: '#64748B', lineHeight: 1.45 }}>
+                          Cada tramo (mañana / tarde) se rellena con sesiones seguidas y acaba en seco a su hora tope: la mañana llega como mucho a las 14:00 y no aparecen pistas hasta el tramo de las 16:00. Las horas NO se mueven solas: si un entreno pisa un hueco, ese hueco queda ocupado; para ofrecer otra hora usa "+ Hueco" en la pista.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.875rem' }}>
+                          {schedDraft.periods.map((p, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'flex-end', gap: '0.6rem', flexWrap: 'wrap', padding: '0.6rem 0.75rem', borderRadius: '0.75rem', border: '1.5px solid #E2E8F0', background: '#F8FAFC' }}>
+                              <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#475569', alignSelf: 'center', minWidth: '58px' }}>Tramo {i + 1}</span>
+                              <label style={{ flex: 1, minWidth: '110px', fontSize: '0.7rem', fontWeight: 700, color: '#475569' }}>Desde
+                                <input type="time" value={p.start}
+                                  onChange={e => { const v = e.target.value; setSchedDraft(d => ({ ...d, periods: d.periods.map((q, j) => j === i ? { ...q, start: v } : q) })); }}
+                                  style={{ width: '100%', marginTop: 4, padding: '0.45rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box', background: 'white' }} />
+                              </label>
+                              <label style={{ flex: 1, minWidth: '110px', fontSize: '0.7rem', fontWeight: 700, color: '#475569' }}>Hasta (tope)
+                                <input type="time" value={p.end}
+                                  onChange={e => { const v = e.target.value; setSchedDraft(d => ({ ...d, periods: d.periods.map((q, j) => j === i ? { ...q, end: v } : q) })); }}
+                                  style={{ width: '100%', marginTop: 4, padding: '0.45rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box', background: 'white' }} />
+                              </label>
+                              {schedDraft.periods.length > 1 && (
+                                <button onClick={() => setSchedDraft(d => ({ ...d, periods: d.periods.filter((_, j) => j !== i) }))} title="Quitar este tramo"
+                                  style={{ padding: '0.45rem 0.6rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', background: '#FEF2F2', color: '#DC2626', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', alignSelf: 'center' }}>
+                                  🗑
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.875rem' }}>
+                          <button onClick={() => setSchedDraft(d => ({ ...d, periods: [...d.periods, { start: '', end: '' }] }))}
+                            style={{ padding: '0.5rem 0.875rem', borderRadius: '0.625rem', border: '1.5px dashed #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
+                            + Añadir tramo
+                          </button>
+                          <label style={{ fontSize: '0.7rem', fontWeight: 700, color: '#475569' }}>Duración de cada sesión (min)
+                            <input type="number" min="30" max="240" step="15" value={schedDraft.slot_minutes}
+                              onChange={e => { const v = e.target.value; setSchedDraft(d => ({ ...d, slot_minutes: v })); }}
+                              style={{ display: 'block', width: '110px', marginTop: 4, padding: '0.45rem 0.6rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box', fontWeight: 700 }} />
+                          </label>
+                        </div>
+                        {(() => {
+                          // La preview usa la MISMA validación que Guardar: si
+                          // algo impide guardar, aquí se ve el motivo exacto.
+                          const { error: draftError, clean } = validarBorradorHorario(schedDraft);
+                          return (
+                            <div style={{ marginBottom: '0.875rem' }}>
+                              <p style={{ margin: '0 0 0.4rem', fontSize: '0.7rem', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Así quedará la parrilla</p>
+                              {draftError ? (
+                                <p style={{ margin: 0, fontSize: '0.78rem', color: '#DC2626', fontWeight: 600 }}>{draftError}</p>
+                              ) : (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                                  {buildScheduleTimes(clean).map(t => (
+                                    <span key={t} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803D', background: '#F0FDF4', border: '1px solid #BBF7D0', padding: '0.25rem 0.55rem', borderRadius: '999px' }}>{t}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        <div style={{ display: 'flex', gap: '0.6rem' }}>
+                          <button onClick={() => setSchedDraft(null)} disabled={savingSched}
+                            style={{ flex: 1, padding: '0.7rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                            Cancelar
+                          </button>
+                          <button onClick={guardarHorario} disabled={savingSched}
+                            style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: savingSched ? '#94A3B8' : '#16A34A', color: 'white', fontWeight: 800, cursor: savingSched ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                            {savingSched ? 'Guardando…' : '✓ Guardar horario'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
@@ -1852,7 +1992,7 @@ const AdminDashboard = () => {
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {TIMES.map(slot => {
+                                      {scheduleTimes.map(slot => {
                                         const allowed = getAllowedMethods(court.id, slot, paymentDayFilter);
                                         // Si la celda actual hereda de "Todos los días" (no hay regla propia),
                                         // la marcamos en gris claro para hacerlo visible.
@@ -1985,7 +2125,7 @@ const AdminDashboard = () => {
               <select value={moveTargetTime} onChange={e => setMoveTargetTime(e.target.value)}
                 style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem', fontWeight: 600, backgroundColor: 'white', boxSizing: 'border-box' }}>
                 <option value="">— Selecciona franja —</option>
-                {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                {scheduleTimes.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 

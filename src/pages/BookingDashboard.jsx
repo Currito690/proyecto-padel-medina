@@ -7,16 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverNow, serverNowMs, serverToday } from '../utils/serverTime';
-
-const SCHEDULE_TIMES = [
-  '09:00 - 10:30',
-  '10:30 - 12:00',
-  '12:00 - 13:30',
-  '16:00 - 17:30',
-  '17:30 - 19:00',
-  '19:00 - 20:30',
-  '20:30 - 22:00',
-];
+import { DEFAULT_SCHEDULE_CONFIG, normalizeScheduleConfig, rebuildAvailableTimes } from '../utils/schedule';
 
 const PadelIcon = () => (
   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -55,7 +46,10 @@ const BookingDashboard = () => {
     }
   }, []);
   const [selectedDate, setSelectedDate] = useState(serverToday());
-  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00' });
+  const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', schedule_config: DEFAULT_SCHEDULE_CONFIG });
+  // La parrilla la edita el admin cuando quiere; loadSlots la lee de este ref
+  // para no arrastrar cierres con configuración vieja.
+  const scheduleCfgRef = useRef(DEFAULT_SCHEDULE_CONFIG);
   const [slotsLocked, setSlotsLocked] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
 
@@ -136,10 +130,13 @@ const BookingDashboard = () => {
       const s = settingsRes.data;
       const releaseTime = s.slots_release_time || '00:00';
       const parsedPrice = parseFloat(s.court_price);
+      const schedCfg = normalizeScheduleConfig(s.schedule_config);
+      scheduleCfgRef.current = schedCfg;
       setSiteSettings({
         booking_window_days: parseInt(s.booking_window_days, 10) || 7,
         court_price: isNaN(parsedPrice) ? 18.00 : parsedPrice,
         slots_release_time: releaseTime,
+        schedule_config: schedCfg,
       });
       // Check if courts are still locked for today (hora del servidor)
       const now = serverNow();
@@ -191,43 +188,20 @@ const BookingDashboard = () => {
     const currentHours = now.getHours();
     const currentMinutes = now.getMinutes();
 
-    // AUTO-AJUSTE DEL HORARIO: la parrilla se RECOLOCA sola alrededor de las
-    // clases/bloqueos con horario a medida — UNA sola opción por tramo, sin
-    // huecos solapados entre sí. Ej.: entreno 19:00-20:00 → la pista pasa a
-    // ofrecerse de 20:00 a 21:30 y la de 20:30 desaparece (quien quiera otra
-    // hora, que hable con el club). Sin estorbos, la parrilla queda idéntica.
-    // Los huecos personalizados del admin son ANCLAS: inamovibles a su hora.
-    const fmtM = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    // SIN AUTO-AJUSTE: las horas de la parrilla NO cambian solas. Un hueco
+    // base pisado por un entreno/reserva queda ocupado (se muestra con su
+    // horario real) y no se recoloca. Si el club quiere ofrecer otra hora,
+    // el admin la crea a mano ("+ Hueco") y aparece tal cual, tapando al
+    // hueco base que se solape. La parrilla base la define el admin.
     const customTimes = [...new Set((customs || []).map(c => c.time_slot))];
-    const anclas = customTimes.filter(t => !seSolapa(t));
-    const blockIvs = [...occupiedIvs, ...anclas.map(parseIv)];
-    const dayEnd = Math.max(...[...SCHEDULE_TIMES, ...customTimes].map(t => toMin(t.split(' - ')[1])));
-    const disponibles = [...anclas];
-    let cursor = 0;
-    for (const time of SCHEDULE_TIMES) {
-      const [ini, fin] = parseIv(time);
-      const dur = fin - ini;
-      // nunca antes de su hora original (respeta los descansos del club) ni
-      // pisando lo ya recolocado
-      let s = Math.max(cursor, ini);
-      // empujar el inicio más allá de lo ocupado o anclado que pise
-      for (let guard = 0; guard < 20; guard++) {
-        const ob = blockIvs.find(([a, b]) => s < b && a < s + dur);
-        if (!ob) break;
-        s = Math.max(s, ob[1]);
-      }
-      if (s + dur > dayEnd) continue; // ya no cabe en el día
-      const cand = `${fmtM(s)} - ${fmtM(s + dur)}`;
-      if (!disponibles.includes(cand)) disponibles.push(cand);
-      cursor = s + dur;
-    }
+    const disponibles = rebuildAvailableTimes(scheduleCfgRef.current, occupiedIvs, customTimes);
     // Se muestran: lo ocupado con su horario REAL + los huecos recolocados
     const finalTimes = [...new Set([
       ...ocupadosTexto,
       ...disponibles,
     ])].sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)));
 
-    const newSlots = finalTimes.map((time, idx) => {
+    const newSlots = finalTimes.map((time) => {
       let isPast = false;
       if (isTodayOrPast) {
         if (date < todayDateStr) {
@@ -244,12 +218,17 @@ const BookingDashboard = () => {
       const isBooked = seSolapa(time);
 
       return {
-        id: `slot-${idx}`,
+        // La HORA es la identidad del hueco (no el índice): si la parrilla
+        // cambia bajo los pies (admin edita el horario, entreno que recoloca),
+        // la selección no puede saltar en silencio a otra hora.
+        id: time,
         time,
         status: isBooked || isPast ? 'occupied' : 'available',
       };
     });
     setSlots(newSlots);
+    // La selección solo sobrevive al refresco si ESA misma hora sigue libre.
+    setSelectedSlot(prev => (prev && newSlots.some(s => s.id === prev && s.status === 'available')) ? prev : null);
     setLoadingSlots(false);
   };
 
@@ -293,6 +272,11 @@ const BookingDashboard = () => {
     }
     const slot = slots.find(s => s.id === selectedSlot);
     const court = courts.find(c => c.id === selectedCourt);
+    if (!slot || slot.status !== 'available' || !court) {
+      toast('Ese hueco ya no está disponible. Elige otra hora.', 'error');
+      setSelectedSlot(null);
+      return;
+    }
     addItem({
       courtId: selectedCourt,
       courtName: court.name,
@@ -335,15 +319,20 @@ const BookingDashboard = () => {
     let cancelled = false;
     const evaluate = async () => {
       try {
-        const { data } = await supabase.from('site_settings').select('slots_release_time, booking_window_days, court_price').single();
+        // select('*') a propósito: si la columna schedule_config aún no está
+        // migrada, un select con su nombre rompería TODO el refresco en vivo.
+        const { data } = await supabase.from('site_settings').select('*').single();
         if (!cancelled && data) {
+          const sc = normalizeScheduleConfig(data.schedule_config);
+          scheduleCfgRef.current = sc;
           setSiteSettings(prev => {
             const rt = data.slots_release_time || prev.slots_release_time;
             const wd = parseInt(data.booking_window_days, 10) || prev.booking_window_days;
             const cp = Number.isFinite(parseFloat(data.court_price)) ? parseFloat(data.court_price) : prev.court_price;
-            return (prev.slots_release_time === rt && prev.booking_window_days === wd && prev.court_price === cp)
+            const sameSc = JSON.stringify(prev.schedule_config) === JSON.stringify(sc);
+            return (prev.slots_release_time === rt && prev.booking_window_days === wd && prev.court_price === cp && sameSc)
               ? prev
-              : { ...prev, slots_release_time: rt, booking_window_days: wd, court_price: cp };
+              : { ...prev, slots_release_time: rt, booking_window_days: wd, court_price: cp, schedule_config: sc };
           });
         }
       } catch { /* sin red: seguimos con el último valor cargado */ }
@@ -362,6 +351,8 @@ const BookingDashboard = () => {
 
   const currentCourt = courts.find(c => c.id === selectedCourt);
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || 'Jugador';
+  const schedView = normalizeScheduleConfig(siteSettings.schedule_config);
+  const horarioClubTxt = `${schedView.periods[0].start}–${schedView.periods[schedView.periods.length - 1].end}`;
 
   const responsiveStyles = `
     .courts-grid {
@@ -598,7 +589,7 @@ const BookingDashboard = () => {
           </div>
           <div className="stat-item">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3D8B2A" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            <span className="stat-value">09:00–22:00</span>
+            <span className="stat-value">{horarioClubTxt}</span>
             <span className="stat-label">Todos los días</span>
           </div>
           <div className="stat-item">
@@ -842,8 +833,8 @@ const BookingDashboard = () => {
             </svg>
           </div>
           <div>
-            <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>Sesiones de 90 minutos</p>
-            <p style={{ margin: '0.1rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Abierto de 09:00 a 22:00 todos los días</p>
+            <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>Sesiones de {schedView.slot_minutes} minutos</p>
+            <p style={{ margin: '0.1rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Abierto de {schedView.periods[0].start} a {schedView.periods[schedView.periods.length - 1].end} todos los días</p>
           </div>
         </div>
 
