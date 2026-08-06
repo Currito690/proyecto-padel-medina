@@ -166,10 +166,21 @@ const BookingDashboard = () => {
     // Un hold 'pendiente_pago' bloquea el hueco 15 min (mientras el jugador está
     // en el banco); si abandona el pago, caduca solo y el hueco se libera.
     const HOLD_MS = 15 * 60 * 1000;
-    const bookedTimes = new Set((bookings || [])
-      .filter(b => b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS)
-      .map(b => b.time_slot));
-    const blockedTimes = new Set(blocked?.map(b => b.time_slot) || []);
+    // La ocupación se calcula por SOLAPE de intervalos, no por texto exacto:
+    // un entreno a medida (ej. 20:00-21:00) debe bloquear los huecos fijos que
+    // pisa (19:00-20:30 y 20:30-22:00), aunque el texto no coincida.
+    const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const parseIv = (slotStr) => { const [a, b] = slotStr.split(' - '); return [toMin(a), toMin(b)]; };
+    const occupiedIvs = [
+      ...(bookings || [])
+        .filter(b => b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS)
+        .map(b => parseIv(b.time_slot)),
+      ...(blocked || []).map(b => parseIv(b.time_slot)),
+    ];
+    const seSolapa = (slotStr) => {
+      const [ini, fin] = parseIv(slotStr);
+      return occupiedIvs.some(([a, b]) => ini < b && a < fin);
+    };
 
     const now = new Date();
     const todayDateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
@@ -197,7 +208,7 @@ const BookingDashboard = () => {
         }
       }
       
-      const isBooked = bookedTimes.has(time) || blockedTimes.has(time);
+      const isBooked = seSolapa(time);
 
       return {
         id: `slot-${idx}`,

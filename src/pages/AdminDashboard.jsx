@@ -396,6 +396,10 @@ const AdminDashboard = () => {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [customDate, setCustomDate] = useState('');
+  // Entreno con duración a medida (Desde/Hasta editables al marcarlo)
+  const [entrenoModal, setEntrenoModal] = useState(null); // { courtId, courtName, grupo, grupoLabel } | null
+  const [entrenoStart, setEntrenoStart] = useState('');
+  const [entrenoEnd, setEntrenoEnd] = useState('');
   const [moveBooking, setMoveBooking] = useState(null); // { id, courtId, courtName, date, time, client }
   const [moveTargetDate, setMoveTargetDate] = useState('');
   const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
@@ -475,6 +479,26 @@ const AdminDashboard = () => {
         },
       }));
     }
+  };
+
+  // Marcar el entreno con su duración REAL (puede diferir del hueco de la
+  // parrilla; ej.: hueco 19:00-20:30 pero el entreno dura 20:00-21:00).
+  const confirmarEntreno = async () => {
+    if (!entrenoStart || !entrenoEnd || entrenoEnd <= entrenoStart) { toast('Pon una hora de inicio y una de fin válidas', 'error'); return; }
+    const time_slot = `${entrenoStart} - ${entrenoEnd}`;
+    const { error } = await supabase.from('blocked_slots').insert({
+      court_id: entrenoModal.courtId,
+      date: selectedDate,
+      time_slot,
+      created_by: user.id,
+      tipo: 'entreno',
+      entreno_grupo: entrenoModal.grupo,
+    });
+    if (error) { toast('Error: ' + error.message, 'error'); return; }
+    toast(`🏋️ Entreno ${entrenoModal.grupoLabel} de ${time_slot} marcado ✓`, 'success');
+    setEntrenoModal(null);
+    setActiveSlot(null);
+    await loadSlots(selectedDate);
   };
 
   // ── Huecos personalizados: crear y quitar ──
@@ -975,6 +999,30 @@ const AdminDashboard = () => {
       
       <div className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`} onClick={() => setIsSidebarOpen(false)} />
 
+      {/* Modal: duración del entreno */}
+      {entrenoModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: 'white', borderRadius: '1.1rem', width: '100%', maxWidth: 380, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#7E22CE' }}>🏋️ Entreno {entrenoModal.grupoLabel} — {entrenoModal.courtName}</h3>
+            <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B' }}>
+              Ajusta lo que dura de verdad la clase (ej.: de 20:00 a 21:00). Ese tramo quedará ocupado para los jugadores.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+              <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Desde
+                <input type="time" value={entrenoStart} onChange={e => setEntrenoStart(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </label>
+              <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Hasta
+                <input type="time" value={entrenoEnd} onChange={e => setEntrenoEnd(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1.1rem' }}>
+              <button onClick={() => setEntrenoModal(null)} style={{ flex: 1, padding: '0.7rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Cancelar</button>
+              <button onClick={confirmarEntreno} style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: '#9333EA', color: 'white', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Marcar entreno</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: nuevo hueco personalizado */}
       {customModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
@@ -1165,7 +1213,12 @@ const AdminDashboard = () => {
 
                           <div style={{ padding: '0.875rem' }}>
                             <div className="slots-grid">
-                              {[...TIMES, ...((customByCourt[court.id] || []).map(cs => cs.time).filter(t => !TIMES.includes(t)))]
+                              {[...new Set([
+                                ...TIMES,
+                                ...((customByCourt[court.id] || []).map(cs => cs.time)),
+                                // huecos fuera de parrilla con actividad (ej: entreno 20:00-21:00)
+                                ...Object.keys(slots[court.id] || {}),
+                              ])]
                                 .sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)))
                                 .map(time => {
                                 const slot = slots[court.id]?.[time];
@@ -1263,14 +1316,21 @@ const AdminDashboard = () => {
                                           <button disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'bloqueado' })} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             🔒 Bloquear
                                           </button>
-                                          {/* Entreno: se elige el tipo de grupo (cada uno tiene su tarifa en Control horario) */}
+                                          {/* Entreno: se elige el grupo y luego la DURACIÓN real (modal Desde/Hasta) */}
                                           {[
-                                            { grupo: 'individual', label: '🏋️ Entreno Individual' },
-                                            { grupo: 'grupo2', label: '🏋️ Entreno G2' },
-                                            { grupo: 'grupo3', label: '🏋️ Entreno G3' },
-                                            { grupo: 'grupo4', label: '🏋️ Entreno G4' },
+                                            { grupo: 'individual', label: '🏋️ Entreno Individual', corto: 'Individual' },
+                                            { grupo: 'grupo2', label: '🏋️ Entreno G2', corto: 'Grupo 2' },
+                                            { grupo: 'grupo3', label: '🏋️ Entreno G3', corto: 'Grupo 3' },
+                                            { grupo: 'grupo4', label: '🏋️ Entreno G4', corto: 'Grupo 4' },
                                           ].map(g => (
-                                            <button key={g.grupo} disabled={isProcessing} onClick={() => handleAction('block', { tipo: 'entreno', grupo: g.grupo })} style={{ padding: '0.5rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.76rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                            <button key={g.grupo} disabled={isProcessing}
+                                              onClick={() => {
+                                                const [ini, fin] = activeSlot.time.split(' - ');
+                                                setEntrenoModal({ courtId: court.id, courtName: court.name, grupo: g.grupo, grupoLabel: g.corto });
+                                                setEntrenoStart(ini);
+                                                setEntrenoEnd(fin);
+                                              }}
+                                              style={{ padding: '0.5rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.76rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                               {g.label}
                                             </button>
                                           ))}
