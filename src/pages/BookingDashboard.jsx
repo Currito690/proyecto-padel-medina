@@ -194,7 +194,29 @@ const BookingDashboard = () => {
     (customs || []).forEach(c => { if (!allTimes.includes(c.time_slot)) allTimes.push(c.time_slot); });
     allTimes.sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)));
 
-    const newSlots = allTimes.map((time, idx) => {
+    // AUTO-AJUSTE: si un hueco fijo está pisado por un entreno/bloqueo con
+    // horario a medida, se ofrece solo el mismo hueco DESPLAZADO al terminar
+    // la clase (ej.: entreno 19:00-20:00 → la pista de 19:00-20:30 se ofrece
+    // de 20:00 a 21:30), siempre que ese tramo quede realmente libre y no se
+    // salga del horario del club.
+    const fmtM = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    const dayEnd = Math.max(...allTimes.map(t => toMin(t.split(' - ')[1])));
+    const autoTimes = [];
+    for (const time of allTimes) {
+      const [ini, fin] = parseIv(time);
+      const overlapping = occupiedIvs.filter(([a, b]) => ini < b && a < fin);
+      if (!overlapping.length) continue; // el hueco está libre tal cual
+      const dur = fin - ini;
+      const newIni = Math.max(...overlapping.map(([, b]) => b));
+      const newFin = newIni + dur;
+      if (newIni <= ini || newFin > dayEnd) continue;
+      const cand = `${fmtM(newIni)} - ${fmtM(newFin)}`;
+      if (allTimes.includes(cand) || autoTimes.includes(cand) || seSolapa(cand)) continue;
+      autoTimes.push(cand);
+    }
+    const finalTimes = [...allTimes, ...autoTimes].sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)));
+
+    const newSlots = finalTimes.map((time, idx) => {
       let isPast = false;
       if (isTodayOrPast) {
         if (date < todayDateStr) {
