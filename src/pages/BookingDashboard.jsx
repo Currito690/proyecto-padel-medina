@@ -171,12 +171,15 @@ const BookingDashboard = () => {
     // pisa (19:00-20:30 y 20:30-22:00), aunque el texto no coincida.
     const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     const parseIv = (slotStr) => { const [a, b] = slotStr.split(' - '); return [toMin(a), toMin(b)]; };
-    const occupiedIvs = [
+    // Los tramos ocupados se muestran con su horario REAL (el del entreno o la
+    // reserva, ej. "19:00 - 20:00"), no con el hueco fijo que pisan.
+    const ocupadosTexto = [...new Set([
       ...(bookings || [])
         .filter(b => b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS)
-        .map(b => parseIv(b.time_slot)),
-      ...(blocked || []).map(b => parseIv(b.time_slot)),
-    ];
+        .map(b => b.time_slot),
+      ...(blocked || []).map(b => b.time_slot),
+    ])];
+    const occupiedIvs = ocupadosTexto.map(parseIv);
     const seSolapa = (slotStr) => {
       const [ini, fin] = parseIv(slotStr);
       return occupiedIvs.some(([a, b]) => ini < b && a < fin);
@@ -218,9 +221,9 @@ const BookingDashboard = () => {
       if (!disponibles.includes(cand)) disponibles.push(cand);
       cursor = s + dur;
     }
-    // Se muestran: los tramos ocupados (informativos) + los huecos recolocados
+    // Se muestran: lo ocupado con su horario REAL + los huecos recolocados
     const finalTimes = [...new Set([
-      ...[...SCHEDULE_TIMES, ...customTimes].filter(t => seSolapa(t)),
+      ...ocupadosTexto,
       ...disponibles,
     ])].sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)));
 
