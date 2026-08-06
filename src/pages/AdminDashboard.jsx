@@ -9,7 +9,7 @@ import OrdersManager from '../components/admin/OrdersManager';
 import TimeClockManager from '../components/admin/TimeClockManager';
 import DateSelector from '../components/booking/DateSelector';
 import { toast, confirmDialog } from '../utils/notify';
-import { serverToday } from '../utils/serverTime';
+import { serverToday, serverNow } from '../utils/serverTime';
 
 const TIMES = ['09:00 - 10:30', '10:30 - 12:00', '12:00 - 13:30', '16:00 - 17:30', '17:30 - 19:00', '19:00 - 20:30', '20:30 - 22:00'];
 
@@ -395,6 +395,7 @@ const AdminDashboard = () => {
   const [customModal, setCustomModal] = useState(null); // { courtId, courtName } | null
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [customDate, setCustomDate] = useState('');
   const [moveBooking, setMoveBooking] = useState(null); // { id, courtId, courtName, date, time, client }
   const [moveTargetDate, setMoveTargetDate] = useState('');
   const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
@@ -478,15 +479,25 @@ const AdminDashboard = () => {
 
   // ── Huecos personalizados: crear y quitar ──
   const crearCustomSlot = async () => {
+    if (!customDate) { toast('Elige el día del hueco', 'error'); return; }
     if (!customStart || !customEnd || customEnd <= customStart) { toast('Pon una hora de inicio y una de fin válidas', 'error'); return; }
+    // Evitar huecos nacidos "en el pasado" (ej.: crear un 00:00-01:00 por la
+    // noche con la fecha de HOY — esa medianoche pertenece al día SIGUIENTE).
+    const finDt = new Date(`${customDate}T${customEnd}:00`);
+    if (finDt <= serverNow()) {
+      toast('Ese horario ya ha pasado para ese día. Si es para esta noche, pon la fecha de MAÑANA.', 'error');
+      return;
+    }
     const time_slot = `${customStart} - ${customEnd}`;
     const { error } = await supabase.from('custom_slots').insert({
-      court_id: customModal.courtId, date: selectedDate, time_slot, created_by: user.id,
+      court_id: customModal.courtId, date: customDate, time_slot, created_by: user.id,
     });
     if (error) { toast(error.code === '23505' ? 'Ese hueco ya existe ese día' : 'Error: ' + error.message, 'error'); return; }
-    toast(`Hueco ${time_slot} añadido a ${customModal.courtName} ✓`, 'success');
+    toast(`Hueco ${time_slot} añadido a ${customModal.courtName} el ${customDate.split('-').reverse().join('/')} ✓`, 'success');
     setCustomModal(null);
-    await loadSlots(selectedDate);
+    // Saltar al día del hueco para verlo recién creado
+    if (customDate !== selectedDate) setSelectedDate(customDate);
+    await loadSlots(customDate);
   };
 
   const eliminarCustomSlot = async () => {
@@ -840,7 +851,7 @@ const AdminDashboard = () => {
 
   const allBookings = [];
   courts.forEach(court => {
-    TIMES.forEach(time => {
+    [...TIMES, ...((customByCourt[court.id] || []).map(cs => cs.time).filter(t => !TIMES.includes(t)))].forEach(time => {
       const slot = slots[court.id]?.[time];
       if (slot?.status === 'booked') {
         allBookings.push({ ...court, time, client: slot.client, bookingId: slot.bookingId });
@@ -970,8 +981,12 @@ const AdminDashboard = () => {
           <div style={{ background: 'white', borderRadius: '1.1rem', width: '100%', maxWidth: 380, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
             <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🕐 Nuevo hueco — {customModal.courtName}</h3>
             <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B' }}>
-              Para el día {selectedDate.split('-').reverse().join('/')}. Ej.: si hay clase de 20:00 a 21:00, ofrece de 21:00 a 22:30.
+              Ej.: tras una clase de 20:00 a 21:00, ofrece de 21:00 a 22:30. ⚠️ Un hueco de madrugada (00:00) pertenece al día <strong>siguiente</strong>.
             </p>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '0.75rem' }}>Día
+              <input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} min={serverToday()}
+                style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            </label>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
               <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Desde
                 <input type="time" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
@@ -1138,7 +1153,7 @@ const AdminDashboard = () => {
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
                               {court.active && (
-                                <button onClick={() => { setCustomModal({ courtId: court.id, courtName: court.name }); setCustomStart(''); setCustomEnd(''); }}
+                                <button onClick={() => { setCustomModal({ courtId: court.id, courtName: court.name }); setCustomStart(''); setCustomEnd(''); setCustomDate(selectedDate); }}
                                   title="Añadir un hueco a medida (ej: 21:00 - 22:30)"
                                   style={{ fontSize: '0.68rem', fontWeight: 800, backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.45)', padding: '0.25rem 0.6rem', borderRadius: '999px', cursor: 'pointer', fontFamily: 'inherit' }}>
                                   + Hueco
