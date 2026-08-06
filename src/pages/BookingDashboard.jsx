@@ -158,7 +158,7 @@ const BookingDashboard = () => {
     const [{ data: bookings }, { data: blocked }, { data: customs }] = await Promise.all([
       supabase.from('bookings').select('time_slot, status, created_at').eq('court_id', courtId).eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
-      supabase.from('custom_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
+      supabase.from('custom_slots').select('*').eq('court_id', courtId).eq('date', date),
     ]);
     // Un hold 'pendiente_pago' bloquea el hueco 15 min (mientras el jugador está
     // en el banco); si abandona el pago, caduca solo y el hueco se libera.
@@ -191,10 +191,12 @@ const BookingDashboard = () => {
     // SIN AUTO-AJUSTE: las horas de la parrilla NO cambian solas. Un hueco
     // base pisado por un entreno/reserva queda ocupado (se muestra con su
     // horario real) y no se recoloca. Si el club quiere ofrecer otra hora,
-    // el admin la crea a mano ("+ Hueco") y aparece tal cual, tapando al
-    // hueco base que se solape. La parrilla base la define el admin.
+    // el admin la crea a mano ("+ Hueco" / "Editar hora") y aparece tal cual,
+    // tapando al hueco base que se solape o al que sustituye (hides).
+    // La parrilla base la define el admin.
     const customTimes = [...new Set((customs || []).map(c => c.time_slot))];
-    const disponibles = rebuildAvailableTimes(scheduleCfgRef.current, occupiedIvs, customTimes);
+    const hiddenTimes = [...new Set((customs || []).map(c => c.hides).filter(Boolean))];
+    const disponibles = rebuildAvailableTimes(scheduleCfgRef.current, occupiedIvs, customTimes, hiddenTimes);
     // Se muestran: lo ocupado con su horario REAL + los huecos recolocados
     const finalTimes = [...new Set([
       ...ocupadosTexto,

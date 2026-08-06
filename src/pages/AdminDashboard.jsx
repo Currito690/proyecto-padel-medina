@@ -404,6 +404,10 @@ const AdminDashboard = () => {
   const [entrenoModal, setEntrenoModal] = useState(null); // { courtId, courtName, grupo, grupoLabel } | null
   const [entrenoStart, setEntrenoStart] = useState('');
   const [entrenoEnd, setEntrenoEnd] = useState('');
+  // "Editar hora" de un hueco LIBRE, solo para el día seleccionado
+  const [editHourModal, setEditHourModal] = useState(null); // { courtId, courtName, originalTime, customId, hides } | null
+  const [editHourStart, setEditHourStart] = useState('');
+  const [editHourEnd, setEditHourEnd] = useState('');
   const [moveBooking, setMoveBooking] = useState(null); // { id, courtId, courtName, date, time, client }
   const [moveTargetDate, setMoveTargetDate] = useState('');
   const [moveTargetCourtId, setMoveTargetCourtId] = useState('');
@@ -505,6 +509,47 @@ const AdminDashboard = () => {
     await loadSlots(selectedDate);
   };
 
+  // ── "EDITAR HORA": cambiar un hueco LIBRE a otra hora SOLO ese día ──
+  // Se materializa como hueco personalizado que lleva en hides el hueco base
+  // al que sustituye; "Quitar hueco" sobre el nuevo restaura el original.
+  // custom_slots no tiene política de UPDATE, así que re-editar un
+  // personalizado = insertar el nuevo y borrar el viejo.
+  const confirmarEditarHora = async () => {
+    if (!editHourStart || !editHourEnd || editHourEnd <= editHourStart) { toast('Pon una hora de inicio y una de fin válidas', 'error'); return; }
+    const time_slot = `${editHourStart} - ${editHourEnd}`;
+    if (time_slot === editHourModal.originalTime) { setEditHourModal(null); return; }
+    const finDt = new Date(`${selectedDate}T${editHourEnd}:00`);
+    if (finDt <= serverNow()) { toast('Esa hora ya ha pasado para este día', 'error'); return; }
+    // La hora nueva no puede pisar nada ocupado ese día en esa pista
+    const [ini, fin] = parseSlot(time_slot);
+    const pisaOcupado = Object.entries(slots[editHourModal.courtId] || {}).some(([t, v]) => {
+      if (v.status === 'available') return false;
+      const [a, b] = parseSlot(t);
+      return ini < b && a < fin;
+    });
+    if (pisaOcupado) { toast('Esa hora pisa una reserva, bloqueo o entreno de ese día', 'error'); return; }
+    const { error } = await supabase.from('custom_slots').insert({
+      court_id: editHourModal.courtId,
+      date: selectedDate,
+      time_slot,
+      created_by: user.id,
+      // hueco base editado → hides = ese hueco; personalizado re-editado →
+      // arrastra el hides que ya tuviera (o ninguno)
+      hides: editHourModal.customId ? (editHourModal.hides || null) : editHourModal.originalTime,
+    });
+    if (error) {
+      if (error.code === '23505') toast('Ya existe un hueco con esa hora ese día', 'error');
+      else if (/hides/i.test(error.message || '')) toast('Falta aplicar la migración custom_slots_hides en Supabase', 'error');
+      else toast('Error: ' + error.message, 'error');
+      return;
+    }
+    if (editHourModal.customId) await supabase.from('custom_slots').delete().eq('id', editHourModal.customId);
+    toast(`🕐 ${editHourModal.originalTime} → ${time_slot} (solo el ${selectedDate.split('-').reverse().join('/')})`, 'success');
+    setEditHourModal(null);
+    setActiveSlot(null);
+    await loadSlots(selectedDate);
+  };
+
   // ── Huecos personalizados: crear y quitar ──
   const crearCustomSlot = async () => {
     if (!customDate) { toast('Elige el día del hueco', 'error'); return; }
@@ -531,7 +576,10 @@ const AdminDashboard = () => {
   const eliminarCustomSlot = async () => {
     const cs = (customByCourt[activeSlot?.courtId] || []).find(c => c.time === activeSlot?.time);
     if (!cs) return;
-    const ok = await confirmDialog(`¿Quitar el hueco personalizado ${activeSlot.time}? Dejará de ofrecerse a los jugadores.`, { title: 'Quitar hueco', okText: 'Quitar', danger: true });
+    const msg = cs.hides
+      ? `¿Quitar el hueco ${activeSlot.time}? Volverá a ofrecerse el hueco original de ${cs.hides}.`
+      : `¿Quitar el hueco personalizado ${activeSlot.time}? Dejará de ofrecerse a los jugadores.`;
+    const ok = await confirmDialog(msg, { title: 'Quitar hueco', okText: 'Quitar', danger: true });
     if (!ok) return;
     const { error } = await supabase.from('custom_slots').delete().eq('id', cs.id);
     if (error) { toast('Error: ' + error.message, 'error'); return; }
@@ -606,7 +654,7 @@ const AdminDashboard = () => {
     const [resBookings, resBlocked, resCustoms] = await Promise.all([
       supabase.from('bookings').select('*').eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('*').eq('date', date),
-      supabase.from('custom_slots').select('id, court_id, time_slot').eq('date', date),
+      supabase.from('custom_slots').select('*').eq('date', date),
     ]);
 
     if (resBookings.error) {
@@ -636,10 +684,11 @@ const AdminDashboard = () => {
     courtsRef.current.forEach(court => {
       newSlots[court.id] = {};
     });
-    // Huecos personalizados del día (entran a la parrilla como ANCLAS)
+    // Huecos personalizados del día (entran a la parrilla como ANCLAS;
+    // hides = hueco base al que sustituyen ese día vía "Editar hora")
     const cMap = {};
     (resCustoms.data || []).forEach(cs => {
-      (cMap[cs.court_id] = cMap[cs.court_id] || []).push({ id: cs.id, time: cs.time_slot });
+      (cMap[cs.court_id] = cMap[cs.court_id] || []).push({ id: cs.id, time: cs.time_slot, hides: cs.hides || null });
     });
     setCustomByCourt(cMap);
     bookings?.forEach(b => {
@@ -669,9 +718,10 @@ const AdminDashboard = () => {
       const ocupadas = Object.entries(entries).filter(([, v]) => v.status !== 'available');
       const occupiedIvs = ocupadas.map(([t]) => parseSlot(t));
       const customTimes = (cMap[court.id] || []).map(c => c.time);
+      const hiddenTimes = (cMap[court.id] || []).map(c => c.hides).filter(Boolean);
       const rebuilt = {};
       ocupadas.forEach(([t, v]) => { rebuilt[t] = v; });
-      rebuildAvailableTimes(scheduleCfgRef.current, occupiedIvs, customTimes).forEach(t => {
+      rebuildAvailableTimes(scheduleCfgRef.current, occupiedIvs, customTimes, hiddenTimes).forEach(t => {
         if (!rebuilt[t]) rebuilt[t] = { status: 'available' };
       });
       newSlots[court.id] = rebuilt;
@@ -1111,6 +1161,30 @@ const AdminDashboard = () => {
         </div>
       )}
 
+      {/* Modal: editar la hora de un hueco (solo ese día) */}
+      {editHourModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: 'white', borderRadius: '1.1rem', width: '100%', maxWidth: 380, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#1D4ED8' }}>🕐 Editar hora — {editHourModal.courtName}</h3>
+            <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B' }}>
+              El hueco de <strong>{editHourModal.originalTime}</strong> pasará a ofrecerse a la hora nueva <strong>solo este día</strong>. Para deshacerlo: pulsa el hueco nuevo → Quitar hueco. Para cambiar el horario de todos los días usa "✎ Modificar horas".
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+              <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Desde
+                <input type="time" value={editHourStart} onChange={e => setEditHourStart(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </label>
+              <label style={{ flex: 1, fontSize: '0.72rem', fontWeight: 700, color: '#475569' }}>Hasta
+                <input type="time" value={editHourEnd} onChange={e => setEditHourEnd(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '0.55rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1.1rem' }}>
+              <button onClick={() => setEditHourModal(null)} style={{ flex: 1, padding: '0.7rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Cancelar</button>
+              <button onClick={confirmarEditarHora} style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: '#2563EB', color: 'white', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Guardar hora</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: nuevo hueco personalizado */}
       {customModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
@@ -1504,6 +1578,18 @@ const AdminDashboard = () => {
                                             }}
                                             style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             🏋️ Entreno
+                                          </button>
+                                          {/* Editar hora: mueve este hueco a otra hora SOLO este día */}
+                                          <button disabled={isProcessing}
+                                            onClick={() => {
+                                              const cs = (customByCourt[court.id] || []).find(c => c.time === activeSlot.time);
+                                              const [ini, fin] = activeSlot.time.split(' - ');
+                                              setEditHourModal({ courtId: court.id, courtName: court.name, originalTime: activeSlot.time, customId: cs?.id || null, hides: cs?.hides || null });
+                                              setEditHourStart(ini);
+                                              setEditHourEnd(fin);
+                                            }}
+                                            style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #93C5FD', backgroundColor: '#EFF6FF', color: '#1D4ED8', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                            🕐 Editar hora
                                           </button>
                                           {(customByCourt[court.id] || []).some(cs => cs.time === activeSlot.time) && (
                                             <button disabled={isProcessing} onClick={eliminarCustomSlot} style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>

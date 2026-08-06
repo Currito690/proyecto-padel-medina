@@ -56,18 +56,21 @@ export function buildScheduleTimes(config) {
 // Huecos DISPONIBLES de un día: la parrilla base a sus horas fijas, SIN
 // recolocación automática. Un hueco base pisado por algo ocupado (entreno,
 // reserva, bloqueo) simplemente no se ofrece — se queda ocupado a su hora
-// real. Si el admin quiere ofrecer otra hora, la crea a mano ("+ Hueco"):
-// esos huecos personalizados se ofrecen tal cual (salvo que estén pisados) y
-// tapan al hueco base que se solape con ellos, para que nunca haya dos
-// opciones solapadas a elegir.
+// real. Si el admin quiere ofrecer otra hora, la crea a mano ("+ Hueco" o
+// "Editar hora"): esos huecos personalizados se ofrecen tal cual (salvo que
+// estén pisados) y tapan al hueco base que se solape con ellos, para que
+// nunca haya dos opciones solapadas a elegir.
 // occupiedIvs: intervalos ocupados en minutos [[ini, fin], ...].
+// hiddenTimes: huecos base sustituidos ese día por un "Editar hora" del admin
+// (custom_slots.hides) — no se ofrecen aunque estén libres.
 // Devuelve la lista de huecos DISPONIBLES ("HH:MM - HH:MM").
-export function rebuildAvailableTimes(config, occupiedIvs, customTimes = []) {
+export function rebuildAvailableTimes(config, occupiedIvs, customTimes = [], hiddenTimes = []) {
   const overlaps = (ivs, ini, fin) => ivs.some(([a, b]) => ini < b && a < fin);
   const anclas = [...new Set(customTimes)].filter(t => { const [i, f] = parseSlot(t); return !overlaps(occupiedIvs, i, f); });
   const anclaIvs = anclas.map(parseSlot);
   const disponibles = [...anclas];
   for (const time of buildScheduleTimes(config)) {
+    if (hiddenTimes.includes(time)) continue;      // sustituido por un "Editar hora"
     const [ini, fin] = parseSlot(time);
     if (overlaps(occupiedIvs, ini, fin)) continue; // pisado: queda ocupado, no se mueve
     if (overlaps(anclaIvs, ini, fin)) continue;    // el hueco manual del admin manda
