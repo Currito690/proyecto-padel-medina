@@ -188,40 +188,39 @@ const BookingDashboard = () => {
     const currentHours = now.getHours();
     const currentMinutes = now.getMinutes();
 
-    // Huecos personalizados del admin (ej: "21:00 - 22:30") mezclados con la
-    // parrilla fija, ordenados por hora de inicio.
-    const allTimes = [...SCHEDULE_TIMES];
-    (customs || []).forEach(c => { if (!allTimes.includes(c.time_slot)) allTimes.push(c.time_slot); });
-    allTimes.sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)));
-
     // AUTO-AJUSTE DEL HORARIO: la parrilla se RECOLOCA sola alrededor de las
     // clases/bloqueos con horario a medida — UNA sola opción por tramo, sin
     // huecos solapados entre sí. Ej.: entreno 19:00-20:00 → la pista pasa a
     // ofrecerse de 20:00 a 21:30 y la de 20:30 desaparece (quien quiera otra
     // hora, que hable con el club). Sin estorbos, la parrilla queda idéntica.
+    // Los huecos personalizados del admin son ANCLAS: inamovibles a su hora.
     const fmtM = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
-    const dayEnd = Math.max(...allTimes.map(t => toMin(t.split(' - ')[1])));
-    const disponibles = [];
+    const customTimes = [...new Set((customs || []).map(c => c.time_slot))];
+    const anclas = customTimes.filter(t => !seSolapa(t));
+    const blockIvs = [...occupiedIvs, ...anclas.map(parseIv)];
+    const dayEnd = Math.max(...[...SCHEDULE_TIMES, ...customTimes].map(t => toMin(t.split(' - ')[1])));
+    const disponibles = [...anclas];
     let cursor = 0;
-    for (const time of allTimes) {
+    for (const time of SCHEDULE_TIMES) {
       const [ini, fin] = parseIv(time);
       const dur = fin - ini;
       // nunca antes de su hora original (respeta los descansos del club) ni
       // pisando lo ya recolocado
       let s = Math.max(cursor, ini);
-      // empujar el inicio más allá de todo lo ocupado que pise
+      // empujar el inicio más allá de lo ocupado o anclado que pise
       for (let guard = 0; guard < 20; guard++) {
-        const ob = occupiedIvs.find(([a, b]) => s < b && a < s + dur);
+        const ob = blockIvs.find(([a, b]) => s < b && a < s + dur);
         if (!ob) break;
         s = Math.max(s, ob[1]);
       }
       if (s + dur > dayEnd) continue; // ya no cabe en el día
-      disponibles.push(`${fmtM(s)} - ${fmtM(s + dur)}`);
+      const cand = `${fmtM(s)} - ${fmtM(s + dur)}`;
+      if (!disponibles.includes(cand)) disponibles.push(cand);
       cursor = s + dur;
     }
     // Se muestran: los tramos ocupados (informativos) + los huecos recolocados
     const finalTimes = [...new Set([
-      ...allTimes.filter(t => seSolapa(t)),
+      ...[...SCHEDULE_TIMES, ...customTimes].filter(t => seSolapa(t)),
       ...disponibles,
     ])].sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)));
 

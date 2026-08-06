@@ -595,6 +595,46 @@ const AdminDashboard = () => {
         newSlots[b.court_id][b.time_slot] = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
       }
     });
+
+    // ── RECOLOCACIÓN (idéntica a la vista del jugador) ──
+    // La parrilla de cada pista se reajusta alrededor de clases/bloqueos con
+    // horario a medida: una sola opción por tramo, sin huecos solapados.
+    // Los huecos personalizados del admin son ANCLAS (inamovibles a su hora).
+    const toMin2 = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const parseIv2 = (s) => { const [a, b] = s.split(' - '); return [toMin2(a), toMin2(b)]; };
+    const fmtM2 = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    courtsRef.current.forEach(court => {
+      const entries = newSlots[court.id] || {};
+      const ocupadas = Object.entries(entries).filter(([, v]) => v.status !== 'available');
+      const occupiedIvs = ocupadas.map(([t]) => parseIv2(t));
+      const customTimes = (cMap[court.id] || []).map(c => c.time);
+      const anclas = customTimes.filter(t =>
+        !occupiedIvs.some(([a, b]) => { const [i, f] = parseIv2(t); return i < b && a < f; })
+      );
+      const blockIvs = [...occupiedIvs, ...anclas.map(parseIv2)];
+      const baseTimes = [...new Set([...TIMES, ...customTimes])];
+      const dayEnd = Math.max(...baseTimes.map(t => parseIv2(t)[1]));
+      const rebuilt = {};
+      ocupadas.forEach(([t, v]) => { rebuilt[t] = v; });
+      anclas.forEach(t => { rebuilt[t] = { status: 'available' }; });
+      let cursor = 0;
+      for (const time of TIMES) {
+        const [ini, fin] = parseIv2(time);
+        const dur = fin - ini;
+        let s = Math.max(cursor, ini);
+        for (let guard = 0; guard < 20; guard++) {
+          const ob = blockIvs.find(([a, b]) => s < b && a < s + dur);
+          if (!ob) break;
+          s = Math.max(s, ob[1]);
+        }
+        if (s + dur > dayEnd) continue;
+        const key = `${fmtM2(s)} - ${fmtM2(s + dur)}`;
+        if (!rebuilt[key]) rebuilt[key] = { status: 'available' };
+        cursor = s + dur;
+      }
+      newSlots[court.id] = rebuilt;
+    });
+
     setSlots(newSlots);
   }, []);
 
@@ -875,7 +915,7 @@ const AdminDashboard = () => {
 
   const allBookings = [];
   courts.forEach(court => {
-    [...TIMES, ...((customByCourt[court.id] || []).map(cs => cs.time).filter(t => !TIMES.includes(t)))].forEach(time => {
+    Object.keys(slots[court.id] || {}).forEach(time => {
       const slot = slots[court.id]?.[time];
       if (slot?.status === 'booked') {
         allBookings.push({ ...court, time, client: slot.client, bookingId: slot.bookingId });
@@ -1213,12 +1253,9 @@ const AdminDashboard = () => {
 
                           <div style={{ padding: '0.875rem' }}>
                             <div className="slots-grid">
-                              {[...new Set([
-                                ...TIMES,
-                                ...((customByCourt[court.id] || []).map(cs => cs.time)),
-                                // huecos fuera de parrilla con actividad (ej: entreno 20:00-21:00)
-                                ...Object.keys(slots[court.id] || {}),
-                              ])]
+                              {/* La rejilla ya viene RECOLOCADA de loadSlots (misma lógica que
+                                  la vista del jugador): se pinta exactamente lo que existe */}
+                              {Object.keys(slots[court.id] || {})
                                 .sort((a, b) => a.slice(0, 5).localeCompare(b.slice(0, 5)))
                                 .map(time => {
                                 const slot = slots[court.id]?.[time];
