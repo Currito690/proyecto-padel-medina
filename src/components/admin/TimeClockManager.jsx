@@ -367,6 +367,42 @@ export default function TimeClockManager() {
       y += 34;
     }
 
+    // ── Ingresos de clases POR DÍA (mismo desglose que el panel) ──
+    if (ingresosPorDia.length > 0) {
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setFillColor(...NAVY);
+      doc.roundedRect(12, y - 5.5, 186, 8.5, 1.5, 1.5, 'F');
+      doc.setTextColor(255); doc.setFontSize(8.5); doc.setFont(undefined, 'bold');
+      doc.text('INGRESOS DE CLASES POR DÍA', 15, y);
+      doc.text('IMPORTE', 194, y, { align: 'right' });
+      y += 9;
+      for (const d of [...ingresosPorDia].reverse()) {
+        if (y > 268) { doc.addPage(); y = 20; }
+        doc.setFontSize(9); doc.setFont(undefined, 'bold'); doc.setTextColor(...INK);
+        doc.text(`${fechaLarga(d.date)}  ·  ${d.clases.length} ${d.clases.length === 1 ? 'clase' : 'clases'}`, 15, y);
+        doc.setTextColor(126, 34, 206);
+        doc.text(`${d.total.toFixed(2)} €`, 194, y, { align: 'right' });
+        y += 5.6;
+        doc.setFont(undefined, 'normal'); doc.setFontSize(7.8);
+        for (const c of d.clases) {
+          if (y > 272) { doc.addPage(); y = 20; }
+          doc.setTextColor(...MUTED);
+          doc.text(`${c.time_slot} · ${courtNames[c.court_id] || 'Pista'} · ${c.personas} pers. · ${pagosDeClase(c, true) || 'pagos sin marcar'}`.slice(0, 95), 19, y);
+          doc.setTextColor(71, 85, 105);
+          doc.text(`${c.precio.toFixed(2)} €`, 194, y, { align: 'right' });
+          y += 5;
+        }
+        y += 2.5;
+      }
+      if (y > 266) { doc.addPage(); y = 20; }
+      doc.setFillColor(250, 245, 255);
+      doc.roundedRect(12, y - 5, 186, 8.5, 1.5, 1.5, 'F');
+      doc.setFont(undefined, 'bold'); doc.setFontSize(9); doc.setTextColor(107, 33, 168);
+      doc.text(`TOTAL DEL MES · ${clasesDetalle.length} clases · tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano}${pagosResumen.sin ? ` · sin marcar ${pagosResumen.sin}` : ''}`, 15, y + 0.5);
+      doc.text(`${totalIngresos.toFixed(2)} €`, 194, y + 0.5, { align: 'right' });
+      y += 12;
+    }
+
     // Pie
     doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
     doc.text('Fichajes con hora de servidor, ubicación GPS y firma del trabajador (ver panel online).', 14, 285);
@@ -376,6 +412,9 @@ export default function TimeClockManager() {
 
   const esteMes = year === now.getFullYear() && month === now.getMonth();
   const hayJornadas = jornadas.some(j => j.entrada && j.salida);
+  // Exportable si hay jornadas O clases confirmadas (el PDF/Excel ya llevan
+  // también los ingresos por día)
+  const hayDatos = hayJornadas || clasesDetalle.length > 0;
 
   return (
     <div>
@@ -407,8 +446,8 @@ export default function TimeClockManager() {
           <button onClick={() => shiftMonth(1)} disabled={esteMes} style={{ ...navBtn, opacity: esteMes ? 0.35 : 1, cursor: esteMes ? 'not-allowed' : 'pointer' }}>›</button>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={exportPdf} disabled={!hayJornadas} style={{ ...exportBtn, opacity: hayJornadas ? 1 : 0.4 }}>📄 PDF</button>
-          <button onClick={exportCsv} disabled={!hayJornadas} style={{ ...exportBtn, opacity: hayJornadas ? 1 : 0.4 }}>📊 Excel</button>
+          <button onClick={exportPdf} disabled={!hayDatos} style={{ ...exportBtn, opacity: hayDatos ? 1 : 0.4 }}>📄 PDF</button>
+          <button onClick={exportCsv} disabled={!hayDatos} style={{ ...exportBtn, opacity: hayDatos ? 1 : 0.4 }}>📊 Excel</button>
         </div>
       </div>
 
