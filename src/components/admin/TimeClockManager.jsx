@@ -25,7 +25,6 @@ const fmtHoras = (ms) => {
 };
 const horasDec = (ms) => (ms / 3600000).toFixed(2).replace('.', ',');
 const fmtEur = (n) => n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
-const mapsUrl = (f) => (f && f.lat != null ? `https://www.google.com/maps?q=${f.lat},${f.lng}` : null);
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
 // Tipos de clase (columna en monitor_tarifas, etiqueta, abreviatura)
@@ -64,7 +63,6 @@ export default function TimeClockManager() {
   const [names, setNames] = useState({});
   const [courtNames, setCourtNames] = useState({});
   const [loading, setLoading] = useState(true);
-  const [zoom, setZoom] = useState(null); // firma ampliada
   const [tarifasMonitor, setTarifasMonitor] = useState({}); // user_id -> precios de clase (los fija el monitor)
 
   const shiftMonth = (delta) => {
@@ -508,95 +506,11 @@ export default function TimeClockManager() {
         </div>
       )}
 
-      {/* Lista de jornadas */}
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>Cargando fichajes…</div>
-      ) : jornadas.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#94A3B8', border: '2px dashed #E2E8F0', borderRadius: '1.25rem' }}>
-          <div style={{ fontSize: '2.2rem', marginBottom: '0.5rem' }}>🕐</div>
-          <p style={{ fontWeight: 700, color: '#64748B', margin: 0 }}>Sin fichajes este mes</p>
-          <p style={{ fontSize: '0.85rem', margin: '0.25rem 0 0' }}>El trabajador aún no ha fichado entrada/salida.</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-          {jornadas.map((j, i) => {
-            const ubic = mapsUrl(j.entrada) || mapsUrl(j.salida);
-            return (
-              <div key={i} style={{ background: 'white', borderRadius: '0.95rem', border: `1.5px solid ${j.abierta ? '#FDE68A' : '#E2E8F0'}`, padding: '0.85rem 1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.9rem', textTransform: 'capitalize' }}>{fechaLarga(j.fecha)}</div>
-                    <div style={{ fontSize: '0.76rem', color: '#64748B', marginTop: 2 }}>{names[j.userId] || 'Trabajador'}</div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    {j.abierta ? (
-                      <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 999, padding: '0.25rem 0.7rem' }}>⏳ Turno abierto</span>
-                    ) : j.ms > 0 ? (
-                      <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#16A34A' }}>{fmtHoras(j.ms)}</div>
-                    ) : (
-                      <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>—</span>
-                    )}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.6rem', alignItems: 'center' }}>
-                  {j.entrada && (
-                    <span style={chip('#F0FDF4', '#BBF7D0', '#15803D')}>🟢 Entrada {hora(j.entrada.fichado_at)}</span>
-                  )}
-                  {j.salida && (
-                    <span style={chip('#FEF2F2', '#FECACA', '#B91C1C')}>🔴 Salida {hora(j.salida.fichado_at)}</span>
-                  )}
-                  {j.ms > 0 && (
-                    <span style={chip('#F8FAFC', '#E2E8F0', '#475569')}>🏢 Club {fmtHoras(j.msClub)}</span>
-                  )}
-                  {j.ms > 0 && GRUPOS.filter(g => (j.msPorGrupo?.[g.key] || 0) > 0).map(g => (
-                    <span key={g.key} style={chip('#FAF5FF', '#D8B4FE', '#9333EA')}>{g.label} {fmtHoras(j.msPorGrupo[g.key])}</span>
-                  ))}
-                  {ubic ? (
-                    <a href={ubic} target="_blank" rel="noopener noreferrer" style={{ ...chip('#EFF6FF', '#BFDBFE', '#1D4ED8'), textDecoration: 'none', cursor: 'pointer' }}>
-                      📍 Ver ubicación en el mapa
-                    </a>
-                  ) : (
-                    <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>📍 sin ubicación</span>
-                  )}
-                </div>
-
-                {/* Firmas del trabajador (entrada / salida) */}
-                {(j.entrada?.firma || j.salida?.firma) && (
-                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.7rem', paddingTop: '0.7rem', borderTop: '1px dashed #E2E8F0' }}>
-                    {j.entrada?.firma && <Firma label="Firma entrada" src={j.entrada.firma} onZoom={setZoom} />}
-                    {j.salida?.firma && <Firma label="Firma salida" src={j.salida.firma} onZoom={setZoom} />}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Firma ampliada */}
-      {zoom && (
-        <div onClick={() => setZoom(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
-          <div style={{ background: 'white', borderRadius: '1rem', padding: '1rem', maxWidth: 480, width: '100%' }}>
-            <img src={zoom} alt="Firma" style={{ width: '100%', display: 'block', borderRadius: '0.5rem' }} />
-            <p style={{ textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8', margin: '0.6rem 0 0' }}>Toca para cerrar</p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Firma({ label, src, onZoom }) {
-  return (
-    <div style={{ textAlign: 'center' }}>
-      <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{label}</div>
-      <img src={src} alt={label} onClick={() => onZoom(src)}
-        style={{ height: 54, width: 'auto', maxWidth: 160, border: '1px solid #E2E8F0', borderRadius: '0.5rem', background: 'white', cursor: 'zoom-in', objectFit: 'contain' }} />
+      {/* Los fichajes del trabajador NO se listan en pantalla (petición del
+          club): las horas por día siguen saliendo en el PDF y el Excel. */}
     </div>
   );
 }
 
 const navBtn = { width: 40, height: 40, borderRadius: '0.6rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#0F172A', fontSize: '1.3rem', fontWeight: 800, cursor: 'pointer', lineHeight: 1 };
 const exportBtn = { padding: '0.6rem 1rem', borderRadius: '0.7rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#0F172A', fontWeight: 800, fontSize: '0.82rem', cursor: 'pointer' };
-const chip = (bg, border, color) => ({ fontSize: '0.72rem', fontWeight: 700, color, background: bg, border: `1px solid ${border}`, borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' });
