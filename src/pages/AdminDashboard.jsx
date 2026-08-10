@@ -114,6 +114,107 @@ function SplitAdmin({ bookingId }) {
   );
 }
 
+// Cómo ha pagado CADA JUGADOR de la reserva (lo marca el admin al pulsar la
+// reserva en su Horario): 💳 tarjeta / 📱 bizum / 🏪 club por jugador, o el
+// atajo "✓ Pista pagada" (= cobro_confirmado, el mismo check que usa Finanzas).
+function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMetodo, onSaved }) {
+  const norm = (arr) => {
+    const a = Array.isArray(arr) ? [...arr] : [];
+    while (a.length < 4) a.push(null);
+    return a.slice(0, 4);
+  };
+  const [pagos, setPagos] = useState(() => norm(initPagos));
+  const [cobro, setCobro] = useState(!!initCobro);
+  const [isFree, setIsFree] = useState(!!initIsFree);
+  const [metodo, setMetodo] = useState(initMetodo || null);
+  const [busy, setBusy] = useState(false);
+
+  // Releer SIEMPRE de BD al abrir: el mapa de slots del padre solo se recarga
+  // al cambiar de día — partir de su copia vieja machacaría pagos ya guardados.
+  useEffect(() => {
+    let alive = true;
+    supabase.from('bookings').select('*').eq('id', bookingId).single().then(({ data }) => {
+      if (!alive || !data) return;
+      setPagos(norm(data.pagos_jugadores));
+      setCobro(!!data.cobro_confirmado);
+      setIsFree(!!data.is_free);
+      setMetodo(data.metodo_pago || null);
+    });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookingId]);
+
+  const marcar = async (idx, metodoPago) => {
+    if (busy) return;
+    const next = [...pagos];
+    next[idx] = next[idx] === metodoPago ? null : metodoPago; // repetir = desmarcar
+    setBusy(true);
+    const { error } = await supabase.from('bookings').update({ pagos_jugadores: next }).eq('id', bookingId);
+    setBusy(false);
+    if (error) {
+      toast(/pagos_jugadores/i.test(error.message || '')
+        ? 'Falta aplicar la migración bookings_pagos_jugadores en Supabase'
+        : 'Error: ' + error.message, 'error');
+      return;
+    }
+    setPagos(next);
+    onSaved?.({ pagosJugadores: next });
+  };
+
+  const togglePagada = async () => {
+    if (busy) return;
+    const next = !cobro;
+    // La MISMA regla que Finanzas (confirmarCobro/deshacerCobro): una reserva
+    // manual del admin nace is_free=true y pasa a contar como ingreso al
+    // cobrarse; al deshacer vuelve a gratuita. Sin esto, el mismo botón daría
+    // cifras distintas según se pulse aquí o en Finanzas.
+    const patch = { cobro_confirmado: next, cobrado_at: next ? new Date().toISOString() : null };
+    let nextFree = isFree;
+    if (metodo === 'manual') {
+      if (next && isFree) { patch.is_free = false; nextFree = false; }
+      if (!next) { patch.is_free = true; nextFree = true; }
+    }
+    setBusy(true);
+    const { error } = await supabase.from('bookings').update(patch).eq('id', bookingId);
+    setBusy(false);
+    if (error) { toast('Error: ' + error.message, 'error'); return; }
+    setCobro(next);
+    setIsFree(nextFree);
+    onSaved?.({ cobroConfirmado: next, isFree: nextFree });
+    toast(next ? '✓ Pista marcada como pagada (también en Finanzas)' : 'Pista marcada como pendiente de cobro', 'success');
+  };
+
+  const METODOS_PISTA = [['tarjeta', '💳 Tarjeta'], ['bizum', '📱 Bizum'], ['club', '🏪 Club']];
+  return (
+    <div style={{ marginTop: '0.6rem', marginBottom: '0.6rem', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.6rem', padding: '0.7rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>💰 Cómo han pagado los jugadores</span>
+        <button onClick={togglePagada} disabled={busy}
+          style={{ fontSize: '0.72rem', fontWeight: 800, padding: '0.3rem 0.7rem', borderRadius: 999, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            border: `1.5px solid ${cobro ? '#16A34A' : '#CBD5E1'}`, background: cobro ? '#16A34A' : 'white', color: cobro ? 'white' : '#475569' }}>
+          {cobro ? '✓ Pista pagada' : 'Marcar pista pagada'}
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', minWidth: 68 }}>👤 Jugador {i + 1}</span>
+            {METODOS_PISTA.map(([mk, ml]) => (
+              <button key={mk} disabled={busy} onClick={() => marcar(i, mk)}
+                style={{ padding: '0.28rem 0.55rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 800, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                  border: `1.5px solid ${pagos[i] === mk ? '#1D4ED8' : '#E2E8F0'}`,
+                  background: pagos[i] === mk ? '#1D4ED8' : 'white',
+                  color: pagos[i] === mk ? 'white' : '#64748B' }}>
+                {ml}
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const editLabel = { display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.04em' };
 const editInput = { width: '100%', padding: '0.7rem 0.85rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.9rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' };
 
@@ -699,6 +800,8 @@ const AdminDashboard = () => {
             ? `⏳ ${b.profiles?.name || 'Pago en curso'}`
             : (b.observaciones || b.profiles?.name || 'Cliente'),
           bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type,
+          pagosJugadores: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
+          cobroConfirmado: !!b.cobro_confirmado,
         };
       }
     });
@@ -1511,6 +1614,25 @@ const AdminDashboard = () => {
                                 </div>
                                 {selectedSlotData.status === 'booked' && selectedSlotData.paymentType === 'split' && (
                                   <SplitAdmin bookingId={selectedSlotData.bookingId} />
+                                )}
+                                {selectedSlotData.status === 'booked' && (
+                                  <PagosPistaAdmin
+                                    key={selectedSlotData.bookingId}
+                                    bookingId={selectedSlotData.bookingId}
+                                    initPagos={selectedSlotData.pagosJugadores}
+                                    initCobro={selectedSlotData.cobroConfirmado}
+                                    initIsFree={selectedSlotData.isFree}
+                                    initMetodo={selectedSlotData.metodo}
+                                    onSaved={(patch) => {
+                                      // Mantener fresco el mapa de slots del padre
+                                      const { courtId, time } = activeSlot;
+                                      setSlots(prev => {
+                                        const c = prev[courtId];
+                                        if (!c?.[time]) return prev;
+                                        return { ...prev, [courtId]: { ...c, [time]: { ...c[time], ...patch } } };
+                                      });
+                                    }}
+                                  />
                                 )}
                                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                   {selectedSlotData.status === 'available' && (

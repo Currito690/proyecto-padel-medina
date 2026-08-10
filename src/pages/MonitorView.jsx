@@ -152,13 +152,20 @@ export default function MonitorView() {
   const ultimoFichaje = fichajes[fichajes.length - 1];
   const trabajando = ultimoFichaje?.tipo === 'entrada';
 
+  // Dos intentos: GPS fino y, si falla (interior, permiso lento), ubicación
+  // aproximada por wifi/antenas — así el fichaje casi nunca sale sin 📍.
   const getPosicion = () => new Promise((resolve) => {
     if (!navigator.geolocation) { resolve(null); return; }
-    navigator.geolocation.getCurrentPosition(
+    const opciones = [
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
+    ];
+    const intenta = (i) => navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      () => (i + 1 < opciones.length ? intenta(i + 1) : resolve(null)),
+      opciones[i]
     );
+    intenta(0);
   });
 
   // El fichaje NO es un simple botón: el trabajador debe FIRMAR. El botón abre
@@ -195,44 +202,134 @@ export default function MonitorView() {
     setFichando(false);
   };
 
-  // ── Confirmación de clases: cuántas personas tuvo cada entreno del día ──
-  // Lo que confirme lolo manda sobre lo planificado (se guarda en su propia
-  // tabla clases_monitor; el horario sigue siendo solo lectura para él).
-  const [clasesConf, setClasesConf] = useState({}); // "courtId|time" -> personas
+  // ── Confirmación de clases: personas, PRECIO de esa clase y cómo pagó
+  // cada alumno (tarjeta / bizum / en mano). Lo que confirme lolo manda sobre
+  // lo planificado (tabla clases_monitor; el horario sigue siendo solo
+  // lectura para él).
+  const [clasesConf, setClasesConf] = useState({}); // "courtId|time" -> { personas, precio, pagos }
   const [confGuardando, setConfGuardando] = useState(null);
+  const [precioEdits, setPrecioEdits] = useState({}); // "courtId|time" -> texto en edición
+
+  const GRUPO_PERSONAS = { individual: 1, grupo2: 2, grupo3: 3, grupo4: 4 };
+  // Precio efectivo de una clase: el suyo propio o, si no tiene, mi tarifa
+  // según el nº de personas
+  const KEY_TARIFA = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
+
+  // Al cambiar de día rápido pueden llegar respuestas fuera de orden: solo
+  // vale la del día que sigue en pantalla (si no, se mostrarían — y GUARDARÍAN
+  // al fusionar — precios y pagos de otro día).
+  const dateRef = useRef(date);
+  useEffect(() => { dateRef.current = date; }, [date]);
 
   const loadClasesConf = useCallback(async (d) => {
     if (!user?.id) return;
     const { data } = await supabase
       .from('clases_monitor')
-      .select('court_id, time_slot, personas')
+      .select('*')
       .eq('user_id', user.id)
       .eq('date', d);
+    if (dateRef.current !== d) return; // respuesta de un día que ya no se ve
     const m = {};
-    (data || []).forEach(c => { m[`${c.court_id}|${c.time_slot}`] = c.personas; });
+    (data || []).forEach(c => {
+      m[`${c.court_id}|${c.time_slot}`] = {
+        personas: c.personas,
+        precio: c.precio != null ? Number(c.precio) : null,
+        pagos: Array.isArray(c.pagos) ? c.pagos : [],
+      };
+    });
     setClasesConf(m);
+    setPrecioEdits({});
   }, [user?.id]);
   useEffect(() => { loadClasesConf(date); }, [date, loadClasesConf]);
 
-  const confirmarClase = async (courtId, timeSlot, personas) => {
-    const key = `${courtId}|${timeSlot}`;
+  // Guarda la clase FUSIONANDO lo que ya hay (personas, precio y pagos van
+  // juntos en la misma fila; cada botón solo cambia su parte)
+  const upsertClase = async (e, patch, okMsg) => {
+    const key = `${e.courtId}|${e.time}`;
+    const cur = clasesConf[key] || {};
+    const personas = patch.personas ?? cur.personas ?? GRUPO_PERSONAS[e.grupo] ?? 1;
+    let pagos = [...(patch.pagos ?? cur.pagos ?? [])].slice(0, personas);
+    while (pagos.length < personas) pagos.push(null);
+    const precio = patch.precio !== undefined ? patch.precio : (cur.precio ?? null);
     setConfGuardando(key);
-    const { error } = await supabase.from('clases_monitor').upsert(
-      { user_id: user.id, date, time_slot: timeSlot, court_id: courtId, personas, updated_at: new Date().toISOString() },
+    let { error } = await supabase.from('clases_monitor').upsert(
+      { user_id: user.id, date, time_slot: e.time, court_id: e.courtId, personas, precio, pagos, updated_at: new Date().toISOString() },
       { onConflict: 'user_id,date,time_slot,court_id' }
     );
+    // BD sin migrar (sin columnas precio/pagos): guardar al menos las personas
+    if (error && /precio|pagos/i.test(error.message || '')) {
+      toast('Falta aplicar la migración clases_monitor_pagos en Supabase (precio y pagos aún no se guardan)', 'error');
+      ({ error } = await supabase.from('clases_monitor').upsert(
+        { user_id: user.id, date, time_slot: e.time, court_id: e.courtId, personas, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,date,time_slot,court_id' }
+      ));
+    }
     setConfGuardando(null);
-    if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
-    setClasesConf(prev => ({ ...prev, [key]: personas }));
-    toast(`Clase de ${timeSlot} guardada: ${personas} ${personas === 1 ? 'persona' : 'personas'} ✓`, 'success');
+    if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return false; }
+    setClasesConf(prev => ({ ...prev, [key]: { personas, precio, pagos } }));
+    if (okMsg) toast(okMsg, 'success');
+    return true;
+  };
+
+  // Si hay un precio a medio editar, se guarda EN EL MISMO viaje que las
+  // personas o el pago (así, tocar "3" con el precio recién escrito no pierde
+  // ni el click ni el precio).
+  const precioPendiente = (key) => {
+    const txt = precioEdits[key];
+    if (txt === undefined) return {};
+    const n = Number(String(txt).replace(',', '.').trim());
+    return isFinite(n) && n >= 0 ? { precio: n } : {};
+  };
+  const limpiarEdicionPrecio = (key) =>
+    setPrecioEdits(prev => { const cp = { ...prev }; delete cp[key]; return cp; });
+
+  const confirmarClase = async (e, personas) => {
+    const key = `${e.courtId}|${e.time}`;
+    const extra = precioPendiente(key);
+    const ok = await upsertClase(e, { personas, ...extra }, `Clase de ${e.time} guardada: ${personas} ${personas === 1 ? 'persona' : 'personas'} ✓`);
+    if (ok && extra.precio !== undefined) limpiarEdicionPrecio(key);
+    return ok;
+  };
+
+  const tarifaDe = (n) => {
+    const v = Number(String(misTarifas[KEY_TARIFA[n]] ?? '0').replace(',', '.'));
+    return isFinite(v) && v >= 0 ? v : 0;
+  };
+
+  const guardarPrecio = async (e) => {
+    const key = `${e.courtId}|${e.time}`;
+    const txt = precioEdits[key];
+    if (txt === undefined) return;
+    const cur = clasesConf[key];
+    // El precio solo se toca en clases YA confirmadas: si no, guardar crearía
+    // la fila y la clase contaría como confirmada (e ingresada) sin serlo.
+    if (cur?.personas == null) { toast('Confirma primero cuántas personas tuvo la clase (botones 1-4)', 'error'); limpiarEdicionPrecio(key); return; }
+    const n = Number(String(txt).replace(',', '.').trim());
+    if (!isFinite(n) || n < 0) { toast('Precio no válido (ej: 15 o 12,50)', 'error'); return; }
+    if (n === (cur.precio ?? tarifaDe(cur.personas))) { limpiarEdicionPrecio(key); return; } // sin cambios
+    const ok = await upsertClase(e, { precio: n }, `Precio de la clase de ${e.time}: ${n.toFixed(2).replace('.', ',')} € ✓`);
+    if (ok) limpiarEdicionPrecio(key);
+  };
+
+  // Cómo pagó el alumno idx: volver a pulsar el mismo botón = desmarcar.
+  // Solo en clases confirmadas (ver guardarPrecio).
+  const marcarPago = async (e, idx, metodo) => {
+    const key = `${e.courtId}|${e.time}`;
+    const cur = clasesConf[key];
+    if (cur?.personas == null) { toast('Confirma primero cuántas personas tuvo la clase (botones 1-4)', 'error'); return; }
+    const pagos = [...(cur.pagos || [])].slice(0, cur.personas);
+    while (pagos.length < cur.personas) pagos.push(null);
+    pagos[idx] = pagos[idx] === metodo ? null : metodo;
+    const extra = precioPendiente(key);
+    const ok = await upsertClase(e, { pagos, ...extra });
+    if (ok && extra.precio !== undefined) limpiarEdicionPrecio(key);
+    return ok;
   };
 
   // Entrenos del día visible (para la tarjeta de clases)
   const entrenosDelDia = courts.flatMap(c =>
     c.slots.filter(s => s.tipo === 'entreno').map(s => ({ courtId: c.id, courtName: c.name, time: s.time, grupo: s.grupo }))
   ).sort((a, b) => a.time.localeCompare(b.time));
-
-  const GRUPO_PERSONAS = { individual: 1, grupo2: 2, grupo3: 3, grupo4: 4 };
 
   // ── Mis tarifas de clase: las fija el PROPIO monitor (tabla monitor_tarifas) ──
   const [misTarifas, setMisTarifas] = useState({ individual: '0', grupo2: '0', grupo3: '0', grupo4: '0' });
@@ -486,11 +583,18 @@ export default function MonitorView() {
           </div>
           {fichajes.length > 0 && (
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.65rem' }}>
-              {fichajes.map(f => (
-                <span key={f.id} style={{ fontSize: '0.7rem', fontWeight: 800, color: f.tipo === 'entrada' ? '#15803D' : '#B91C1C', background: f.tipo === 'entrada' ? '#F0FDF4' : '#FEF2F2', border: `1px solid ${f.tipo === 'entrada' ? '#BBF7D0' : '#FECACA'}`, borderRadius: 999, padding: '0.22rem 0.6rem' }}>
-                  {f.tipo === 'entrada' ? '🟢 Entrada' : '🔴 Salida'} {horaDe(f.fichado_at)}{f.lat != null ? ' · 📍' : ''}
-                </span>
-              ))}
+              {fichajes.map(f => {
+                const st = { fontSize: '0.7rem', fontWeight: 800, color: f.tipo === 'entrada' ? '#15803D' : '#B91C1C', background: f.tipo === 'entrada' ? '#F0FDF4' : '#FEF2F2', border: `1px solid ${f.tipo === 'entrada' ? '#BBF7D0' : '#FECACA'}`, borderRadius: 999, padding: '0.22rem 0.6rem' };
+                const texto = `${f.tipo === 'entrada' ? '🟢 Entrada' : '🔴 Salida'} ${horaDe(f.fichado_at)}`;
+                // Con ubicación: el chip abre el punto exacto en Google Maps
+                return f.lat != null ? (
+                  <a key={f.id} href={`https://www.google.com/maps?q=${f.lat},${f.lng}`} target="_blank" rel="noopener noreferrer" style={{ ...st, textDecoration: 'none', cursor: 'pointer' }}>
+                    {texto} · 📍 mapa
+                  </a>
+                ) : (
+                  <span key={f.id} style={st}>{texto} · sin 📍</span>
+                );
+              })}
             </div>
           )}
           <button onClick={generarInforme} disabled={generandoPdf} style={{ marginTop: '0.7rem', width: '100%', padding: '0.6rem', borderRadius: '0.65rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#334155', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', opacity: generandoPdf ? 0.6 : 1 }}>
@@ -534,38 +638,90 @@ export default function MonitorView() {
           <div style={{ background: 'white', border: '1.5px solid #D8B4FE', borderRadius: '0.95rem', padding: '0.9rem 1rem', marginBottom: '1rem', boxShadow: '0 1px 3px rgba(15,23,42,0.05)' }}>
             <div style={{ fontWeight: 800, color: '#7E22CE', fontSize: '0.9rem' }}>🎾 Clases del día</div>
             <p style={{ margin: '0.2rem 0 0.7rem', fontSize: '0.74rem', color: '#64748B' }}>
-              Al terminar, marca cuántas personas ha tenido cada clase (así se calcula bien tu hora).
+              Al terminar: marca cuántas personas tuvo la clase, ajusta el precio si hace falta y apunta cómo pagó cada alumno.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
               {entrenosDelDia.map(e => {
                 const key = `${e.courtId}|${e.time}`;
-                const confirmado = clasesConf[key];               // lo que marcó lolo
+                const conf = clasesConf[key];
+                const confirmado = conf?.personas ?? null;           // lo que marcó lolo
                 const planificado = GRUPO_PERSONAS[e.grupo] || null; // lo que puso el admin
                 const activo = confirmado ?? null;
+                const personasEf = confirmado ?? planificado ?? 1;
+                const precioEf = conf?.precio ?? tarifaDe(personasEf);
+                const precioTxt = precioEdits[key] !== undefined ? precioEdits[key] : String(precioEf).replace('.', ',');
+                const pagos = conf?.pagos || [];
                 return (
-                  <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap', border: '1px solid #F1F5F9', borderRadius: '0.7rem', padding: '0.55rem 0.7rem', background: confirmado ? '#FAF5FF' : '#FFFFFF' }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.82rem' }}>{e.time} · {e.courtName}</div>
-                      <div style={{ fontSize: '0.68rem', color: confirmado ? '#7E22CE' : '#94A3B8', fontWeight: 700 }}>
-                        {confirmado
-                          ? `✓ Confirmada: ${confirmado} ${confirmado === 1 ? 'persona' : 'personas'}`
-                          : planificado ? `Prevista: ${planificado} pers. — confirma al terminar` : 'Sin confirmar'}
+                  <div key={key} style={{ border: '1px solid #F1F5F9', borderRadius: '0.7rem', padding: '0.55rem 0.7rem', background: confirmado ? '#FAF5FF' : '#FFFFFF' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap' }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.82rem' }}>{e.time} · {e.courtName}</span>
+                          {/* Precio de ESTA clase (editable al confirmarla; por defecto tu tarifa del grupo) */}
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                            <input
+                              value={precioTxt}
+                              inputMode="decimal"
+                              disabled={confirmado == null}
+                              title={confirmado == null ? 'Confirma primero las personas (1-4)' : 'Precio de esta clase'}
+                              onChange={ev => { const v = ev.target.value; setPrecioEdits(prev => ({ ...prev, [key]: v })); }}
+                              onBlur={() => { if (precioEdits[key] !== undefined) guardarPrecio(e); }}
+                              onKeyDown={ev => { if (ev.key === 'Enter') ev.currentTarget.blur(); }}
+                              style={{ width: 56, padding: '0.32rem 0.4rem', borderRadius: '0.5rem', border: `1.5px solid ${precioEdits[key] !== undefined ? '#9333EA' : '#E2E8F0'}`, fontSize: '0.8rem', fontWeight: 800, textAlign: 'right', fontFamily: 'inherit', color: '#0F172A', opacity: confirmado == null ? 0.55 : 1 }}
+                            />
+                            <span style={{ fontSize: '0.74rem', fontWeight: 800, color: '#7E22CE' }}>€</span>
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.68rem', color: confirmado ? '#7E22CE' : '#94A3B8', fontWeight: 700, marginTop: 2 }}>
+                          {confirmado
+                            ? `✓ Confirmada: ${confirmado} ${confirmado === 1 ? 'persona' : 'personas'}`
+                            : planificado ? `Prevista: ${planificado} pers. — confirma al terminar` : 'Sin confirmar'}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.3rem' }}>
+                        {[1, 2, 3, 4].map(n => (
+                          <button key={n} disabled={confGuardando === key}
+                            onPointerDown={ev => ev.preventDefault()}
+                            onClick={() => confirmarClase(e, n)}
+                            style={{
+                              width: 38, height: 38, borderRadius: '0.6rem', fontWeight: 900, fontSize: '0.95rem', cursor: 'pointer', fontFamily: 'inherit',
+                              border: `1.5px solid ${activo === n ? '#9333EA' : '#E2E8F0'}`,
+                              background: activo === n ? '#9333EA' : 'white',
+                              color: activo === n ? 'white' : '#475569',
+                              opacity: confGuardando === key ? 0.6 : 1,
+                            }}>
+                            {n}
+                          </button>
+                        ))}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.3rem' }}>
-                      {[1, 2, 3, 4].map(n => (
-                        <button key={n} disabled={confGuardando === key}
-                          onClick={() => confirmarClase(e.courtId, e.time, n)}
-                          style={{
-                            width: 38, height: 38, borderRadius: '0.6rem', fontWeight: 900, fontSize: '0.95rem', cursor: 'pointer', fontFamily: 'inherit',
-                            border: `1.5px solid ${activo === n ? '#9333EA' : '#E2E8F0'}`,
-                            background: activo === n ? '#9333EA' : 'white',
-                            color: activo === n ? 'white' : '#475569',
-                            opacity: confGuardando === key ? 0.6 : 1,
-                          }}>
-                          {n}
-                        </button>
-                      ))}
+                    {/* Cómo pagó cada alumno (uno por persona; al confirmar la clase) */}
+                    <div style={{ marginTop: '0.55rem', paddingTop: '0.55rem', borderTop: '1px dashed #E9D5FF', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      {confirmado == null ? (
+                        <span style={{ fontSize: '0.68rem', color: '#94A3B8', fontWeight: 700 }}>
+                          💶 Confirma las personas (1-4) y podrás apuntar el precio y cómo pagó cada alumno.
+                        </span>
+                      ) : (
+                        Array.from({ length: personasEf }).map((_, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748B', minWidth: 62 }}>👤 Alumno {i + 1}</span>
+                            {[['tarjeta', '💳 Tarjeta'], ['bizum', '📱 Bizum'], ['mano', '💶 En mano']].map(([mk, ml]) => (
+                              <button key={mk} disabled={confGuardando === key}
+                                onPointerDown={ev => ev.preventDefault()}
+                                onClick={() => marcarPago(e, i, mk)}
+                                style={{
+                                  padding: '0.32rem 0.55rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit',
+                                  border: `1.5px solid ${pagos[i] === mk ? '#9333EA' : '#E2E8F0'}`,
+                                  background: pagos[i] === mk ? '#9333EA' : 'white',
+                                  color: pagos[i] === mk ? 'white' : '#64748B',
+                                  opacity: confGuardando === key ? 0.6 : 1,
+                                }}>
+                                {ml}
+                              </button>
+                            ))}
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 );

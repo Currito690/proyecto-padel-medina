@@ -60,8 +60,9 @@ export default function TimeClockManager() {
   const [month, setMonth] = useState(now.getMonth()); // 0-11
   const [fichajes, setFichajes] = useState([]);
   const [entrenos, setEntrenos] = useState([]); // blocked_slots tipo=entreno del mes
-  const [confirmadas, setConfirmadas] = useState([]); // clases_monitor: personas confirmadas
+  const [confirmadas, setConfirmadas] = useState([]); // clases_monitor: personas + precio + pagos
   const [names, setNames] = useState({});
+  const [courtNames, setCourtNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(null); // firma ampliada
   const [tarifasMonitor, setTarifasMonitor] = useState({}); // user_id -> precios de clase (los fija el monitor)
@@ -93,7 +94,7 @@ export default function TimeClockManager() {
       setLoading(true);
       const primerYmd = `${year}-${pad(month + 1)}-01`;
       const ultimoYmd = `${year}-${pad(month + 1)}-${pad(new Date(year, month + 1, 0).getDate())}`;
-      const [{ data: fData }, { data: eData }, { data: cData }] = await Promise.all([
+      const [{ data: fData }, { data: eData }, { data: cData }, { data: ctData }] = await Promise.all([
         supabase
           .from('fichajes')
           .select('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma')
@@ -108,15 +109,17 @@ export default function TimeClockManager() {
           .lte('date', ultimoYmd),
         supabase
           .from('clases_monitor')
-          .select('date, time_slot, court_id, personas')
+          .select('*')
           .gte('date', primerYmd)
           .lte('date', ultimoYmd),
+        supabase.from('courts').select('id, name'),
       ]);
       const rows = fData || [];
       setFichajes(rows);
       setEntrenos(eData || []);
       setConfirmadas(cData || []);
-      const uids = [...new Set(rows.map(f => f.user_id))];
+      setCourtNames(Object.fromEntries((ctData || []).map(c => [c.id, c.name])));
+      const uids = [...new Set([...rows.map(f => f.user_id), ...(cData || []).map(c => c.user_id)])];
       if (uids.length) {
         const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', uids);
         setNames(Object.fromEntries((profs || []).map(p => [p.id, p.name || p.email])));
@@ -124,8 +127,6 @@ export default function TimeClockManager() {
       setLoading(false);
     })();
   }, [year, month]);
-
-  const precioClase = (uid, key) => tarifasMonitor[uid]?.[key] ?? 0;
 
   // Entrenos del mes agrupados por día: intervalos por grupo + unión total.
   // El grupo REAL: lo confirmado por el monitor manda; sin datos → planificado.
@@ -193,24 +194,66 @@ export default function TimeClockManager() {
     return { jornadas: jor, totalesPorUser: tot };
   }, [fichajes, entrenosPorDia]);
 
-  // CAJA DE LOS ENTRENOS: SOLO cuentan las clases que el monitor CONFIRMA
+  // INGRESOS DE CLASES: SOLO cuentan las clases que el monitor CONFIRMA
   // (sus botones 1-4 al acabar el día) = las clases que se han dado de verdad.
-  // Cada una entra por su PRECIO COMPLETO según el grupo confirmado (el precio
-  // total de la clase; cómo se lo repartan los alumnos es cosa suya).
-  // Los entrenos planificados sin confirmar NO suman dinero (solo horas).
-  const clasesPorGrupo = useMemo(() => {
+  // Cada una entra por SU precio: el que el monitor puso a ESA clase (columna
+  // precio) o, si no puso, su tarifa según el grupo confirmado. Los entrenos
+  // planificados sin confirmar NO suman dinero (solo horas).
+  const clasesDetalle = useMemo(() => {
     const PERSONAS_GRUPO = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
-    const cnt = { individual: 0, grupo2: 0, grupo3: 0, grupo4: 0 };
-    for (const c of confirmadas) {
-      const g = PERSONAS_GRUPO[c.personas];
-      if (g) cnt[g]++;
-    }
-    return cnt;
-  }, [confirmadas]);
+    return confirmadas.map(c => {
+      const gKey = PERSONAS_GRUPO[c.personas] || 'grupo4';
+      const precio = c.precio != null ? Number(c.precio) : (tarifasMonitor[c.user_id]?.[gKey] ?? 0);
+      return { ...c, gKey, precio, pagos: Array.isArray(c.pagos) ? c.pagos : [] };
+    });
+  }, [confirmadas, tarifasMonitor]);
 
-  const cajaEntrenos = (uid) =>
-    GRUPOS.reduce((s, g) => s + clasesPorGrupo[g.key] * precioClase(uid, g.key), 0);
-  const totalClases = GRUPOS.reduce((s, g) => s + clasesPorGrupo[g.key], 0);
+  // Por día (del más reciente al más antiguo), con sus clases dentro
+  const ingresosPorDia = useMemo(() => {
+    const m = {};
+    for (const c of clasesDetalle) (m[c.date] = m[c.date] || []).push(c);
+    return Object.keys(m).sort((a, b) => b.localeCompare(a)).map(d => ({
+      date: d,
+      clases: m[d].sort((a, b) => a.time_slot.localeCompare(b.time_slot)),
+      total: m[d].reduce((s, c) => s + c.precio, 0),
+    }));
+  }, [clasesDetalle]);
+
+  const totalIngresos = useMemo(() => clasesDetalle.reduce((s, c) => s + c.precio, 0), [clasesDetalle]);
+
+  // Con qué pagó cada alumno, sumado en el mes (uno por persona de cada clase)
+  const pagosResumen = useMemo(() => {
+    const r = { tarjeta: 0, bizum: 0, mano: 0, sin: 0 };
+    for (const c of clasesDetalle) {
+      for (let i = 0; i < c.personas; i++) {
+        const p = c.pagos[i];
+        if (p === 'tarjeta') r.tarjeta++;
+        else if (p === 'bizum') r.bizum++;
+        else if (p === 'mano') r.mano++;
+        else r.sin++;
+      }
+    }
+    return r;
+  }, [clasesDetalle]);
+
+  // Desglose de pagos de UNA clase, en texto (plain = sin emojis, para CSV/PDF)
+  const pagosDeClase = (c, plain = false) => {
+    const r = { tarjeta: 0, bizum: 0, mano: 0, sin: 0 };
+    for (let i = 0; i < c.personas; i++) {
+      const p = c.pagos[i];
+      if (r[p] !== undefined) r[p]++;
+      else r.sin++;
+    }
+    const E = plain
+      ? { tarjeta: '', bizum: '', mano: '', sin: '' }
+      : { tarjeta: '💳 ', bizum: '📱 ', mano: '💶 ', sin: '⚪ ' };
+    const parts = [];
+    if (r.tarjeta) parts.push(`${E.tarjeta}${r.tarjeta} tarjeta`);
+    if (r.bizum) parts.push(`${E.bizum}${r.bizum} bizum`);
+    if (r.mano) parts.push(`${E.mano}${r.mano} en mano`);
+    if (r.sin) parts.push(`${E.sin}${r.sin} sin marcar`);
+    return parts.join(' · ');
+  };
 
   // ── Exportar Excel (CSV con ; — abre directo en Excel español) ──
   const exportCsv = () => {
@@ -219,11 +262,16 @@ export default function TimeClockManager() {
     const filas = [...jornadas].reverse().filter(j => j.entrada && j.salida).map(j =>
       [names[j.userId] || 'Trabajador', j.fecha, hora(j.entrada.fichado_at), hora(j.salida.fichado_at),
         horasDec(j.ms), horasDec(j.msClub), horasDec(j.msClase)].join(';'));
-    const totales = Object.entries(totalesPorUser).flatMap(([uid, t]) => [
-      `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)}`,
-      `Caja entrenos ${names[uid] || ''};${GRUPOS.map(g => `${clasesPorGrupo[g.key]} clase(s) ${g.abr} x ${precioClase(uid, g.key).toFixed(2).replace('.', ',')}`).join(';')};${cajaEntrenos(uid).toFixed(2).replace('.', ',')} EUR`,
-    ]);
-    const csv = '﻿' + [header, ...filas, '', ...totales].join('\n');
+    const totales = Object.entries(totalesPorUser).map(([uid, t]) =>
+      `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)}`);
+    const eur = (n) => n.toFixed(2).replace('.', ',');
+    const ingresos = [
+      'INGRESOS DE CLASES;Fecha;Clases;Importe;Pagos',
+      ...[...ingresosPorDia].reverse().map(d =>
+        `;${d.date};${d.clases.length};${eur(d.total)};${d.clases.map(c => `${c.time_slot} ${eur(c.precio)} (${pagosDeClase(c, true)})`).join(' | ')}`),
+      `TOTAL INGRESOS;;${clasesDetalle.length};${eur(totalIngresos)} EUR;tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano} · sin marcar ${pagosResumen.sin}`,
+    ];
+    const csv = '﻿' + [header, ...filas, '', ...totales, '', ...ingresos].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -248,7 +296,7 @@ export default function TimeClockManager() {
     doc.setFontSize(19);
     doc.text(`Control horario — ${MESES[month]} ${year}`, 14, 24);
     doc.setFont(undefined, 'normal'); doc.setFontSize(9); doc.setTextColor(200, 215, 235);
-    doc.text('Horas de las pistas y caja de los entrenos (el sueldo del trabajador es fijo)', 14, 30);
+    doc.text('Horas del personal e ingresos de las clases (el sueldo del trabajador es fijo)', 14, 30);
 
     // Tabla de jornadas (solo horas)
     let y = 46;
@@ -286,8 +334,9 @@ export default function TimeClockManager() {
       y += 6.8;
     });
 
-    // Tarjetas de resumen por trabajador: horas + caja de entrenos
+    // Tarjetas de resumen: horas por trabajador + ingresos de clases del mes
     y += 6;
+    let primeraFila = true;
     for (const [uid, t] of Object.entries(totalesPorUser)) {
       if (y > 245) { doc.addPage(); y = 20; }
       // Caja horas
@@ -301,18 +350,20 @@ export default function TimeClockManager() {
       doc.setFontSize(7.5); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
       doc.text(`club ${fmtHoras(t.msClub)} · clases ${fmtHoras(t.msClase)}`, 17, y + 16.5);
 
-      // Caja de entrenos
-      doc.setFillColor(250, 245, 255);
-      doc.setDrawColor(216, 180, 254);
-      doc.roundedRect(108, y - 5, 90, 26, 2.5, 2.5, 'FD');
-      doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
-      doc.text('CAJA DE LOS ENTRENOS (clases confirmadas × precio)', 113, y + 1);
-      doc.setFontSize(16); doc.setTextColor(126, 34, 206);
-      doc.text(`${cajaEntrenos(uid).toFixed(2)} €`, 113, y + 10);
-      doc.setFontSize(7); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
-      const detalle = GRUPOS.filter(g => clasesPorGrupo[g.key] > 0)
-        .map(g => `${clasesPorGrupo[g.key]}× ${g.abr} a ${precioClase(uid, g.key).toFixed(2)}€`).join(' · ') || 'sin clases este mes';
-      doc.text(detalle.slice(0, 60), 113, y + 16.5);
+      // Ingresos de clases (una sola vez: es del mes, no por trabajador)
+      if (primeraFila) {
+        primeraFila = false;
+        doc.setFillColor(250, 245, 255);
+        doc.setDrawColor(216, 180, 254);
+        doc.roundedRect(108, y - 5, 90, 26, 2.5, 2.5, 'FD');
+        doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
+        doc.text('INGRESOS DE CLASES DEL MES (confirmadas por el monitor)', 113, y + 1);
+        doc.setFontSize(16); doc.setTextColor(126, 34, 206);
+        doc.text(`${totalIngresos.toFixed(2)} €`, 113, y + 10);
+        doc.setFontSize(7); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
+        const detalle = `${clasesDetalle.length} clases · tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano}${pagosResumen.sin ? ` · sin marcar ${pagosResumen.sin}` : ''}`;
+        doc.text(detalle.slice(0, 62), 113, y + 16.5);
+      }
       y += 34;
     }
 
@@ -361,27 +412,60 @@ export default function TimeClockManager() {
         </div>
       </div>
 
-      {/* Totales por trabajador: horas + caja de entrenos */}
-      {!loading && Object.keys(totalesPorUser).length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-          {Object.entries(totalesPorUser).map(([uid, t]) => (
-            <div key={`h-${uid}`} style={{ background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>⏱ Horas · {names[uid] || 'Trabajador'}</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#166534', marginTop: '0.15rem' }}>{fmtHoras(t.ms)}</div>
-              <div style={{ fontSize: '0.7rem', color: '#16A34A', fontWeight: 700, marginTop: '0.2rem' }}>
-                🏢 club {fmtHoras(t.msClub)} · 🎾 clases {fmtHoras(t.msClase)}
-              </div>
-            </div>
-          ))}
-          {Object.entries(totalesPorUser).map(([uid]) => (
-            <div key={`c-${uid}`} style={{ background: '#FAF5FF', border: '1.5px solid #D8B4FE', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#7E22CE', textTransform: 'uppercase', letterSpacing: '0.04em' }}>💰 Caja de los entrenos ({totalClases} {totalClases === 1 ? 'clase confirmada' : 'clases confirmadas'})</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#6B21A8', marginTop: '0.15rem' }}>{fmtEur(cajaEntrenos(uid))}</div>
+      {/* ── INGRESOS DE LAS CLASES: total del mes, cómo pagaron y día a día ── */}
+      {!loading && (
+        <div style={{ marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem', marginBottom: '0.9rem' }}>
+            <div style={{ background: '#FAF5FF', border: '1.5px solid #D8B4FE', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#7E22CE', textTransform: 'uppercase', letterSpacing: '0.04em' }}>💰 Ingresos de clases · {MESES[month]}</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#6B21A8', marginTop: '0.15rem' }}>{fmtEur(totalIngresos)}</div>
               <div style={{ fontSize: '0.7rem', color: '#9333EA', fontWeight: 700, marginTop: '0.2rem' }}>
-                {GRUPOS.filter(g => clasesPorGrupo[g.key] > 0).map(g => `${clasesPorGrupo[g.key]}× ${g.abr} a ${fmtEur(precioClase(uid, g.key))}`).join(' · ') || 'sin clases este mes'}
+                {clasesDetalle.length} {clasesDetalle.length === 1 ? 'clase confirmada' : 'clases confirmadas'} por el monitor
               </div>
             </div>
-          ))}
+            <div style={{ background: '#EFF6FF', border: '1.5px solid #93C5FD', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1D4ED8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>👥 Cómo pagaron los alumnos</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#1E40AF', marginTop: '0.35rem' }}>
+                💳 {pagosResumen.tarjeta} tarjeta · 📱 {pagosResumen.bizum} bizum · 💶 {pagosResumen.mano} en mano
+              </div>
+              <div style={{ fontSize: '0.7rem', color: pagosResumen.sin > 0 ? '#B45309' : '#2563EB', fontWeight: 700, marginTop: '0.2rem' }}>
+                {pagosResumen.sin > 0 ? `⚪ ${pagosResumen.sin} sin marcar por el monitor` : 'Todos los pagos marcados ✓'}
+              </div>
+            </div>
+          </div>
+
+          {/* Ingresos POR DÍA, con cada clase y sus pagos dentro */}
+          {ingresosPorDia.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '1.5rem 1rem', color: '#94A3B8', border: '2px dashed #E2E8F0', borderRadius: '1rem', fontSize: '0.85rem' }}>
+              Sin clases confirmadas este mes — los ingresos aparecen cuando el monitor confirma sus clases.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              {ingresosPorDia.map(d => (
+                <div key={d.date} style={{ background: 'white', border: '1.5px solid #E2E8F0', borderRadius: '0.95rem', padding: '0.8rem 1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.88rem', textTransform: 'capitalize' }}>{fechaLarga(d.date)}</span>
+                    <span style={{ fontSize: '0.8rem', color: '#475569', fontWeight: 700 }}>
+                      {d.clases.length} {d.clases.length === 1 ? 'clase' : 'clases'} · <strong style={{ color: '#6B21A8', fontSize: '0.95rem' }}>{fmtEur(d.total)}</strong>
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.55rem', paddingTop: '0.55rem', borderTop: '1px dashed #F1F5F9' }}>
+                    {d.clases.map((c, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.78rem' }}>
+                        <span style={{ color: '#0F172A', fontWeight: 700 }}>
+                          🎾 {c.time_slot} · {courtNames[c.court_id] || 'Pista'} · {c.personas} {c.personas === 1 ? 'persona' : 'personas'}
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                          <span style={{ color: '#64748B', fontWeight: 600, fontSize: '0.72rem' }}>{pagosDeClase(c)}</span>
+                          <strong style={{ color: '#6B21A8' }}>{fmtEur(c.precio)}</strong>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
