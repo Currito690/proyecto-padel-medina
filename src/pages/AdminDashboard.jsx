@@ -1121,7 +1121,19 @@ const AdminDashboard = () => {
     });
   });
 
-  const totalBlocked = Object.values(slots).flatMap(c => Object.values(c)).filter(s => s.status === 'blocked').length;
+  // Pistas ocupadas por bloqueos y por entrenos del día, POR SEPARADO (en el
+  // dashboard se muestran diferenciadas, con su pista y su hora)
+  const detalleBloqueos = [];
+  courts.forEach(court => {
+    Object.entries(slots[court.id] || {}).forEach(([time, slot]) => {
+      if (slot.status === 'blocked') {
+        detalleBloqueos.push({ courtName: court.name, time, esEntreno: slot.tipo === 'entreno' });
+      }
+    });
+  });
+  detalleBloqueos.sort((a, b) => a.time.localeCompare(b.time));
+  const bloqueadasDia = detalleBloqueos.filter(s => !s.esEntreno);
+  const entrenosDia = detalleBloqueos.filter(s => s.esEntreno);
   const activeCourts = courts.filter(c => c.active).length;
   // Parrilla vigente (para la tabla de métodos de pago y el modal de mover)
   const scheduleCfgView = normalizeScheduleConfig(siteSettings.schedule_config);
@@ -1406,11 +1418,13 @@ const AdminDashboard = () => {
           </button>
           {/* Stats */}
           {showStats && (
+          <>
           <div className="stats-grid">
             {[
               { label: 'Reservas hoy', value: allBookings.length, color: '#16A34A', bg: '#F0FDF4', border: '#86EFAC' },
               { label: 'Pistas activas', value: activeCourts, color: '#0EA5E9', bg: '#F0F9FF', border: '#BAE6FD' },
-              { label: 'Bloqueados', value: totalBlocked, color: '#94A3B8', bg: '#F8FAFC', border: '#E2E8F0' },
+              { label: '🔒 Bloqueadas', value: bloqueadasDia.length, color: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
+              { label: '🏋️ Entrenos', value: entrenosDia.length, color: '#9333EA', bg: '#FAF5FF', border: '#D8B4FE' },
             ].map(s => (
               <div key={s.label} style={{ backgroundColor: s.bg, border: `1px solid ${s.border}`, borderRadius: '0.875rem', padding: '0.875rem 0.625rem', textAlign: 'center' }}>
                 <p style={{ margin: 0, fontSize: '1.75rem', fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</p>
@@ -1418,6 +1432,22 @@ const AdminDashboard = () => {
               </div>
             ))}
           </div>
+          {/* Qué pista y a qué hora: bloqueos en gris, entrenos en morado */}
+          {detalleBloqueos.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', margin: '-0.75rem 0 1.5rem' }}>
+              {bloqueadasDia.map((s, i) => (
+                <span key={`b-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
+                  🔒 {s.courtName} · {s.time}
+                </span>
+              ))}
+              {entrenosDia.map((s, i) => (
+                <span key={`e-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9333EA', background: '#FAF5FF', border: '1px solid #D8B4FE', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
+                  🏋️ {s.courtName} · {s.time}
+                </span>
+              ))}
+            </div>
+          )}
+          </>
           )}
 
           {/* Tabs removed in favor of sidebar */}
