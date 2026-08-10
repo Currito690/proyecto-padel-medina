@@ -2,63 +2,23 @@ import { useState, useEffect, useMemo } from 'react';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
 
-// CONTROL HORARIO (admin): jornadas del personal a partir de los fichajes
-// (hora del SERVIDOR + GPS + firma).
-// MODELO: el trabajador tiene SUELDO FIJO (fuera de la app) → aquí NO se
-// calcula sueldo por horas. Lo que ve el admin es:
-//  - HORAS TOTALES trabajadas (con desglose en club / en clases)
-//  - LA CAJA DE LOS ENTRENOS: lo que generan las clases (horas de clase por
-//    grupo × el precio de clase que fija el propio monitor en su pantalla).
-// El nº real de personas de cada clase lo confirma el monitor cada día.
+// CONTROL HORARIO (admin) — hoy es el panel de INGRESOS DE LAS CLASES.
+// El sueldo del trabajador es fijo (fuera de la app) y sus fichajes NO se
+// muestran ni se exportan (petición del club: horas a cero). Lo que ve el admin:
+//  - Ingresos de las clases del mes: total, por día y por clase, cada una por
+//    SU precio (el que el monitor puso a esa clase o su tarifa por grupo)
+//  - Cómo pagó cada alumno (tarjeta / bizum / en mano)
+// SOLO cuentan las clases que el monitor CONFIRMA al acabar el día.
 
 const pad = (n) => String(n).padStart(2, '0');
-const hora = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 const fechaLarga = (ymd) => new Date(ymd + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-const ymdDe = (iso) => {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
-const fmtHoras = (ms) => {
-  const h = Math.floor(ms / 3600000);
-  const m = Math.round((ms % 3600000) / 60000);
-  return `${h}h ${pad(m)}m`;
-};
-const horasDec = (ms) => (ms / 3600000).toFixed(2).replace('.', ',');
 const fmtEur = (n) => n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-// Tipos de clase (columna en monitor_tarifas, etiqueta, abreviatura)
-const GRUPOS = [
-  { key: 'individual', col: 'tarifa_individual', label: '🎾 Individual', abr: 'Ind' },
-  { key: 'grupo2', col: 'tarifa_grupo2', label: '👥 Grupo 2', abr: 'G2' },
-  { key: 'grupo3', col: 'tarifa_grupo3', label: '👥 Grupo 3', abr: 'G3' },
-  { key: 'grupo4', col: 'tarifa_grupo4', label: '👥 Grupo 4', abr: 'G4' },
-];
-
-// Intervalo [ini, fin] en ms de un hueco "09:00 - 10:30" de un día
-const slotInterval = (ymd, slotStr) => {
-  const [a, b] = slotStr.split(' - ');
-  return [new Date(`${ymd}T${a}:00`).getTime(), new Date(`${ymd}T${b}:00`).getTime()];
-};
-// Unir intervalos solapados (dos pistas con entreno a la vez cuentan una sola vez)
-const mergeIntervals = (ints) => {
-  const s = [...ints].sort((x, y) => x[0] - y[0]);
-  const out = [];
-  for (const [a, b] of s) {
-    if (out.length && a <= out[out.length - 1][1]) out[out.length - 1][1] = Math.max(out[out.length - 1][1], b);
-    else out.push([a, b]);
-  }
-  return out;
-};
-const overlapMs = (a1, a2, ints) =>
-  ints.reduce((s, [b1, b2]) => s + Math.max(0, Math.min(a2, b2) - Math.max(a1, b1)), 0);
 
 export default function TimeClockManager() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth()); // 0-11
-  const [fichajes, setFichajes] = useState([]);
-  const [entrenos, setEntrenos] = useState([]); // blocked_slots tipo=entreno del mes
   const [confirmadas, setConfirmadas] = useState([]); // clases_monitor: personas + precio + pagos
   const [names, setNames] = useState({});
   const [courtNames, setCourtNames] = useState({});
@@ -73,7 +33,7 @@ export default function TimeClockManager() {
 
   useEffect(() => {
     supabase.from('monitor_tarifas').select('*')
-      .then(({ data }) => {
+      .then(async ({ data }) => {
         const m = {};
         (data || []).forEach(r => {
           m[r.user_id] = {
@@ -84,6 +44,11 @@ export default function TimeClockManager() {
           };
         });
         setTarifasMonitor(m);
+        const uids = Object.keys(m);
+        if (uids.length) {
+          const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', uids);
+          setNames(prev => ({ ...prev, ...Object.fromEntries((profs || []).map(p => [p.id, p.name || p.email])) }));
+        }
       });
   }, []);
 
@@ -92,19 +57,7 @@ export default function TimeClockManager() {
       setLoading(true);
       const primerYmd = `${year}-${pad(month + 1)}-01`;
       const ultimoYmd = `${year}-${pad(month + 1)}-${pad(new Date(year, month + 1, 0).getDate())}`;
-      const [{ data: fData }, { data: eData }, { data: cData }, { data: ctData }] = await Promise.all([
-        supabase
-          .from('fichajes')
-          .select('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma')
-          .gte('fichado_at', `${primerYmd}T00:00:00`)
-          .lt('fichado_at', new Date(year, month + 1, 1).toISOString())
-          .order('fichado_at', { ascending: true }),
-        supabase
-          .from('blocked_slots')
-          .select('date, time_slot, court_id, tipo, entreno_grupo')
-          .eq('tipo', 'entreno')
-          .gte('date', primerYmd)
-          .lte('date', ultimoYmd),
+      const [{ data: cData }, { data: ctData }] = await Promise.all([
         supabase
           .from('clases_monitor')
           .select('*')
@@ -112,91 +65,19 @@ export default function TimeClockManager() {
           .lte('date', ultimoYmd),
         supabase.from('courts').select('id, name'),
       ]);
-      const rows = fData || [];
-      setFichajes(rows);
-      setEntrenos(eData || []);
       setConfirmadas(cData || []);
       setCourtNames(Object.fromEntries((ctData || []).map(c => [c.id, c.name])));
-      const uids = [...new Set([...rows.map(f => f.user_id), ...(cData || []).map(c => c.user_id)])];
+      const uids = [...new Set((cData || []).map(c => c.user_id))];
       if (uids.length) {
         const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', uids);
-        setNames(Object.fromEntries((profs || []).map(p => [p.id, p.name || p.email])));
+        setNames(prev => ({ ...prev, ...Object.fromEntries((profs || []).map(p => [p.id, p.name || p.email])) }));
       }
       setLoading(false);
     })();
   }, [year, month]);
 
-  // Entrenos del mes agrupados por día: intervalos por grupo + unión total.
-  // El grupo REAL: lo confirmado por el monitor manda; sin datos → planificado.
-  const entrenosPorDia = useMemo(() => {
-    const PERSONAS_GRUPO = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
-    const conf = {};
-    for (const c of confirmadas) conf[`${c.date}|${c.time_slot}|${c.court_id}`] = c.personas;
-    const m = {}; // ymd -> { grupos: {key: [[a,b],...]}, all: [[a,b],...] }
-    for (const e of entrenos) {
-      const personas = conf[`${e.date}|${e.time_slot}|${e.court_id}`];
-      const g = PERSONAS_GRUPO[personas] || e.entreno_grupo || 'grupo4';
-      if (!m[e.date]) m[e.date] = { grupos: {}, all: [] };
-      const iv = slotInterval(e.date, e.time_slot);
-      if (!m[e.date].grupos[g]) m[e.date].grupos[g] = [];
-      m[e.date].grupos[g].push(iv);
-      m[e.date].all.push(iv);
-    }
-    for (const d of Object.keys(m)) {
-      for (const g of Object.keys(m[d].grupos)) m[d].grupos[g] = mergeIntervals(m[d].grupos[g]);
-      m[d].all = mergeIntervals(m[d].all);
-    }
-    return m;
-  }, [entrenos, confirmadas]);
-
-  // Emparejar entrada→salida en jornadas + desglose de horas clase/club
-  const { jornadas, totalesPorUser } = useMemo(() => {
-    const jor = [];
-    const abiertos = {};
-    for (const f of fichajes) {
-      if (f.tipo === 'entrada') {
-        if (abiertos[f.user_id]) jor.push({ userId: f.user_id, fecha: ymdDe(abiertos[f.user_id].fichado_at), entrada: abiertos[f.user_id], salida: null, ms: 0, abierta: true });
-        abiertos[f.user_id] = f;
-      } else if (abiertos[f.user_id]) {
-        const ent = abiertos[f.user_id];
-        delete abiertos[f.user_id];
-        const ini = new Date(ent.fichado_at).getTime();
-        const fin = new Date(f.fichado_at).getTime();
-        const fecha = ymdDe(ent.fichado_at);
-        const dia = entrenosPorDia[fecha];
-        const msPorGrupo = {};
-        let msClase = 0;
-        if (dia) {
-          for (const g of GRUPOS) msPorGrupo[g.key] = overlapMs(ini, fin, dia.grupos[g.key] || []);
-          msClase = overlapMs(ini, fin, dia.all);
-        }
-        const ms = fin - ini;
-        jor.push({ userId: f.user_id, fecha, entrada: ent, salida: f, ms, msPorGrupo, msClase, msClub: Math.max(0, ms - msClase) });
-      } else {
-        jor.push({ userId: f.user_id, fecha: ymdDe(f.fichado_at), entrada: null, salida: f, ms: 0 });
-      }
-    }
-    for (const ent of Object.values(abiertos)) {
-      jor.push({ userId: ent.user_id, fecha: ymdDe(ent.fichado_at), entrada: ent, salida: null, ms: 0, abierta: true });
-    }
-    jor.sort((a, b) => new Date((b.entrada || b.salida).fichado_at) - new Date((a.entrada || a.salida).fichado_at));
-
-    const tot = {};
-    for (const j of jor) {
-      if (!tot[j.userId]) tot[j.userId] = { ms: 0, msClub: 0, msClase: 0, porGrupo: { individual: 0, grupo2: 0, grupo3: 0, grupo4: 0 } };
-      tot[j.userId].ms += j.ms || 0;
-      tot[j.userId].msClub += j.msClub || 0;
-      tot[j.userId].msClase += j.msClase || 0;
-      for (const g of GRUPOS) tot[j.userId].porGrupo[g.key] += j.msPorGrupo?.[g.key] || 0;
-    }
-    return { jornadas: jor, totalesPorUser: tot };
-  }, [fichajes, entrenosPorDia]);
-
-  // INGRESOS DE CLASES: SOLO cuentan las clases que el monitor CONFIRMA
-  // (sus botones 1-4 al acabar el día) = las clases que se han dado de verdad.
-  // Cada una entra por SU precio: el que el monitor puso a ESA clase (columna
-  // precio) o, si no puso, su tarifa según el grupo confirmado. Los entrenos
-  // planificados sin confirmar NO suman dinero (solo horas).
+  // INGRESOS DE CLASES: cada clase confirmada entra por SU precio (el que el
+  // monitor puso a ESA clase o, si no puso, su tarifa según el grupo).
   const clasesDetalle = useMemo(() => {
     const PERSONAS_GRUPO = { 1: 'individual', 2: 'grupo2', 3: 'grupo3', 4: 'grupo4' };
     return confirmadas.map(c => {
@@ -254,31 +135,26 @@ export default function TimeClockManager() {
   };
 
   // ── Exportar Excel (CSV con ; — abre directo en Excel español) ──
+  // SOLO ingresos: las horas/fichajes no se exportan (a cero por petición).
   const exportCsv = () => {
     const nombreMes = `${MESES[month].toLowerCase()}-${year}`;
-    const header = 'Trabajador;Fecha;Entrada;Salida;Horas totales;Horas club;Horas clases';
-    const filas = [...jornadas].reverse().filter(j => j.entrada && j.salida).map(j =>
-      [names[j.userId] || 'Trabajador', j.fecha, hora(j.entrada.fichado_at), hora(j.salida.fichado_at),
-        horasDec(j.ms), horasDec(j.msClub), horasDec(j.msClase)].join(';'));
-    const totales = Object.entries(totalesPorUser).map(([uid, t]) =>
-      `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)}`);
     const eur = (n) => n.toFixed(2).replace('.', ',');
-    const ingresos = [
-      'INGRESOS DE CLASES;Fecha;Clases;Importe;Pagos',
+    const lineas = [
+      `INGRESOS DE CLASES ${MESES[month].toUpperCase()} ${year};Fecha;Clases;Importe;Pagos de los alumnos`,
       ...[...ingresosPorDia].reverse().map(d =>
         `;${d.date};${d.clases.length};${eur(d.total)};${d.clases.map(c => `${c.time_slot} ${eur(c.precio)} (${pagosDeClase(c, true)})`).join(' | ')}`),
-      `TOTAL INGRESOS;;${clasesDetalle.length};${eur(totalIngresos)} EUR;tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano} · sin marcar ${pagosResumen.sin}`,
+      `TOTAL;;${clasesDetalle.length};${eur(totalIngresos)} EUR;tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano} · sin marcar ${pagosResumen.sin}`,
     ];
-    const csv = '﻿' + [header, ...filas, '', ...totales, '', ...ingresos].join('\n');
+    const csv = '﻿' + lineas.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `control-horario-${nombreMes}.csv`;
+    a.download = `ingresos-clases-${nombreMes}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
 
-  // ── Exportar PDF ──
+  // ── Exportar PDF (solo ingresos de clases) ──
   const exportPdf = () => {
     const doc = new jsPDF();
     const NAVY = [27, 58, 110], GREEN = [22, 163, 74], INK = [15, 23, 42], MUTED = [100, 116, 139];
@@ -292,82 +168,35 @@ export default function TimeClockManager() {
     doc.setFontSize(9); doc.setFont(undefined, 'bold');
     doc.text('PADEL MEDINA · ADMINISTRACIÓN', 14, 13);
     doc.setFontSize(19);
-    doc.text(`Control horario — ${MESES[month]} ${year}`, 14, 24);
+    doc.text(`Ingresos de clases — ${MESES[month]} ${year}`, 14, 24);
     doc.setFont(undefined, 'normal'); doc.setFontSize(9); doc.setTextColor(200, 215, 235);
-    doc.text('Horas del personal e ingresos de las clases (el sueldo del trabajador es fijo)', 14, 30);
+    doc.text('Clases confirmadas por el monitor · por día y total del mes', 14, 30);
 
-    // Tabla de jornadas (solo horas)
+    // Cajas de resumen: total del mes + cómo pagaron los alumnos
     let y = 46;
-    const thead = () => {
-      doc.setFillColor(...NAVY);
-      doc.roundedRect(12, y - 5.5, 186, 8.5, 1.5, 1.5, 'F');
-      doc.setTextColor(255); doc.setFontSize(8); doc.setFont(undefined, 'bold');
-      doc.text('FECHA', 15, y);
-      doc.text('ENTRADA', 72, y, { align: 'right' });
-      doc.text('SALIDA', 100, y, { align: 'right' });
-      doc.text('H. CLUB', 130, y, { align: 'right' });
-      doc.text('H. CLASES', 162, y, { align: 'right' });
-      doc.text('TOTAL', 194, y, { align: 'right' });
-      y += 9;
-    };
-    thead();
+    doc.setFillColor(250, 245, 255);
+    doc.setDrawColor(216, 180, 254);
+    doc.roundedRect(12, y - 5, 90, 26, 2.5, 2.5, 'FD');
+    doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
+    doc.text('INGRESOS DEL MES', 17, y + 1);
+    doc.setFontSize(16); doc.setTextColor(126, 34, 206);
+    doc.text(`${totalIngresos.toFixed(2)} €`, 17, y + 10);
+    doc.setFontSize(7.5); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
+    doc.text(`${clasesDetalle.length} ${clasesDetalle.length === 1 ? 'clase confirmada' : 'clases confirmadas'}`, 17, y + 16.5);
 
-    const cerradas = [...jornadas].reverse().filter(j => j.entrada && j.salida);
-    cerradas.forEach((j, i) => {
-      if (y > 268) { doc.addPage(); y = 20; thead(); }
-      if (i % 2 === 0) {
-        doc.setFillColor(248, 250, 252);
-        doc.rect(12, y - 4.6, 186, 6.8, 'F');
-      }
-      doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(...INK);
-      doc.text(j.fecha, 15, y);
-      doc.text(hora(j.entrada.fichado_at), 72, y, { align: 'right' });
-      doc.text(hora(j.salida.fichado_at), 100, y, { align: 'right' });
-      doc.setTextColor(...MUTED);
-      doc.text(fmtHoras(j.msClub), 130, y, { align: 'right' });
-      doc.setTextColor(126, 34, 206);
-      doc.text(fmtHoras(j.msClase), 162, y, { align: 'right' });
-      doc.setFont(undefined, 'bold'); doc.setTextColor(...INK);
-      doc.text(fmtHoras(j.ms), 194, y, { align: 'right' });
-      y += 6.8;
-    });
+    doc.setFillColor(239, 246, 255);
+    doc.setDrawColor(147, 197, 253);
+    doc.roundedRect(108, y - 5, 90, 26, 2.5, 2.5, 'FD');
+    doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
+    doc.text('CÓMO PAGARON LOS ALUMNOS', 113, y + 1);
+    doc.setFontSize(11); doc.setTextColor(30, 64, 175);
+    doc.text(`tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano}`, 113, y + 10);
+    doc.setFontSize(7.5); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
+    doc.text(pagosResumen.sin > 0 ? `${pagosResumen.sin} sin marcar por el monitor` : 'Todos los pagos marcados', 113, y + 16.5);
+    y += 34;
 
-    // Tarjetas de resumen: horas por trabajador + ingresos de clases del mes
-    y += 6;
-    let primeraFila = true;
-    for (const [uid, t] of Object.entries(totalesPorUser)) {
-      if (y > 245) { doc.addPage(); y = 20; }
-      // Caja horas
-      doc.setFillColor(240, 253, 244);
-      doc.setDrawColor(187, 247, 208);
-      doc.roundedRect(12, y - 5, 90, 26, 2.5, 2.5, 'FD');
-      doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
-      doc.text(`HORAS TOTALES · ${(names[uid] || 'TRABAJADOR').toUpperCase()}`, 17, y + 1);
-      doc.setFontSize(16); doc.setTextColor(22, 101, 52);
-      doc.text(fmtHoras(t.ms), 17, y + 10);
-      doc.setFontSize(7.5); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
-      doc.text(`club ${fmtHoras(t.msClub)} · clases ${fmtHoras(t.msClase)}`, 17, y + 16.5);
-
-      // Ingresos de clases (una sola vez: es del mes, no por trabajador)
-      if (primeraFila) {
-        primeraFila = false;
-        doc.setFillColor(250, 245, 255);
-        doc.setDrawColor(216, 180, 254);
-        doc.roundedRect(108, y - 5, 90, 26, 2.5, 2.5, 'FD');
-        doc.setFontSize(7); doc.setFont(undefined, 'bold'); doc.setTextColor(...MUTED);
-        doc.text('INGRESOS DE CLASES DEL MES (confirmadas por el monitor)', 113, y + 1);
-        doc.setFontSize(16); doc.setTextColor(126, 34, 206);
-        doc.text(`${totalIngresos.toFixed(2)} €`, 113, y + 10);
-        doc.setFontSize(7); doc.setFont(undefined, 'normal'); doc.setTextColor(71, 85, 105);
-        const detalle = `${clasesDetalle.length} clases · tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano}${pagosResumen.sin ? ` · sin marcar ${pagosResumen.sin}` : ''}`;
-        doc.text(detalle.slice(0, 62), 113, y + 16.5);
-      }
-      y += 34;
-    }
-
-    // ── Ingresos de clases POR DÍA (mismo desglose que el panel) ──
+    // ── Ingresos POR DÍA (mismo desglose que el panel) ──
     if (ingresosPorDia.length > 0) {
-      if (y > 250) { doc.addPage(); y = 20; }
       doc.setFillColor(...NAVY);
       doc.roundedRect(12, y - 5.5, 186, 8.5, 1.5, 1.5, 'F');
       doc.setTextColor(255); doc.setFontSize(8.5); doc.setFont(undefined, 'bold');
@@ -396,27 +225,26 @@ export default function TimeClockManager() {
       doc.setFillColor(250, 245, 255);
       doc.roundedRect(12, y - 5, 186, 8.5, 1.5, 1.5, 'F');
       doc.setFont(undefined, 'bold'); doc.setFontSize(9); doc.setTextColor(107, 33, 168);
-      doc.text(`TOTAL DEL MES · ${clasesDetalle.length} clases · tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano}${pagosResumen.sin ? ` · sin marcar ${pagosResumen.sin}` : ''}`, 15, y + 0.5);
+      doc.text(`TOTAL DEL MES · ${clasesDetalle.length} clases`, 15, y + 0.5);
       doc.text(`${totalIngresos.toFixed(2)} €`, 194, y + 0.5, { align: 'right' });
-      y += 12;
+    } else {
+      doc.setFontSize(10); doc.setTextColor(...MUTED);
+      doc.text('Sin clases confirmadas este mes.', 14, y + 2);
     }
 
     // Pie
     doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-    doc.text('Fichajes con hora de servidor, ubicación GPS y firma del trabajador (ver panel online).', 14, 285);
+    doc.text('Solo cuentan las clases confirmadas por el monitor; cada una entra por su precio.', 14, 285);
     doc.text(`Generado el ${new Date().toLocaleDateString('es-ES')} · Padel Medina`, 14, 290);
-    doc.save(`control-horario-${MESES[month].toLowerCase()}-${year}.pdf`);
+    doc.save(`ingresos-clases-${MESES[month].toLowerCase()}-${year}.pdf`);
   };
 
   const esteMes = year === now.getFullYear() && month === now.getMonth();
-  const hayJornadas = jornadas.some(j => j.entrada && j.salida);
-  // Exportable si hay jornadas O clases confirmadas (el PDF/Excel ya llevan
-  // también los ingresos por día)
-  const hayDatos = hayJornadas || clasesDetalle.length > 0;
+  const hayDatos = clasesDetalle.length > 0;
 
   return (
     <div>
-      <p className="section-label" style={{ marginBottom: '1rem' }}>Control horario del personal</p>
+      <p className="section-label" style={{ marginBottom: '1rem' }}>Control horario · Ingresos de las clases</p>
 
       {/* Precios de clase del monitor (los fija él; aquí solo se ven) */}
       {Object.entries(tarifasMonitor).length > 0 && (
@@ -428,8 +256,9 @@ export default function TimeClockManager() {
             </div>
           ))}
           <p style={{ margin: '0.4rem 0 0', fontSize: '0.7rem', color: '#94A3B8' }}>
-            El sueldo del trabajador es fijo — aquí se controlan sus horas y la caja de los entrenos.
-            En la caja <strong>solo cuentan las clases que el monitor confirma</strong> al acabar el día, cada una por su precio completo.
+            El sueldo del trabajador es fijo — aquí se ven los ingresos de sus clases.
+            <strong> Solo cuentan las clases que el monitor confirma</strong> al acabar el día, cada una por su precio
+            (el que él ponga a esa clase, o su tarifa del grupo si no lo cambia).
           </p>
         </div>
       )}
@@ -450,7 +279,9 @@ export default function TimeClockManager() {
       </div>
 
       {/* ── INGRESOS DE LAS CLASES: total del mes, cómo pagaron y día a día ── */}
-      {!loading && (
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>Cargando clases…</div>
+      ) : (
         <div style={{ marginBottom: '1.5rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem', marginBottom: '0.9rem' }}>
             <div style={{ background: '#FAF5FF', border: '1.5px solid #D8B4FE', borderRadius: '1rem', padding: '1rem 1.1rem' }}>
@@ -505,9 +336,6 @@ export default function TimeClockManager() {
           )}
         </div>
       )}
-
-      {/* Los fichajes del trabajador NO se listan en pantalla (petición del
-          club): las horas por día siguen saliendo en el PDF y el Excel. */}
     </div>
   );
 }
