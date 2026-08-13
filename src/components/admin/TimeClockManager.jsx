@@ -99,11 +99,14 @@ export default function TimeClockManager() {
         .gte('date', primerYmd)
         .lte('date', ultimoYmd),
     ]);
-    // BD sin migrar (sin columnas de turno manual): cargar sin ellas. Solo un
-    // error de columna cuenta como "sin migrar" (no un fallo de red cualquiera).
+    // BD sin migrar (sin columnas de turno manual): cargar sin ellas. SOLO si
+    // el error es por las columnas: reintentar sin ellas ante un fallo de red
+    // mezclaría los turnos manuales con los fichajes reales al emparejar.
     if (fRes.error) {
-      if (/manual|nota/i.test(fRes.error.message || '')) setConManual(false);
-      fRes = await consultaFichajes('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma');
+      if (/manual|nota/i.test(fRes.error.message || '')) {
+        setConManual(false);
+        fRes = await consultaFichajes('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma');
+      }
     } else {
       setConManual(true);
     }
@@ -155,8 +158,11 @@ export default function TimeClockManager() {
       // Fichajes ya existentes del trabajador ese día: un turno manual que se
       // solape con otro MANUAL es un duplicado (se bloquea); si hay fichajes
       // REALES ese día se avisa, porque el turno manual SUMA horas aparte.
-      const diaIni = new Date(`${form.fecha}T00:00:00`);
-      const diaFin = new Date(diaIni.getTime() + 24 * 3600 * 1000);
+      // Medianoche a medianoche por PARTES de fecha (con +24h a secas, el día
+      // del cambio de hora dura 23 o 25 horas y el corte caería mal).
+      const [fy, fm, fd] = form.fecha.split('-').map(Number);
+      const diaIni = new Date(fy, fm - 1, fd);
+      const diaFin = new Date(fy, fm - 1, fd + 1);
       const { data: delDia, error: errDia } = await supabase
         .from('fichajes')
         .select('tipo, fichado_at, manual')
@@ -164,6 +170,13 @@ export default function TimeClockManager() {
         .gte('fichado_at', diaIni.toISOString())
         .lt('fichado_at', diaFin.toISOString())
         .order('fichado_at', { ascending: true });
+      // Sin la comprobación no se garantiza que no haya duplicados: mejor no
+      // guardar (salvo que el error sea por falta de migración: entonces el
+      // propio insert dará su aviso correcto).
+      if (errDia && !/manual/i.test(errDia.message || '')) {
+        toast('No se pudieron comprobar los fichajes de ese día, inténtalo de nuevo', 'error');
+        return;
+      }
       if (!errDia && delDia?.length) {
         const manuales = delDia.filter(f => f.manual);
         let abierta = null;
@@ -220,8 +233,11 @@ export default function TimeClockManager() {
       { title: 'Borrar turno manual', okText: 'Borrar turno' }
     );
     if (!ok) return;
-    const { error } = await supabase.from('fichajes').delete().in('id', ids);
+    // .select() devuelve lo borrado: sin él, RLS puede filtrar las filas en
+    // silencio (0 borradas) y aquí saldría un "Turno borrado" falso.
+    const { data: borrados, error } = await supabase.from('fichajes').delete().in('id', ids).select('id');
     if (error) toast('No se pudo borrar: ' + error.message, 'error');
+    else if (!borrados?.length) toast('No se borró nada: tu usuario no consta como admin en la base de datos (profiles.role)', 'error');
     else { toast('Turno borrado', 'success'); load(); }
   };
 

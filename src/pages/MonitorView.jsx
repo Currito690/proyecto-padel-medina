@@ -148,8 +148,11 @@ export default function MonitorView() {
       .gte('fichado_at', new Date(`${hoy}T00:00:00`).toISOString())
       .order('fichado_at', { ascending: true });
     let { data, error } = await consulta('id, tipo, fichado_at, lat, lng, manual');
-    // BD sin migrar (sin turnos manuales del admin): cargar sin esa columna
-    if (error) ({ data } = await consulta('id, tipo, fichado_at, lat, lng'));
+    // BD sin migrar (sin turnos manuales del admin): cargar sin esa columna.
+    // SOLO si el error es por la columna: reintentar sin ella ante un fallo de
+    // red cargaría turnos manuales como fichajes reales (y cambiaría el botón).
+    if (error && /manual/i.test(error.message || '')) ({ data, error } = await consulta('id, tipo, fichado_at, lat, lng'));
+    if (error) return; // fallo transitorio: conservar lo que ya hay en pantalla
     setFichajes(data || []);
   }, [user?.id]);
   useEffect(() => { loadFichajes(); }, [loadFichajes]);
@@ -456,8 +459,11 @@ export default function MonitorView() {
         supabase.from('blocked_slots').select('date, time_slot').eq('tipo', 'entreno')
           .gte('date', primer).lte('date', ultimo),
       ]);
-      // BD sin migrar (sin turnos manuales): cargar sin esa columna
-      if (fRes.error) fRes = await consultaMes('tipo, fichado_at');
+      // BD sin migrar (sin turnos manuales): cargar sin esa columna. Solo si
+      // el error es por la columna (un fallo de red mezclaría los turnos
+      // manuales con los fichajes reales al emparejar).
+      if (fRes.error && /manual/i.test(fRes.error.message || '')) fRes = await consultaMes('tipo, fichado_at');
+      if (fRes.error) { toast('No se pudieron cargar tus fichajes, inténtalo de nuevo', 'error'); return; }
 
       // Entrenos por día (unión de intervalos: para separar horas de clase)
       const porDia = {};
