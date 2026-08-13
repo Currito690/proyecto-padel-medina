@@ -8,7 +8,7 @@
 </IfModule>
 
 # ── SPA fallback: todas las rutas que no sean archivos reales → index.html ──
-# Imprescindible con BrowserRouter; sin esto /tienda, /reset-password, etc. dan 404.
+# Imprescindible con BrowserRouter; sin esto /torneos, /reset-password, etc. dan 404.
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
