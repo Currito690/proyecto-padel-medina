@@ -55,7 +55,7 @@ Si falta alguno, dejan de salir los emails (confirmaciones, recuperar contraseñ
 4. **Bajar el TTL** antes del cambio para que propague rápido.
 5. **Switch**: confirmar nameservers de IONOS. Mantener Vercel vivo hasta que propague (durante la propagación, unos visitantes van a Vercel y otros a IONOS; ambos sirven la web).
 6. **SSL**: en Plesk, emitir Let's Encrypt para `padelmedina.com` + `www` y forzar HTTPS (cuando el dominio ya resuelva a IONOS).
-7. **Verificar**: web (/, /tienda, /reset-password recargando) **y enviar un email de prueba** (que SPF/DKIM sigan validando).
+7. **Verificar**: web (/, /torneos, /reset-password recargando) **y enviar un email de prueba** (que SPF/DKIM sigan validando).
 8. Cuando todo OK: **quitar el dominio de Vercel** / dar de baja el proyecto.
 
 ## No olvidar

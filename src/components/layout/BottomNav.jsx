@@ -1,16 +1,12 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useCart } from '../../context/CartContext';
 
-// Barra de navegación inferior compartida. La usa el MainLayout (cliente) y
-// también la Tienda pública, para poder moverse entre secciones desde cualquier
-// pantalla. El badge "Carrito" refleja el carrito de RESERVAS (useCart); la
-// tienda tiene su propio carrito en su cabecera.
+// Barra de navegación inferior del cliente (MainLayout). El badge "Carrito"
+// refleja el carrito de RESERVAS (useCart).
 export default function BottomNav() {
   const location = useLocation();
   const { count } = useCart();
-  // "Tienda" se marca activa en toda la sección /tienda (también subrutas).
-  const isActive = (path) =>
-    path === '/tienda' ? location.pathname.startsWith('/tienda') : location.pathname === path;
+  const isActive = (path) => location.pathname === path;
 
   const navItems = [
     {
@@ -48,17 +44,6 @@ export default function BottomNav() {
           <circle cx="9" cy="21" r="1" />
           <circle cx="20" cy="21" r="1" />
           <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-        </svg>
-      ),
-    },
-    {
-      path: '/tienda',
-      label: 'Tienda',
-      icon: (active) => (
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 9l1.5-5h15L21 9" />
-          <path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9" />
-          <path d="M9 22V12h6v10" />
         </svg>
       ),
     },

@@ -5,7 +5,6 @@ import App from './App.jsx'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
-import { ProductCartProvider } from './context/ProductCartContext'
 import { startServerTimeSync } from './utils/serverTime'
 
 // Sincroniza la hora con el servidor (Supabase Date header). Necesario para
@@ -40,9 +39,7 @@ createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <AuthProvider>
         <CartProvider>
-          <ProductCartProvider>
-            <App />
-          </ProductCartProvider>
+          <App />
         </CartProvider>
       </AuthProvider>
     </BrowserRouter>

@@ -20,12 +20,6 @@ const SharedPayment = lazy(() => import('./pages/SharedPayment'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const Tournaments = lazy(() => import('./pages/Tournaments'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
-const ShopLayout = lazy(() => import('./components/shop/ShopLayout'));
-const Tienda = lazy(() => import('./pages/shop/Tienda'));
-const ProductoDetalle = lazy(() => import('./pages/shop/ProductoDetalle'));
-const ShopCart = lazy(() => import('./pages/shop/ShopCart'));
-const ShopCheckout = lazy(() => import('./pages/shop/ShopCheckout'));
-const ShopOrderResult = lazy(() => import('./pages/shop/ShopOrderResult'));
 const MonitorView = lazy(() => import('./pages/MonitorView'));
 
 const PageLoader = () => (
@@ -252,15 +246,6 @@ function App() {
           <Route path="/pago-compartido" element={<SharedPayment />} />
           <Route path="/privacidad" element={<PrivacyPolicy />} />
           <Route path="/reset-password" element={<ResetPassword />} />
-
-          {/* Tienda pública (accesible sin login, con su propio layout) */}
-          <Route element={<ShopLayout />}>
-            <Route path="/tienda" element={<Tienda />} />
-            <Route path="/tienda/carrito" element={<ShopCart />} />
-            <Route path="/tienda/checkout" element={<ShopCheckout />} />
-            <Route path="/tienda/pedido/:numero" element={<ShopOrderResult />} />
-            <Route path="/tienda/:slug" element={<ProductoDetalle />} />
-          </Route>
 
           {/* Admin Routes */}
           {user?.role === 'admin' && (
