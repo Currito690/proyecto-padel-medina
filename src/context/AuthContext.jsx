@@ -1,14 +1,14 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
+// Usuarios "monitor" (solo lectura de la agenda) reconocidos por email como
+// respaldo, además de profiles.role = 'monitor'.
+import { MONITOR_EMAILS } from '../utils/staff';
 
 const AuthContext = createContext();
 
 // Fallback: el admin original sigue reconociéndose por email aunque el fetch
 // a profiles.role falle (problemas de red, RLS mal aplicado, etc.).
 const LEGACY_ADMIN_EMAILS = ['admin@padelmedina.com'];
-// Usuarios "monitor" (solo lectura de la agenda) reconocidos por email como
-// respaldo, además de profiles.role = 'monitor'.
-const MONITOR_EMAILS = ['lolo@padelmedina.com'];
 
 const buildUser = (u, role) => ({
   id: u.id,

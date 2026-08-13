@@ -139,67 +139,134 @@ export default function MonitorView() {
   const loadFichajes = useCallback(async () => {
     if (!user?.id) return;
     const hoy = toYMD(new Date());
-    const { data } = await supabase
+    // Medianoche LOCAL en ISO: el literal "T00:00:00" a secas lo interpreta
+    // Postgres como UTC y se comería los fichajes de 00:00-02:00 hora española
+    const consulta = (cols) => supabase
       .from('fichajes')
-      .select('id, tipo, fichado_at, lat, lng')
+      .select(cols)
       .eq('user_id', user.id)
-      .gte('fichado_at', `${hoy}T00:00:00`)
+      .gte('fichado_at', new Date(`${hoy}T00:00:00`).toISOString())
       .order('fichado_at', { ascending: true });
+    let { data, error } = await consulta('id, tipo, fichado_at, lat, lng, manual');
+    // BD sin migrar (sin turnos manuales del admin): cargar sin esa columna
+    if (error) ({ data } = await consulta('id, tipo, fichado_at, lat, lng'));
     setFichajes(data || []);
   }, [user?.id]);
   useEffect(() => { loadFichajes(); }, [loadFichajes]);
 
-  const ultimoFichaje = fichajes[fichajes.length - 1];
+  // El estado del botón sale SOLO de los fichajes REALES del trabajador: un
+  // turno manual que apunte el admin (aunque sea de hoy) no debe cambiarle el
+  // botón de entrada/salida ni el "trabajando desde…".
+  const fichajesReales = fichajes.filter(f => !f.manual);
+  const ultimoFichaje = fichajesReales[fichajesReales.length - 1];
   const trabajando = ultimoFichaje?.tipo === 'entrada';
-
-  // Dos intentos: GPS fino y, si falla (interior, permiso lento), ubicación
-  // aproximada por wifi/antenas — así el fichaje casi nunca sale sin 📍.
-  const getPosicion = () => new Promise((resolve) => {
-    if (!navigator.geolocation) { resolve(null); return; }
-    const opciones = [
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-      { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
-    ];
-    const intenta = (i) => navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy }),
-      () => (i + 1 < opciones.length ? intenta(i + 1) : resolve(null)),
-      opciones[i]
-    );
-    intenta(0);
-  });
 
   // El fichaje NO es un simple botón: el trabajador debe FIRMAR. El botón abre
   // el panel de firma y solo al confirmar la firma se registra (con GPS+hora).
   const [firmando, setFirmando] = useState(false); // tipo pendiente: 'entrada'|'salida'|null
 
+  // Con el móvil QUIETO en interior, el navegador a veces no contesta a la
+  // petición de GPS (ni éxito ni error, ignorando su propio timeout): el chip
+  // GPS no emite posición nueva hasta que el móvil se mueve. Es lo que pasaba
+  // al fichar la 2ª vez (la 1ª valía la caché reciente): lolo tenía que
+  // ALEJARSE para que el fichaje saliera. Remedio en dos partes:
+  //  1) Nada más abrir el panel de firma se empieza a escuchar la posición
+  //     (watchPosition): mientras lolo firma, el GPS va cogiendo señal.
+  //  2) Al confirmar se usa lo ya captado; si no hay nada se pide de nuevo,
+  //     pero con un TOPE DURO de 12s que resuelve SIEMPRE (con lo que haya o
+  //     sin ubicación). El botón nunca se queda colgado en «Fichando…».
+  const posRef = useRef(null);     // mejor posición captada mientras firma
+  const watchIdRef = useRef(null);
+
+  useEffect(() => {
+    const parar = () => {
+      if (watchIdRef.current != null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+    if (!firmando || !navigator.geolocation) { parar(); return undefined; }
+    posRef.current = null; // posición NUEVA para este fichaje (no la de la vez anterior)
+    try {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          const p = { lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy };
+          // Quedarse con la lectura más precisa recibida
+          if (!posRef.current || (p.precision_m ?? 9999) <= (posRef.current.precision_m ?? 9999)) posRef.current = p;
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
+      );
+    } catch { /* sin geolocalización: se ofrecerá fichar sin 📍 */ }
+    return parar;
+  }, [firmando]);
+
+  const getPosicion = () => new Promise((resolve) => {
+    if (posRef.current) { resolve(posRef.current); return; } // captada mientras firmaba
+    if (!navigator.geolocation) { resolve(null); return; }
+    let done = false, tope = null;
+    const finish = (p) => {
+      if (done) return;
+      done = true;
+      clearTimeout(tope);
+      resolve(p || posRef.current); // lo pedido o, si no, lo que cayera del watch
+    };
+    // Tope DURO fuera del API: si el navegador no responde, a los 12s se sigue
+    tope = setTimeout(() => finish(null), 12000);
+    // Dos intentos: GPS fino y, si falla, ubicación aproximada por wifi/antenas;
+    // se acepta caché de unos minutos (el club no se mueve y es lo que evita
+    // esperar un fix nuevo imposible con el móvil quieto).
+    const opciones = [
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 120000 },
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 },
+    ];
+    const intenta = (i) => {
+      // try/catch: en algún WebView getCurrentPosition revienta en síncrono y
+      // sin esto la promesa quedaría rechazada pese al tope de 12s
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => finish({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy }),
+          () => (i + 1 < opciones.length ? intenta(i + 1) : finish(null)),
+          opciones[i]
+        );
+      } catch { finish(null); }
+    };
+    intenta(0);
+  });
+
   const registrarFichaje = async (firmaDataUrl) => {
     if (fichando) return;
     setFichando(true);
-    const tipo = trabajando ? 'salida' : 'entrada';
-    const pos = await getPosicion();
-    if (!pos) {
-      const ok = await confirmDialog(
-        'No se pudo obtener tu ubicación (¿permiso denegado?). ¿Fichar igualmente sin ubicación?',
-        { title: 'Sin ubicación', okText: 'Fichar igualmente' }
-      );
-      if (!ok) { setFichando(false); return; }
+    // try/finally: pase lo que pase el botón vuelve a estar usable (sin esto
+    // un error inesperado dejaba el panel clavado en «Fichando…» para siempre)
+    try {
+      const tipo = trabajando ? 'salida' : 'entrada';
+      const pos = await getPosicion();
+      if (!pos) {
+        const ok = await confirmDialog(
+          'No se pudo obtener tu ubicación (¿permiso denegado?). ¿Fichar igualmente sin ubicación?',
+          { title: 'Sin ubicación', okText: 'Fichar igualmente' }
+        );
+        if (!ok) return;
+      }
+      const { error } = await supabase.from('fichajes').insert({
+        user_id: user.id,
+        tipo,
+        firma: firmaDataUrl,
+        lat: pos?.lat ?? null,
+        lng: pos?.lng ?? null,
+        precision_m: pos?.precision_m ?? null,
+      });
+      if (error) {
+        toast('No se pudo fichar: ' + error.message, 'error');
+      } else {
+        toast(tipo === 'entrada' ? '🟢 Entrada fichada. ¡Buen turno!' : '🔴 Salida fichada. ¡Hasta la próxima!', 'success');
+        await loadFichajes();
+        setFirmando(false);
+      }
+    } finally {
+      setFichando(false);
     }
-    const { error } = await supabase.from('fichajes').insert({
-      user_id: user.id,
-      tipo,
-      firma: firmaDataUrl,
-      lat: pos?.lat ?? null,
-      lng: pos?.lng ?? null,
-      precision_m: pos?.precision_m ?? null,
-    });
-    if (error) {
-      toast('No se pudo fichar: ' + error.message, 'error');
-    } else {
-      toast(tipo === 'entrada' ? '🟢 Entrada fichada. ¡Buen turno!' : '🔴 Salida fichada. ¡Hasta la próxima!', 'success');
-      await loadFichajes();
-      setFirmando(false);
-    }
-    setFichando(false);
   };
 
   // ── Confirmación de clases: personas, PRECIO de esa clase y cómo pagó
@@ -379,13 +446,18 @@ export default function MonitorView() {
       const yy = base.getFullYear(), mm = base.getMonth();
       const primer = `${yy}-${String(mm + 1).padStart(2, '0')}-01`;
       const ultimo = `${yy}-${String(mm + 1).padStart(2, '0')}-${String(new Date(yy, mm + 1, 0).getDate()).padStart(2, '0')}`;
-      const [fRes, eRes] = await Promise.all([
-        supabase.from('fichajes').select('tipo, fichado_at').eq('user_id', user.id)
-          .gte('fichado_at', `${primer}T00:00:00`).lt('fichado_at', new Date(yy, mm + 1, 1).toISOString())
-          .order('fichado_at', { ascending: true }),
+      // Mes en hora LOCAL por los dos lados (con "T00:00:00" a secas, Postgres
+      // lo lee en UTC y las 00:00-02:00 del día 1 no caerían en ningún mes)
+      const consultaMes = (cols) => supabase.from('fichajes').select(cols).eq('user_id', user.id)
+        .gte('fichado_at', new Date(yy, mm, 1).toISOString()).lt('fichado_at', new Date(yy, mm + 1, 1).toISOString())
+        .order('fichado_at', { ascending: true });
+      let [fRes, eRes] = await Promise.all([
+        consultaMes('tipo, fichado_at, manual'),
         supabase.from('blocked_slots').select('date, time_slot').eq('tipo', 'entreno')
           .gte('date', primer).lte('date', ultimo),
       ]);
+      // BD sin migrar (sin turnos manuales): cargar sin esa columna
+      if (fRes.error) fRes = await consultaMes('tipo, fichado_at');
 
       // Entrenos por día (unión de intervalos: para separar horas de clase)
       const porDia = {};
@@ -394,24 +466,31 @@ export default function MonitorView() {
       });
       for (const d of Object.keys(porDia)) porDia[d] = mergeIntsM(porDia[d]);
 
-      // Jornadas → acumular por semana y total (SOLO HORAS)
-      let abierto = null;
+      // Jornadas → acumular por semana y total (SOLO HORAS). Los turnos
+      // MANUALES del admin se emparejan APARTE de los fichajes firmados: así
+      // un turno añadido a mano nunca desordena las entradas/salidas reales.
       const sem = {}; // lunesYmd -> { ms, msClase, msClub }
       const tot = { ms: 0, msClase: 0, msClub: 0 };
-      (fRes.data || []).forEach(f => {
-        if (f.tipo === 'entrada') { abierto = f; return; }
-        if (!abierto) return;
-        const ini = new Date(abierto.fichado_at).getTime();
-        const fin = new Date(f.fichado_at).getTime();
-        const fecha = toYMD(new Date(abierto.fichado_at));
-        abierto = null;
-        const ms = fin - ini;
-        const msClase = porDia[fecha] ? overlapM(ini, fin, porDia[fecha]) : 0;
-        const wk = mondayOf(fecha);
-        if (!sem[wk]) sem[wk] = { ms: 0, msClase: 0, msClub: 0 };
-        sem[wk].ms += ms; sem[wk].msClase += msClase; sem[wk].msClub += Math.max(0, ms - msClase);
-        tot.ms += ms; tot.msClase += msClase; tot.msClub += Math.max(0, ms - msClase);
-      });
+      const acumula = (rows) => {
+        let abierto = null;
+        rows.forEach(f => {
+          if (f.tipo === 'entrada') { abierto = f; return; }
+          if (!abierto) return;
+          const ini = new Date(abierto.fichado_at).getTime();
+          const fin = new Date(f.fichado_at).getTime();
+          const fecha = toYMD(new Date(abierto.fichado_at));
+          abierto = null;
+          const ms = fin - ini;
+          const msClase = porDia[fecha] ? overlapM(ini, fin, porDia[fecha]) : 0;
+          const wk = mondayOf(fecha);
+          if (!sem[wk]) sem[wk] = { ms: 0, msClase: 0, msClub: 0 };
+          sem[wk].ms += ms; sem[wk].msClase += msClase; sem[wk].msClub += Math.max(0, ms - msClase);
+          tot.ms += ms; tot.msClase += msClase; tot.msClub += Math.max(0, ms - msClase);
+        });
+      };
+      const filas = fRes.data || [];
+      acumula(filas.filter(f => !f.manual));
+      acumula(filas.filter(f => f.manual));
 
       if (tot.ms === 0) { toast('No hay jornadas cerradas este mes', 'error'); return; }
 
@@ -591,6 +670,8 @@ export default function MonitorView() {
                   <a key={f.id} href={`https://www.google.com/maps?q=${f.lat},${f.lng}`} target="_blank" rel="noopener noreferrer" style={{ ...st, textDecoration: 'none', cursor: 'pointer' }}>
                     {texto} · 📍 mapa
                   </a>
+                ) : f.manual ? (
+                  <span key={f.id} style={st}>{texto} · ✍️ club</span>
                 ) : (
                   <span key={f.id} style={st}>{texto} · sin 📍</span>
                 );
