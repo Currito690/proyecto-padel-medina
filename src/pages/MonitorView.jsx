@@ -147,10 +147,11 @@ export default function MonitorView() {
       .eq('user_id', user.id)
       .gte('fichado_at', new Date(`${hoy}T00:00:00`).toISOString())
       .order('fichado_at', { ascending: true });
-    let { data, error } = await consulta('id, tipo, fichado_at, lat, lng, manual');
-    // BD sin migrar (sin turnos manuales del admin): cargar sin esa columna.
-    // SOLO si el error es por la columna: reintentar sin ella ante un fallo de
-    // red cargaría turnos manuales como fichajes reales (y cambiaría el botón).
+    let { data, error } = await consulta('id, tipo, fichado_at, lat, lng, manual, hora_original');
+    // BD sin migrar: reintentar quitando SOLO la columna cuya migración falte
+    // (nunca ante un fallo de red: cargaría turnos manuales como fichajes
+    // reales y cambiaría el botón).
+    if (error && /hora_original/i.test(error.message || '')) ({ data, error } = await consulta('id, tipo, fichado_at, lat, lng, manual'));
     if (error && /manual/i.test(error.message || '')) ({ data, error } = await consulta('id, tipo, fichado_at, lat, lng'));
     if (error) return; // fallo transitorio: conservar lo que ya hay en pantalla
     setFichajes(data || []);
@@ -670,16 +671,17 @@ export default function MonitorView() {
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.65rem' }}>
               {fichajes.map(f => {
                 const st = { fontSize: '0.7rem', fontWeight: 800, color: f.tipo === 'entrada' ? '#15803D' : '#B91C1C', background: f.tipo === 'entrada' ? '#F0FDF4' : '#FEF2F2', border: `1px solid ${f.tipo === 'entrada' ? '#BBF7D0' : '#FECACA'}`, borderRadius: 999, padding: '0.22rem 0.6rem' };
-                const texto = `${f.tipo === 'entrada' ? '🟢 Entrada' : '🔴 Salida'} ${horaDe(f.fichado_at)}`;
+                const texto = `${f.tipo === 'entrada' ? '🟢 Entrada' : '🔴 Salida'} ${horaDe(f.fichado_at)}${f.hora_original ? ' ✏️' : ''}`;
+                const titulo = f.hora_original ? `Hora corregida por el club (la original era ${horaDe(f.hora_original)})` : undefined;
                 // Con ubicación: el chip abre el punto exacto en Google Maps
                 return f.lat != null ? (
-                  <a key={f.id} href={`https://www.google.com/maps?q=${f.lat},${f.lng}`} target="_blank" rel="noopener noreferrer" style={{ ...st, textDecoration: 'none', cursor: 'pointer' }}>
+                  <a key={f.id} href={`https://www.google.com/maps?q=${f.lat},${f.lng}`} target="_blank" rel="noopener noreferrer" title={titulo} style={{ ...st, textDecoration: 'none', cursor: 'pointer' }}>
                     {texto} · 📍 mapa
                   </a>
                 ) : f.manual ? (
-                  <span key={f.id} style={st}>{texto} · ✍️ club</span>
+                  <span key={f.id} style={st} title={titulo}>{texto} · ✍️ club</span>
                 ) : (
-                  <span key={f.id} style={st}>{texto} · sin 📍</span>
+                  <span key={f.id} style={st} title={titulo}>{texto} · sin 📍</span>
                 );
               })}
             </div>

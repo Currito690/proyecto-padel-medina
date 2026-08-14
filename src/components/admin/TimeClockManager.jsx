@@ -66,6 +66,7 @@ export default function TimeClockManager() {
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(null); // firma ampliada
   const [conManual, setConManual] = useState(true); // false = falta la migración fichajes_manual_admin
+  const [conEdicion, setConEdicion] = useState(true); // false = falta la migración fichajes_editar_hora_admin
 
   const shiftMonth = (delta) => {
     const d = new Date(year, month + delta, 1);
@@ -85,8 +86,9 @@ export default function TimeClockManager() {
       .gte('fichado_at', new Date(year, month, 1).toISOString())
       .lt('fichado_at', new Date(year, month + 1, 1).toISOString())
       .order('fichado_at', { ascending: true });
+    const COLS_BASE = 'id, user_id, tipo, fichado_at, lat, lng, precision_m, firma';
     let [fRes, { data: eData }, { data: cData }] = await Promise.all([
-      consultaFichajes('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma, manual, nota'),
+      consultaFichajes(`${COLS_BASE}, manual, nota, hora_original`),
       supabase
         .from('blocked_slots')
         .select('date, time_slot, court_id, tipo, entreno_grupo')
@@ -99,17 +101,20 @@ export default function TimeClockManager() {
         .gte('date', primerYmd)
         .lte('date', ultimoYmd),
     ]);
-    // BD sin migrar (sin columnas de turno manual): cargar sin ellas. SOLO si
-    // el error es por las columnas: reintentar sin ellas ante un fallo de red
-    // mezclaría los turnos manuales con los fichajes reales al emparejar.
-    if (fRes.error) {
-      if (/manual|nota/i.test(fRes.error.message || '')) {
-        setConManual(false);
-        fRes = await consultaFichajes('id, user_id, tipo, fichado_at, lat, lng, precision_m, firma');
-      }
-    } else {
-      setConManual(true);
+    // BD sin migrar: reintentar quitando SOLO las columnas cuya migración
+    // falte (nunca ante un fallo de red: mezclaría turnos manuales con
+    // fichajes reales al emparejar).
+    let edicion = true, manualOk = true;
+    if (fRes.error && /hora_original/i.test(fRes.error.message || '')) {
+      edicion = false;
+      fRes = await consultaFichajes(`${COLS_BASE}, manual, nota`);
     }
+    if (fRes.error && /manual|nota/i.test(fRes.error.message || '')) {
+      edicion = false;
+      manualOk = false;
+      fRes = await consultaFichajes(COLS_BASE);
+    }
+    if (!fRes.error) { setConEdicion(edicion); setConManual(manualOk); }
     const rows = fRes.data || [];
     setFichajes(rows);
     setEntrenos(eData || []);
@@ -225,6 +230,96 @@ export default function TimeClockManager() {
     }
   };
 
+  // ── Corregir la HORA de un fichaje (cuando lolo pica tarde u olvida picar
+  // a su hora). Solo cambia fichado_at; queda guardada la hora original,
+  // quién lo editó y cuándo. La firma y el GPS no se tocan (lo impide la BD).
+  const [editHora, setEditHora] = useState(null); // { id, valor: "HH:MM" } | null
+  const [guardandoHora, setGuardandoHora] = useState(false);
+  const horaInput = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+  const guardarHoraFichaje = async (f, j) => {
+    if (!editHora || guardandoHora) return;
+    if (!/^\d{2}:\d{2}$/.test(editHora.valor)) { toast('Hora no válida', 'error'); return; }
+    // Sin cambio (a nivel de minuto): cerrar sin tocar nada. Comparar contra
+    // el timestamp exacto no vale: los fichajes reales llevan segundos y el
+    // input no, y un "guardar sin cambios" marcaría la fila como editada.
+    if (editHora.valor === horaInput(f.fichado_at)) { setEditHora(null); return; }
+    // La hora se ancla al día DEL PROPIO FICHAJE (en salidas de madrugada no
+    // es el día que titula la tarjeta: el editor lo muestra al lado).
+    const [fy, fm, fd] = ymdDe(f.fichado_at).split('-').map(Number);
+    const [hh, mi] = editHora.valor.split(':').map(Number);
+    const ts = new Date(fy, fm - 1, fd, hh, mi, 0);
+    const diaDe = `${pad(fd)}/${pad(fm)}`;
+    if (ts > new Date()) { toast(`La hora no puede quedar en el futuro (ojo: este fichaje es del día ${diaDe})`, 'error'); return; }
+    // Tope de cordura: ninguna jornada del club dura más de 16 horas. Pilla
+    // sobre todo el despiste de editar una salida de madrugada pensando que
+    // era del día de la tarjeta.
+    const pareja = f.tipo === 'entrada' ? j?.salida : j?.entrada;
+    if (pareja) {
+      const ini = f.tipo === 'entrada' ? ts.getTime() : new Date(pareja.fichado_at).getTime();
+      const fin = f.tipo === 'entrada' ? new Date(pareja.fichado_at).getTime() : ts.getTime();
+      if (fin - ini > 16 * 3600000) {
+        toast(`Quedaría una jornada de más de 16 horas — revisa el día: este fichaje es del ${diaDe}`, 'error');
+        return;
+      }
+    }
+    setGuardandoHora(true);
+    try {
+      // Vecinos RECIÉN consultados: el estado en pantalla puede estar viejo
+      // (lolo puede haber fichado mientras el panel estaba abierto).
+      const desde = new Date(fy, fm - 1, fd - 1);
+      const hasta = new Date(fy, fm - 1, fd + 2);
+      const consultaCerca = (cols) => supabase.from('fichajes').select(cols)
+        .eq('user_id', f.user_id)
+        .gte('fichado_at', desde.toISOString())
+        .lt('fichado_at', hasta.toISOString())
+        .order('fichado_at', { ascending: true });
+      let { data: cerca, error: errCerca } = await consultaCerca('id, tipo, fichado_at, manual');
+      if (errCerca && /manual/i.test(errCerca.message || '')) ({ data: cerca, error: errCerca } = await consultaCerca('id, tipo, fichado_at'));
+      if (errCerca) { toast('No se pudieron comprobar los fichajes de alrededor, inténtalo de nuevo', 'error'); return; }
+      // La hora nueva no puede saltar por encima de otro fichaje del mismo
+      // flujo (real o manual): quedaría un orden imposible (una entrada
+      // después de su salida, o pisando otro turno).
+      const orig = new Date(f.fichado_at).getTime();
+      const vecinos = (cerca || [])
+        .filter(x => Boolean(x.manual) === Boolean(f.manual) && x.id !== f.id)
+        .map(x => new Date(x.fichado_at).getTime());
+      const previo = Math.max(-Infinity, ...vecinos.filter(t => t < orig));
+      const siguiente = Math.min(Infinity, ...vecinos.filter(t => t > orig));
+      if (ts.getTime() <= previo || ts.getTime() >= siguiente) {
+        toast('Esa hora se cruza con otro fichaje del trabajador (la entrada debe seguir antes de su salida y sin pisar otros turnos)', 'error');
+        return;
+      }
+      // Solo se envía la hora: el rastro (hora original, quién y cuándo) lo
+      // escribe el trigger de la BD y no se puede falsear. El .eq de
+      // fichado_at evita pisar una edición hecha a la vez en otra pestaña, y
+      // .select() confirma que RLS no filtró la fila en silencio.
+      const { data: upd, error } = await supabase.from('fichajes')
+        .update({ fichado_at: ts.toISOString() })
+        .eq('id', f.id)
+        .eq('fichado_at', f.fichado_at)
+        .select('id');
+      if (error) {
+        if (/hora_original|editado|column|privilege/i.test(error.message || '')) {
+          toast('Falta aplicar la migración fichajes_editar_hora_admin en Supabase para corregir horas', 'error');
+        } else {
+          toast('No se pudo cambiar la hora: ' + error.message, 'error');
+        }
+        return;
+      }
+      if (!upd?.length) {
+        toast('No se guardó: el fichaje ha cambiado mientras tanto o tu usuario no consta como admin. Se recarga la lista, inténtalo de nuevo', 'error');
+        load();
+        return;
+      }
+      toast(`Hora corregida: ${f.tipo} a las ${editHora.valor} ✓`, 'success');
+      setEditHora(null);
+      load();
+    } finally {
+      setGuardandoHora(false);
+    }
+  };
+
   const borrarTurnoManual = async (j) => {
     const ids = [j.entrada, j.salida].filter(f => f?.manual).map(f => f.id);
     if (!ids.length) return;
@@ -324,7 +419,8 @@ export default function TimeClockManager() {
     const filas = [...jornadas].reverse().filter(j => j.entrada && j.salida).map(j =>
       [names[j.userId] || 'Trabajador', j.fecha, hora(j.entrada.fichado_at), hora(j.salida.fichado_at),
         horasDec(j.ms), horasDec(j.msClub), horasDec(j.msClase),
-        (j.entrada.manual || j.salida.manual) ? 'Añadido por admin' : 'Fichado en la app'].join(';'));
+        ((j.entrada.manual || j.salida.manual) ? 'Añadido por admin' : 'Fichado en la app')
+        + ((j.entrada.hora_original || j.salida.hora_original) ? ' (hora corregida por admin)' : '')].join(';'));
     const totales = Object.entries(totalesPorUser).map(([uid, t]) =>
       `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)}`);
     const csv = '﻿' + [header, ...filas, '', ...totales].join('\n');
@@ -372,6 +468,7 @@ export default function TimeClockManager() {
 
     const cerradas = [...jornadas].reverse().filter(j => j.entrada && j.salida);
     const hayManuales = cerradas.some(j => j.entrada.manual || j.salida.manual);
+    const hayEditadas = cerradas.some(j => j.entrada.hora_original || j.salida.hora_original);
     cerradas.forEach((j, i) => {
       if (y > 268) { doc.addPage(); y = 20; thead(); }
       if (i % 2 === 0) {
@@ -380,8 +477,8 @@ export default function TimeClockManager() {
       }
       doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(...INK);
       doc.text(j.fecha + ((j.entrada.manual || j.salida.manual) ? ' *' : ''), 15, y);
-      doc.text(hora(j.entrada.fichado_at), 72, y, { align: 'right' });
-      doc.text(hora(j.salida.fichado_at), 100, y, { align: 'right' });
+      doc.text(hora(j.entrada.fichado_at) + (j.entrada.hora_original ? ' (ed.)' : ''), 72, y, { align: 'right' });
+      doc.text(hora(j.salida.fichado_at) + (j.salida.hora_original ? ' (ed.)' : ''), 100, y, { align: 'right' });
       doc.setTextColor(...MUTED);
       doc.text(fmtHoras(j.msClub), 130, y, { align: 'right' });
       doc.setTextColor(126, 34, 206);
@@ -409,6 +506,7 @@ export default function TimeClockManager() {
 
     // Pie
     doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
+    if (hayEditadas) doc.text('(ed.) Hora corregida por administración; la hora original queda guardada en el panel.', 14, 276);
     if (hayManuales) doc.text('* Jornada añadida a mano por administración (sin firma ni GPS).', 14, 280);
     doc.text('Fichajes con hora de servidor, ubicación GPS y firma del trabajador (ver panel online).', 14, 285);
     doc.text(`Generado el ${new Date().toLocaleDateString('es-ES')} · Padel Medina`, 14, 290);
@@ -540,12 +638,48 @@ export default function TimeClockManager() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.6rem', alignItems: 'center' }}>
-                  {j.entrada && (
-                    <span style={chip('#F0FDF4', '#BBF7D0', '#15803D')}>🟢 Entrada {hora(j.entrada.fichado_at)}</span>
-                  )}
-                  {j.salida && (
-                    <span style={chip('#FEF2F2', '#FECACA', '#B91C1C')}>🔴 Salida {hora(j.salida.fichado_at)}</span>
-                  )}
+                  {[
+                    ['entrada', '#F0FDF4', '#BBF7D0', '#15803D', '🟢 Entrada'],
+                    ['salida', '#FEF2F2', '#FECACA', '#B91C1C', '🔴 Salida'],
+                  ].map(([t, bg, bd, col, label]) => {
+                    const f = j[t];
+                    if (!f) return null;
+                    // Salida de madrugada: el fichaje es de un día distinto al
+                    // que titula la tarjeta — se enseña para no editar a ciegas
+                    const diaF = ymdDe(f.fichado_at);
+                    const otroDia = diaF !== j.fecha ? `${diaF.slice(8, 10)}/${diaF.slice(5, 7)}` : null;
+                    // Editando este fichaje: input de hora + guardar/cancelar
+                    if (editHora?.id === f.id) {
+                      return (
+                        <span key={t} style={{ ...chip(bg, bd, col), display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          {label}{otroDia && <span style={{ opacity: 0.75, fontWeight: 600 }}>({otroDia})</span>}
+                          <input type="time" value={editHora.valor} autoFocus
+                            title={`Hora del día ${diaF.slice(8, 10)}/${diaF.slice(5, 7)}`}
+                            onChange={e => setEditHora(prev => ({ ...prev, valor: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Enter') guardarHoraFichaje(f, j); if (e.key === 'Escape') setEditHora(null); }}
+                            style={{ border: `1.5px solid ${bd}`, borderRadius: '0.4rem', padding: '0.05rem 0.25rem', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', color: '#0F172A' }} />
+                          <button onClick={() => guardarHoraFichaje(f, j)} disabled={guardandoHora} title="Guardar hora" style={btnMini('#16A34A')}>✔</button>
+                          <button onClick={() => setEditHora(null)} disabled={guardandoHora} title="Cancelar" style={btnMini('#94A3B8')}>✕</button>
+                        </span>
+                      );
+                    }
+                    return (
+                      <span key={t} style={{ ...chip(bg, bd, col), display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                        title={f.hora_original ? `Hora corregida por admin (la original era ${hora(f.hora_original)})` : undefined}>
+                        {label} {hora(f.fichado_at)}
+                        {otroDia && <span style={{ opacity: 0.75, fontWeight: 600 }}>({otroDia})</span>}
+                        {f.hora_original && (
+                          <span style={{ opacity: 0.75, fontWeight: 600 }}>· antes {hora(f.hora_original)}</span>
+                        )}
+                        <button
+                          onClick={() => conEdicion
+                            ? setEditHora({ id: f.id, valor: horaInput(f.fichado_at) })
+                            : toast('Falta aplicar la migración fichajes_editar_hora_admin en Supabase para corregir horas', 'error')}
+                          title="Corregir la hora de este fichaje"
+                          style={btnMini(col)}>✏️</button>
+                      </span>
+                    );
+                  })}
                   {j.ms > 0 && (
                     <span style={chip('#F8FAFC', '#E2E8F0', '#475569')}>🏢 Club {fmtHoras(j.msClub)}</span>
                   )}
@@ -605,3 +739,4 @@ const lblForm = { display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0
 const inpForm = { padding: '0.5rem 0.6rem', borderRadius: '0.6rem', border: '1.5px solid #BBF7D0', background: 'white', fontSize: '0.85rem', fontWeight: 700, color: '#0F172A', fontFamily: 'inherit' };
 const exportBtn = { padding: '0.6rem 1rem', borderRadius: '0.7rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#0F172A', fontWeight: 800, fontSize: '0.82rem', cursor: 'pointer' };
 const chip = (bg, border, color) => ({ fontSize: '0.72rem', fontWeight: 700, color, background: bg, border: `1px solid ${border}`, borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' });
+const btnMini = (color) => ({ border: 'none', background: 'transparent', color, cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit' });
