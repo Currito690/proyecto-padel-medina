@@ -136,16 +136,25 @@ export default function MonitorView() {
   const [fichajes, setFichajes] = useState([]); // los de HOY
   const [fichando, setFichando] = useState(false);
 
-  const loadFichajes = useCallback(async () => {
+  // Desde cuándo cuentan los fichajes "de hoy": medianoche LOCAL en ISO (el
+  // literal "T00:00:00" a secas lo interpreta Postgres como UTC y se comería
+  // los de 00:00-02:00 españolas), PERO nunca menos de 12h atrás — así una
+  // salida pasada la medianoche (entrada 23:00 → salida 00:30) sigue viendo
+  // su entrada y el turno se puede cerrar.
+  const desdeFichajes = () => {
+    const medianoche = new Date(`${toYMD(new Date())}T00:00:00`).getTime();
+    return new Date(Math.min(medianoche, Date.now() - 12 * 3600 * 1000)).toISOString();
+  };
+
+  const retryFichajesRef = useRef(null);
+  const loadFichajes = useCallback(async (reintento = false) => {
     if (!user?.id) return;
-    const hoy = toYMD(new Date());
-    // Medianoche LOCAL en ISO: el literal "T00:00:00" a secas lo interpreta
-    // Postgres como UTC y se comería los fichajes de 00:00-02:00 hora española
+    clearTimeout(retryFichajesRef.current); // una carga nueva anula el reintento pendiente
     const consulta = (cols) => supabase
       .from('fichajes')
       .select(cols)
       .eq('user_id', user.id)
-      .gte('fichado_at', new Date(`${hoy}T00:00:00`).toISOString())
+      .gte('fichado_at', desdeFichajes())
       .order('fichado_at', { ascending: true });
     let { data, error } = await consulta('id, tipo, fichado_at, lat, lng, manual, hora_original');
     // BD sin migrar: reintentar quitando SOLO la columna cuya migración falte
@@ -153,10 +162,19 @@ export default function MonitorView() {
     // reales y cambiaría el botón).
     if (error && /hora_original/i.test(error.message || '')) ({ data, error } = await consulta('id, tipo, fichado_at, lat, lng, manual'));
     if (error && /manual/i.test(error.message || '')) ({ data, error } = await consulta('id, tipo, fichado_at, lat, lng'));
-    if (error) return; // fallo transitorio: conservar lo que ya hay en pantalla
+    if (error) {
+      // Red inestable (datos móviles): un único reintento a los 4s para que
+      // el botón de entrada/salida no se quede con un estado viejo
+      if (!reintento) setTimeout(() => loadFichajes(true), 4000);
+      return;
+    }
     setFichajes(data || []);
   }, [user?.id]);
-  useEffect(() => { loadFichajes(); }, [loadFichajes]);
+  useEffect(() => {
+    loadFichajes();
+    const ref = retryFichajesRef;
+    return () => clearTimeout(ref.current); // sin reintentos huérfanos al salir
+  }, [loadFichajes]);
 
   // El estado del botón sale SOLO de los fichajes REALES del trabajador: un
   // turno manual que apunte el admin (aunque sea de hoy) no debe cambiarle el
@@ -238,13 +256,31 @@ export default function MonitorView() {
     intenta(0);
   });
 
+  // Petición CON TOPE de tiempo: con datos móviles "zombis" (el móvil enseña
+  // cobertura pero la conexión está muerta) una petición sin tope se queda
+  // colgada minutos y el panel clavado en «Fichando…».
+  const conTope = async (build, ms) => {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), ms);
+    try { return await build(ctrl.signal); }
+    finally { clearTimeout(tid); }
+  };
+
   const registrarFichaje = async (firmaDataUrl) => {
     if (fichando) return;
+    if (navigator.onLine === false) {
+      toast('Sin conexión a internet: activa el wifi o los datos y vuelve a intentarlo', 'error');
+      return;
+    }
     setFichando(true);
     // try/finally: pase lo que pase el botón vuelve a estar usable (sin esto
     // un error inesperado dejaba el panel clavado en «Fichando…» para siempre)
     try {
       const tipo = trabajando ? 'salida' : 'entrada';
+
+      // Primero la ubicación y su posible diálogo (pueden tardar lo que
+      // quiera el usuario): la comprobación contra el servidor va DESPUÉS,
+      // justo antes de insertar, para que no se quede vieja mientras tanto.
       const pos = await getPosicion();
       if (!pos) {
         const ok = await confirmDialog(
@@ -253,20 +289,75 @@ export default function MonitorView() {
         );
         if (!ok) return;
       }
-      const { error } = await supabase.from('fichajes').insert({
-        user_id: user.id,
-        tipo,
-        firma: firmaDataUrl,
-        lat: pos?.lat ?? null,
-        lng: pos?.lng ?? null,
-        precision_m: pos?.precision_m ?? null,
-      });
-      if (error) {
-        toast('No se pudo fichar: ' + error.message, 'error');
+
+      // Estado FRESCO del servidor justo antes de fichar: con red inestable
+      // la lista en pantalla puede estar vieja, y fichar a ciegas duplicaría
+      // la entrada (o metería una salida de un turno ya cerrado). Solo cuenta
+      // el último fichaje REAL (los turnos manuales del admin no pintan nada
+      // aquí) y con la misma ventana horaria que la lista (cubre madrugada).
+      const consultaUlt = (cols, conFiltroManual, signal) => {
+        let q = supabase
+          .from('fichajes')
+          .select(cols)
+          .eq('user_id', user.id)
+          .gte('fichado_at', desdeFichajes());
+        if (conFiltroManual) q = q.eq('manual', false);
+        return q.order('fichado_at', { ascending: false }).limit(1).abortSignal(signal);
+      };
+      let ultimoReal = null;
+      try {
+        let { data, error } = await conTope((s) => consultaUlt('tipo', true, s), 10000);
+        // BD sin migrar (sin columna manual): todos los fichajes son reales
+        if (error && /manual/i.test(error.message || '')) ({ data, error } = await conTope((s) => consultaUlt('tipo', false, s), 10000));
+        if (error) throw error;
+        ultimoReal = (data || [])[0] || null;
+      } catch {
+        toast('No hay conexión estable con el servidor (¿poca cobertura de datos?). Vuelve a intentarlo en unos segundos', 'error');
+        return;
+      }
+      const tipoFresco = ultimoReal?.tipo === 'entrada' ? 'salida' : 'entrada';
+      if (tipoFresco !== tipo) {
+        // La pantalla iba atrasada (p. ej. el fichaje anterior SÍ llegó
+        // aunque su respuesta se perdiera): actualizar y NO duplicar.
+        toast(tipo === 'entrada'
+          ? 'Ya tenías la entrada fichada (la lista no estaba al día). Se ha actualizado: revisa tus fichajes'
+          : 'Tu turno ya estaba cerrado (la lista no estaba al día). Se ha actualizado: revisa tus fichajes', 'error');
+        loadFichajes();
+        setFirmando(false);
+        return;
+      }
+
+      let insErr = null;
+      try {
+        const { error } = await conTope((s) => supabase.from('fichajes').insert({
+          user_id: user.id,
+          tipo,
+          firma: firmaDataUrl,
+          lat: pos?.lat ?? null,
+          lng: pos?.lng ?? null,
+          precision_m: pos?.precision_m ?? null,
+        }).abortSignal(s), 20000);
+        insErr = error;
+      } catch (e) {
+        insErr = e;
+      }
+      if (insErr) {
+        const cortada = insErr?.name === 'AbortError' || /abort/i.test(insErr?.message || '');
+        if (cortada) {
+          // El fichaje puede haber llegado aunque la respuesta se perdiera:
+          // se CIERRA el panel (si quedara abierto, la lista actualizada le
+          // cambiaría el sentido al botón de confirmar) y se recarga la
+          // lista SIN esperar (la conexión acaba de demostrar que se cuelga).
+          toast('La conexión no responde y el fichaje puede haber salido o no. Comprueba la lista y, si no aparece, vuelve a fichar', 'error');
+          setFirmando(false);
+        } else {
+          toast('No se pudo fichar: ' + (insErr.message || insErr), 'error');
+        }
+        loadFichajes();
       } else {
         toast(tipo === 'entrada' ? '🟢 Entrada fichada. ¡Buen turno!' : '🔴 Salida fichada. ¡Hasta la próxima!', 'success');
-        await loadFichajes();
         setFirmando(false);
+        loadFichajes();
       }
     } finally {
       setFichando(false);
