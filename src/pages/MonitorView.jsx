@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
-import { toast, confirmDialog } from '../utils/notify';
+import { toast } from '../utils/notify';
 
 const horaDe = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
@@ -278,17 +278,10 @@ export default function MonitorView() {
     try {
       const tipo = trabajando ? 'salida' : 'entrada';
 
-      // Primero la ubicación y su posible diálogo (pueden tardar lo que
-      // quiera el usuario): la comprobación contra el servidor va DESPUÉS,
-      // justo antes de insertar, para que no se quede vieja mientras tanto.
+      // La ubicación NUNCA bloquea el fichaje: si no hay señal (interior sin
+      // wifi, GPS frío al salir del turno…) se ficha igualmente sin 📍 y se
+      // le avisa. Antes aquí salía un diálogo y lolo lo veía como un error.
       const pos = await getPosicion();
-      if (!pos) {
-        const ok = await confirmDialog(
-          'No se pudo obtener tu ubicación (¿permiso denegado?). ¿Fichar igualmente sin ubicación?',
-          { title: 'Sin ubicación', okText: 'Fichar igualmente' }
-        );
-        if (!ok) return;
-      }
 
       // Estado FRESCO del servidor justo antes de fichar: con red inestable
       // la lista en pantalla puede estar vieja, y fichar a ciegas duplicaría
@@ -355,7 +348,8 @@ export default function MonitorView() {
         }
         loadFichajes();
       } else {
-        toast(tipo === 'entrada' ? '🟢 Entrada fichada. ¡Buen turno!' : '🔴 Salida fichada. ¡Hasta la próxima!', 'success');
+        const sinGps = pos ? '' : ' (sin ubicación: no había señal GPS)';
+        toast(tipo === 'entrada' ? `🟢 Entrada fichada${sinGps}. ¡Buen turno!` : `🔴 Salida fichada${sinGps}. ¡Hasta la próxima!`, 'success');
         setFirmando(false);
         loadFichajes();
       }
