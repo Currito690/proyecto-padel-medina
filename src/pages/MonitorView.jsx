@@ -1074,7 +1074,7 @@ export default function MonitorView() {
                               color: s.cobro ? '#15803D' : '#B45309',
                               opacity: cobroGuardando === s.bookingId ? 0.6 : 1,
                             }}>
-                            {cobroGuardando === s.bookingId ? 'Guardando…' : s.cobro ? '✅ Cobro confirmado' : '💶 ¿Pagó en club? Confirmar'}
+                            {cobroGuardando === s.bookingId ? 'Guardando…' : s.cobro ? '✅ Cobro confirmado' : '💶 Confirmar cobro'}
                           </button>
                         )}
                       </div>
