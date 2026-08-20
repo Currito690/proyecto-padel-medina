@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
-import { toast } from '../utils/notify';
+import { toast, confirmDialog } from '../utils/notify';
 
 const horaDe = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
@@ -466,8 +466,42 @@ export default function MonitorView() {
   const limpiarEdicionPrecio = (key) =>
     setPrecioEdits(prev => { const cp = { ...prev }; delete cp[key]; return cp; });
 
+  // Volver a pulsar el número YA MARCADO = quitar la confirmación (clase
+  // cancelada, no vino nadie…): se borra la fila y la clase deja de contar
+  // (y de sumar dinero en ENTRENOS del admin).
+  const desconfirmarClase = async (e) => {
+    const key = `${e.courtId}|${e.time}`;
+    const cur = clasesConf[key];
+    if (!cur) return false;
+    if ((cur.pagos || []).some(Boolean)) {
+      const ok = await confirmDialog(
+        'Esta clase tiene pagos apuntados. ¿Quitar la confirmación? La clase dejará de contar y se borrarán sus pagos.',
+        { title: 'Quitar confirmación', okText: 'Quitar' }
+      );
+      if (!ok) return false;
+    }
+    setConfGuardando(key);
+    // .select() confirma que de verdad se borró (RLS filtra en silencio)
+    const { data, error } = await supabase.from('clases_monitor').delete()
+      .eq('user_id', user.id).eq('date', date).eq('time_slot', e.time).eq('court_id', e.courtId)
+      .select('id');
+    setConfGuardando(null);
+    if (error || !data?.length) {
+      toast(error
+        ? 'No se pudo quitar: ' + error.message
+        : 'No se pudo quitar la confirmación: falta aplicar la migración clases_monitor_desconfirmar en Supabase', 'error');
+      return false;
+    }
+    setClasesConf(prev => { const cp = { ...prev }; delete cp[key]; return cp; });
+    limpiarEdicionPrecio(key);
+    toast(`Clase de ${e.time} sin confirmar: ya no cuenta ✓`, 'success');
+    return true;
+  };
+
   const confirmarClase = async (e, personas) => {
     const key = `${e.courtId}|${e.time}`;
+    // Pulsar el número que ya estaba marcado = desconfirmar la clase
+    if (clasesConf[key]?.personas === personas) return desconfirmarClase(e);
     const extra = precioPendiente(key);
     const ok = await upsertClase(e, { personas, ...extra }, `Clase de ${e.time} guardada: ${personas} ${personas === 1 ? 'persona' : 'personas'} ✓`);
     if (ok && extra.precio !== undefined) limpiarEdicionPrecio(key);
@@ -847,6 +881,7 @@ export default function MonitorView() {
             <div style={{ fontWeight: 800, color: '#7E22CE', fontSize: '0.9rem' }}>🎾 Clases del día</div>
             <p style={{ margin: '0.2rem 0 0.7rem', fontSize: '0.74rem', color: '#64748B' }}>
               Al terminar: marca cuántas personas tuvo la clase, ajusta el precio si hace falta y apunta cómo pagó cada alumno.
+              Si la clase se <strong>cancela</strong>, vuelve a pulsar el número marcado y quedará sin confirmar (no cuenta).
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
               {entrenosDelDia.map(e => {
