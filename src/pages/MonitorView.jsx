@@ -187,6 +187,33 @@ export default function MonitorView() {
   // el panel de firma y solo al confirmar la firma se registra (con GPS+hora).
   const [firmando, setFirmando] = useState(false); // tipo pendiente: 'entrada'|'salida'|null
 
+  // ── Permiso de ubicación: si el navegador lo tiene BLOQUEADO, los fichajes
+  // salen sin 📍 y nadie sabía por qué. Aquí se comprueba y se avisa claro.
+  // Además, al abrir la vista se pide una posición una vez: así el aviso de
+  // permiso del navegador sale en un momento tranquilo (no en mitad de la
+  // firma) y el sistema deja caché de posición caliente para el fichaje.
+  const [gpsPermiso, setGpsPermiso] = useState(null); // 'granted'|'denied'|'prompt'|null
+  useEffect(() => {
+    let st = null, cancelado = false;
+    if (navigator.permissions?.query) {
+      navigator.permissions.query({ name: 'geolocation' })
+        .then((s) => {
+          if (cancelado) return;
+          st = s;
+          setGpsPermiso(s.state);
+          s.onchange = () => setGpsPermiso(s.state);
+        })
+        .catch(() => {});
+    }
+    if (navigator.geolocation) {
+      try {
+        navigator.geolocation.getCurrentPosition(() => {}, () => {},
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 });
+      } catch { /* sin geolocalización */ }
+    }
+    return () => { cancelado = true; if (st) st.onchange = null; };
+  }, []);
+
   // Con el móvil QUIETO en interior, el navegador a veces no contesta a la
   // petición de GPS (ni éxito ni error, ignorando su propio timeout): el chip
   // GPS no emite posición nueva hasta que el móvil se mueve. Es lo que pasaba
@@ -743,6 +770,13 @@ export default function MonitorView() {
                 {trabajando ? `Trabajando desde las ${horaDe(ultimoFichaje.fichado_at)}` : 'Turno sin iniciar'}
                 {enClaseAhora && <span style={{ color: '#7E22CE' }}> · 🎾 ahora en clase</span>}
               </div>
+              {gpsPermiso === 'denied' && (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', fontWeight: 700, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.6rem', padding: '0.45rem 0.65rem', maxWidth: 420 }}>
+                  ⚠️ El navegador tiene <strong>bloqueada la ubicación</strong> para esta web: tus fichajes
+                  salen sin 📍. Actívala en los ajustes del navegador (Permisos → Ubicación) y ten la
+                  ubicación del móvil encendida. Aun así puedes fichar con normalidad.
+                </div>
+              )}
             </div>
             <button onClick={() => setFirmando(true)} disabled={fichando} style={{
               padding: '0.7rem 1.2rem', borderRadius: '0.7rem', border: 'none', cursor: fichando ? 'wait' : 'pointer',
@@ -1058,7 +1092,7 @@ function SignaturePad({ tipo, saving, onCancel, onConfirm }) {
           {esEntrada ? '🟢 Firmar ENTRADA' : '🔴 Firmar SALIDA'}
         </h3>
         <p style={{ margin: '0 0 0.9rem', fontSize: '0.82rem', color: '#64748B' }}>
-          Firma en el recuadro para confirmar tu {esEntrada ? 'entrada' : 'salida'}. Se registrará con la hora y tu ubicación.
+          Firma en el recuadro para confirmar tu {esEntrada ? 'entrada' : 'salida'}. Se registrará con la hora (y tu ubicación si hay señal).
         </p>
         <canvas
           ref={canvasRef}
