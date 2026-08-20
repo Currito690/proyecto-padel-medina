@@ -86,7 +86,7 @@ export default function MonitorView() {
     setLoading(true);
     try {
       const [bk, bl, ct] = await Promise.all([
-        supabase.from('bookings').select('court_id, time_slot, observaciones, status, user_id, metodo_pago, created_at').eq('date', d),
+        supabase.from('bookings').select('id, court_id, time_slot, observaciones, status, user_id, metodo_pago, cobro_confirmado, created_at').eq('date', d),
         supabase.from('blocked_slots').select('court_id, time_slot, tipo, entreno_grupo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
@@ -107,7 +107,10 @@ export default function MonitorView() {
         // Holds 'pendiente_pago' solo cuentan 15 min (jugador pagando en el banco)
         if (b.status === 'pendiente_pago' && (Date.now() - new Date(b.created_at).getTime()) > 15 * 60 * 1000) return;
         const who = b.status === 'pendiente_pago' ? '⏳ Pago en curso' : (b.observaciones || nameById[b.user_id] || '');
-        ensure(b.court_id).slots.push({ time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago });
+        ensure(b.court_id).slots.push({
+          time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago,
+          bookingId: b.id, cobro: !!b.cobro_confirmado, esHold: b.status === 'pendiente_pago',
+        });
       });
       (bl.data || []).forEach((s) => {
         const GRUPO = { individual: 'Individual', grupo2: 'Grupo 2', grupo3: 'Grupo 3', grupo4: 'Grupo 4' };
@@ -541,6 +544,36 @@ export default function MonitorView() {
     const ok = await upsertClase(e, { pagos, ...extra });
     if (ok && extra.precio !== undefined) limpiarEdicionPrecio(key);
     return ok;
+  };
+
+  // ── Cobro de reservas con PAGO EN CLUB: el jugador paga en mostrador y
+  // lolo lo confirma desde su agenda. Va por RPC (monitor_confirmar_cobro):
+  // solo toca cobro_confirmado/cobrado_at y solo en reservas de pago en club.
+  // En FINANZAS del admin sale como cobrada, igual que si la marcara él.
+  const [cobroGuardando, setCobroGuardando] = useState(null); // bookingId en curso
+  const toggleCobroClub = async (courtId, s) => {
+    if (cobroGuardando || !s.bookingId) return;
+    if (s.cobro) {
+      const ok = await confirmDialog('¿Volver a dejar este cobro como pendiente?', { title: 'Deshacer cobro', okText: 'Deshacer' });
+      if (!ok) return;
+    }
+    setCobroGuardando(s.bookingId);
+    const { error } = await supabase.rpc('monitor_confirmar_cobro', {
+      p_booking_id: s.bookingId,
+      p_confirmado: !s.cobro,
+    });
+    setCobroGuardando(null);
+    if (error) {
+      toast(/monitor_confirmar_cobro/i.test(error.message || '')
+        ? 'Falta aplicar la migración monitor_confirmar_cobro en Supabase'
+        : 'No se pudo guardar el cobro: ' + error.message, 'error');
+      return;
+    }
+    setCourts(prev => prev.map(c => c.id !== courtId ? c : {
+      ...c,
+      slots: c.slots.map(x => x.bookingId === s.bookingId ? { ...x, cobro: !s.cobro } : x),
+    }));
+    toast(!s.cobro ? '✅ Cobro en club confirmado (ya consta en Finanzas)' : 'Cobro marcado como pendiente', 'success');
   };
 
   // Entrenos del día visible (para la tarjeta de clases)
@@ -1029,6 +1062,20 @@ export default function MonitorView() {
                         {s.note && <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: 2, fontWeight: 600 }}>{s.tipo === 'reserva' ? '👤 ' : ''}{s.note}</div>}
                         {s.tipo === 'reserva' && METODO[s.metodo] && (
                           <div style={{ fontSize: '0.68rem', color: '#64748B', marginTop: 2, fontWeight: 700 }}>{METODO[s.metodo]}</div>
+                        )}
+                        {/* Pago en club: lolo confirma cuando el jugador paga en mostrador */}
+                        {s.tipo === 'reserva' && s.metodo === 'club' && !s.esHold && (
+                          <button onClick={() => toggleCobroClub(c.id, s)} disabled={cobroGuardando === s.bookingId}
+                            style={{
+                              marginTop: 5, width: '100%', padding: '0.35rem 0.45rem', borderRadius: '0.5rem',
+                              fontSize: '0.66rem', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit',
+                              border: `1.5px solid ${s.cobro ? '#BBF7D0' : '#FCD34D'}`,
+                              background: s.cobro ? '#F0FDF4' : '#FFFBEB',
+                              color: s.cobro ? '#15803D' : '#B45309',
+                              opacity: cobroGuardando === s.bookingId ? 0.6 : 1,
+                            }}>
+                            {cobroGuardando === s.bookingId ? 'Guardando…' : s.cobro ? '✅ Cobro confirmado' : '💶 ¿Pagó en club? Confirmar'}
+                          </button>
                         )}
                       </div>
                     );
