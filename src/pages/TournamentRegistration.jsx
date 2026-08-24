@@ -279,11 +279,13 @@ export default function TournamentRegistration() {
     const finalCategory = dualCategory && cat2 && cat2 !== cat ? `${cat} y ${cat2}` : cat;
 
     // Re-comprobamos el plazo contra la BBDD justo antes de insertar: una
-    // pestaña abierta antes del cierre (manual o por fecha) no debe poder
-    // inscribirse después. Si la consulta falla seguimos con lo ya cargado.
+    // pestaña abierta antes del cierre (manual, por fecha o por publicar el
+    // cuadro) no debe poder inscribirse después. Si la consulta falla
+    // seguimos con lo ya cargado; la policy de INSERT vuelve a comprobarlo.
     // (Aquí había un SELECT a tournament_registrations para detectar parejas
     // duplicadas, pero los jugadores no tienen policy SELECT y siempre
-    // devolvía vacío; el duplicado se detecta ahora por el error 23505 del INSERT.)
+    // devolvía vacío; el duplicado se detecta ahora por el error 23505 del
+    // INSERT gracias al índice único de la migración 20260824110000.)
     try {
       const { data: fresh } = await supabase
         .from('tournaments')
@@ -294,6 +296,7 @@ export default function TournamentRegistration() {
         const cfg = fresh.config || {};
         const closedNow = fresh.status !== 'open'
           || cfg.registrationClosed === true
+          || cfg.bracketPublished === true
           || (!!cfg.registrationDeadline && serverNowMs() > deadlineMs(cfg.registrationDeadline, cfg.registrationDeadlineTime || '23:59'));
         if (closedNow) {
           toast('El plazo de inscripción ha finalizado.', 'error');
@@ -350,10 +353,20 @@ export default function TournamentRegistration() {
       });
 
     if (insError) {
+      const insMsg = String(insError.message || '');
       // 23505 = unique_violation: la misma pareja ya está inscrita en esa
-      // categoría (índice único en BBDD).
+      // categoría (índice único uq_tournament_registrations_pareja_categoria,
+      // migración 20260824110000: mismo torneo + misma categoría + nombres
+      // normalizados sin importar el orden J1/J2).
       if (insError.code === '23505') {
         toast('Esta pareja ya está inscrita en esa categoría. Si crees que es un error, contacta con el club.', 'error');
+      } else if (insError.code === '42501' || /row-level security/i.test(insMsg)) {
+        // La policy de INSERT (torneo_admite_inscripciones) ha dicho que no:
+        // el torneo cerró, venció el plazo o se publicó el cuadro mientras el
+        // jugador rellenaba el formulario. Decirle "vuelve a intentarlo" aquí
+        // le engaña: enseñamos la vista de inscripción cerrada.
+        toast('Las inscripciones de este torneo están cerradas.', 'error');
+        setTournament(t => (t ? { ...t, config: { ...t.config, registrationClosed: true } } : t));
       } else {
         toast('Hubo un error al registrarte. Vuelve a intentarlo.', 'error');
       }

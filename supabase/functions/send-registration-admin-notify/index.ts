@@ -1,6 +1,13 @@
 // supabase/functions/send-registration-admin-notify/index.ts
 // Deploy: npx supabase functions deploy send-registration-admin-notify
 // Avisa al club por correo cuando llega una nueva inscripción a un torneo.
+//
+// Quién puede llamar: el trigger de BD (cabecera x-notify-secret leída del
+// Vault), el service role o un admin con sesión. El secreto solo se exige
+// cuando lo tienen LAS DOS partes (REGISTRATION_NOTIFY_SECRET en la función
+// y registration_notify_secret en el Vault). Si falta en cualquiera de las
+// dos, la llamada se acepta con un aviso en el log para que el club no se
+// quede sin correos a mitad de configurar; ver callerAutorizado.
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
 const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
@@ -28,8 +35,14 @@ type AuthResult = { ok: true } | { ok: false; status: number; error: string };
 async function callerAutorizado(req: Request): Promise<AuthResult> {
   // Trigger de BD (20260503100000 + 20260824*): manda x-notify-secret leído
   // del Vault. Debe coincidir con el secret REGISTRATION_NOTIFY_SECRET de la
-  // función. Si el secret aún no está configurado en la función avisamos en
-  // el log y dejamos pasar para no dejar al club sin avisos de inscripción.
+  // función. El secreto solo se exige cuando lo tienen las dos partes:
+  //   - Sin REGISTRATION_NOTIFY_SECRET en la función → se acepta (aviso en log).
+  //   - Con secret en la función pero sin cabecera (aún no existe
+  //     registration_notify_secret en el Vault, o el trigger es antiguo) →
+  //     se acepta con aviso en log; rechazar aquí dejaba al club sin correos
+  //     en silencio durante la transición.
+  //   - Con cabecera pero distinta → sigue a la comprobación de sesión (admin
+  //     o service role) y si no, se rechaza.
   const notifySecret = (Deno.env.get('REGISTRATION_NOTIFY_SECRET') || '').trim();
   const headerSecret = (req.headers.get('x-notify-secret') || '').trim();
   if (notifySecret && headerSecret && headerSecret === notifySecret) return { ok: true };
@@ -37,6 +50,11 @@ async function callerAutorizado(req: Request): Promise<AuthResult> {
     console.warn('REGISTRATION_NOTIFY_SECRET no configurado: se acepta la llamada sin comprobar el llamante. Configúralo (y el mismo valor en Vault como registration_notify_secret).');
     return { ok: true };
   }
+  if (!headerSecret) {
+    console.warn('REGISTRATION_NOTIFY_SECRET configurado pero la llamada no trae x-notify-secret: falta el secreto registration_notify_secret en el Vault (select vault.create_secret(...)). Se acepta la llamada durante la transición.');
+    return { ok: true };
+  }
+  console.warn('x-notify-secret no coincide con REGISTRATION_NOTIFY_SECRET: se comprueba la sesión del llamante.');
   const url = Deno.env.get('SUPABASE_URL') || '';
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
   const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();

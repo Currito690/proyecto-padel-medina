@@ -398,3 +398,14 @@ Revisión completa del apartado de torneos (panel admin, inscripción pública, 
 - src/pages/Tournaments.jsx ~L62: Public tournament list ignores config.registrationClosed, showing 'Inscripción abierta' and an 'Inscribirse' button after the admin closed registrations manually
 - src/pages/Tournaments.jsx ~L214: El plazo mostrado omite la hora límite y se calcula en la zona horaria del navegador del visitante
 - supabase/migrations/20260421110000_tournaments_public_read.sql ~L11: tournaments.config (with manual participants' names, availability and shirt sizes) is world-readable for every status, including drafts
+
+## Segunda ronda: verificación adversaria del arreglo (7 revisores + verificadores)
+
+Tras aplicar las correcciones se revisó el diff completo buscando regresiones y arreglos incompletos. Se confirmaron **7 problemas reales** (todos en el lote anterior, ninguno nuevo en producción) y se corrigieron junto con 5 avisos leves:
+
+- ✅ Consolación: un perdedor reinsertado ya no puede caer en un partido «movedUp» pisando a la pareja movida (si no hay hueco, avisa).
+- ✅ Consolación: los partidos placeholder-vs-BYE (y placeholder-vs-placeholder) ya se liberan y el rival de R1 avanza.
+- ✅ Consolación: corregir un resultado del cuadro principal cuyo nuevo perdedor NO va a consolación ya no deja un «Perdedor por definir» eterno — se libera como BYE y el rival avanza.
+- ✅ «Reiniciar resultados» con ronda previa: las parejas directas de R1 ya no desaparecen tras haber ganado (se vacían solo los asientos que rellenó un resultado, se restauran placeholders y byes, y se conservan las horas).
+- ✅ Inscripción: la detección de pareja duplicada dependía de un índice único inexistente → nueva migración `20260824110000_inscripciones_pareja_unica.sql` (índice único por torneo + categoría + pareja normalizada sin acentos/mayúsculas, en cualquier orden).
+- ✅ Leves: la carga de reservas externas ya no descarta todas las reservas si falla la consulta de pistas (bloquea de forma conservadora) ni depende de `courts.created_at`; el editor de nombres de pista ya no relanza 3 consultas por tecla; intercambiar parejas en R0 conserva las horas cuando ambas pueden jugar; el aviso al club sigue llegando aunque el secreto solo esté configurado en un lado; retirado el interruptor muerto «pago obligatorio»; la inscripción muestra «inscripciones cerradas» cuando la base de datos la rechaza.

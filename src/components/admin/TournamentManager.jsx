@@ -358,16 +358,24 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           .select('date, time_slot, court_id')
           .gte('date', tConfig.startDate)
           .lte('date', tConfig.endDate),
-        supabase.from('courts').select('id, name, created_at').order('created_at', { ascending: true }),
+        // Mismo orden que el resto de la app (por nombre)
+        supabase.from('courts').select('id, name').order('name'),
       ]);
       if (bk.error) throw bk.error;
-      if (ct.error) throw ct.error;
       // Si los bloqueos no se pueden leer seguimos solo con las reservas
       const blocked = bl.error ? [] : (bl.data || []);
+      // Si las pistas no se pueden leer no sabemos a qué pista va cada
+      // reserva: en vez de tirarlas todas, bloquean todas las pistas del
+      // torneo (mejor pasarse que pisar una reserva real) y avisamos.
+      const courtsOk = !ct.error;
+      if (!courtsOk) {
+        console.warn('No se pudieron leer las pistas del club:', ct.error?.message || ct.error);
+        toast('No se pudieron leer las pistas del club: las reservas externas bloquean todas las pistas del torneo.', 'error');
+      }
       const total = tConfig.courtsCount || 1;
       // UUID de pista → nº de pista del torneo: por nombre igual al de la
       // config, si no por el número que lleve el nombre ("Pista 2"), si no
-      // por orden de creación.
+      // por orden alfabético.
       const courtNum = {};
       (ct.data || []).forEach((c, i) => {
         const name = String(c.name || '').trim().toLowerCase();
@@ -384,9 +392,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const toMin = (t) => { const [h, m] = String(t).trim().split(':').map(Number); return h * 60 + (m || 0); };
       const HOLD_MS = 15 * 60 * 1000; // un hold de pago solo ocupa la pista 15 min
       const map = {};
+      const allCourts = Array.from({ length: total }, (_, i) => i + 1);
       const addRange = (b) => {
         const court = courtNum[b.court_id];
-        if (!Number.isFinite(court) || court < 1 || court > total) return;
+        let courts;
+        if (Number.isFinite(court)) {
+          if (court < 1 || court > total) return;
+          courts = [court];
+        } else if (!courtsOk) {
+          courts = allCourts;
+        } else {
+          return;
+        }
         const [, m, d] = String(b.date || '').split('-');
         const [ini, fin] = String(b.time_slot || '').split(' - ');
         if (!d || !m || !ini) return;
@@ -397,7 +414,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         for (let h = Math.floor(startMin / 60); h * 60 < endMin && h < 24; h++) {
           const slot = `${d}/${m} ${String(h).padStart(2, '0')}:00`;
           if (!map[slot]) map[slot] = new Set();
-          map[slot].add(court);
+          courts.forEach(c => map[slot].add(c));
         }
       };
       (bk.data || [])
@@ -412,9 +429,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
   // Cargar al montar / cuando cambian las fechas o las pistas del torneo
+  // Con un pequeño retardo: el nombre de pista se escribe tecla a tecla y
+  // no queremos lanzar las 3 consultas en cada pulsación.
   useEffect(() => {
     if (!dbLoaded) return;
-    loadExternalBookings();
+    const t = setTimeout(() => { loadExternalBookings(); }, 400);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbLoaded, tConfig.startDate, tConfig.endDate, tConfig.courtsCount, tConfig.courtNames]);
 
@@ -2015,10 +2035,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     match1[selectedSwapSlot.side] = player2;
     match2[side] = player1;
     // La hora auto-asignada se eligió con la disponibilidad de la pareja
-    // anterior: la soltamos (las manuales se respetan). Cambiar de lado
-    // dentro del mismo partido no cambia la pareja.
+    // anterior: si la nueva pareja no puede a esa hora, la soltamos (las
+    // manuales se respetan); si puede (o no ha indicado disponibilidad), se
+    // conserva. Cambiar de lado dentro del mismo partido no cambia la pareja.
     if (match1 !== match2) {
-      affected.forEach(m => { if (!m.timeManual) m.time = null; });
+      const canPlayAt = (p, slot) => !p || p.isBye || !Array.isArray(p.finalSlots) || p.finalSlots.length === 0 || p.finalSlots.includes(slot);
+      affected.forEach(m => {
+        if (m.timeManual || !m.time) return;
+        const slot = m.time.split(' - Pista')[0].trim();
+        if (!canPlayAt(m.p1, slot) || !canPlayAt(m.p2, slot)) m.time = null;
+      });
     }
     // Volver a pasar por BYE a la pareja real que ahora lo tiene enfrente
     affected.forEach(m => {
@@ -2603,6 +2629,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // la avanzamos ahora (en cuadros sanos es un no-op).
     let healed = false;
     for (const m of r0) {
+      if (m.movedUp) continue;
       const real = m.p1?.isBye && isRealPair(m.p2) ? m.p2 : (m.p2?.isBye && isRealPair(m.p1) ? m.p1 : null);
       if (real && m.winner?.id !== real.id) { advanceWinnerMut(next, 0, m.matchIndex, real); healed = true; }
     }
@@ -2641,16 +2668,24 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           m.winner = null; m.score = null;
           if (!m.timeManual) m.time = null;
           clearConsDownstreamMut(next, 0, m.matchIndex);
+          // Si el rival también es un BYE (partido liberado entero), la
+          // pareja pasa directa ya, sin esperar a la siguiente auto-cura.
+          const other = side === 'p1' ? m.p2 : m.p1;
+          if (other?.isBye) advanceWinnerMut(next, 0, m.matchIndex, m[side]);
           return next;
         }
       }
     }
     // PASS 2 (fallback legacy): primer placeholder libre.
     for (const m of r0) {
+      if (m.movedUp) continue;
       if (m.p1?.isPlaceholder) return place(m, 'p1');
       if (m.p2?.isPlaceholder) return place(m, 'p2');
     }
     for (const m of r0) {
+      // Un partido movido entero a la ronda siguiente lleva dos marcadores
+      // "isBye" (moved-*): no es un hueco libre, sus parejas ya están en R1.
+      if (m.movedUp || String(m.p1?.id || '').startsWith('moved-') || String(m.p2?.id || '').startsWith('moved-')) continue;
       if (m.p1?.isBye && m.p2?.isBye) return place(m, 'p1');
     }
     // Sin hueco → null aunque hayamos auto-curado algo: el aviso de
@@ -2674,6 +2709,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (!d.timeManual) d.time = null;
       fR++;
     }
+  };
+
+  // El partido de cons R0 se queda sin nadie (BYE vs BYE): mete un BYE en su
+  // asiento de R1 y, si el rival de R1 ya es real, pásalo directo. Si aún no
+  // ha llegado, advanceWinnerMut lo pasará al verse contra un BYE.
+  const byeOutConsR0Mut = (next, m, sourceMain) => {
+    const r1 = next[1]?.[Math.floor(m.matchIndex / 2)];
+    if (!r1) return;
+    const seat = m.matchIndex % 2 === 0 ? 'p1' : 'p2';
+    r1[seat] = { id: `cons-bye-released-r1-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true, ...(sourceMain ? { sourceMain } : {}) };
+    if (!r1.timeManual) r1.time = null;
+    const rival = seat === 'p1' ? r1.p2 : r1.p1;
+    if (isRealPair(rival)) advanceWinnerMut(next, 1, r1.matchIndex, rival);
   };
 
   // Sustituye al perdedor "viejo" por el "nuevo" SOLO en el partido de
@@ -2737,20 +2785,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           : !p.sourceMain
       );
       for (const m of next[0]) {
-        let placeholderSide = null;
-        let realSide = null;
-        if (isLinked(m.p1) && m.p2 && !m.p2.isBye && !m.p2.isPlaceholder) {
-          placeholderSide = 'p1'; realSide = 'p2';
-        } else if (isLinked(m.p2) && m.p1 && !m.p1.isBye && !m.p1.isPlaceholder) {
-          placeholderSide = 'p2'; realSide = 'p1';
-        }
-        if (!placeholderSide) continue;
+        const side = isLinked(m.p1) ? 'p1' : (isLinked(m.p2) ? 'p2' : null);
+        if (!side) continue;
+        const other = side === 'p1' ? m.p2 : m.p1;
         // Convertir placeholder a BYE. Guardamos el vínculo por si el admin
         // corrige el resultado y el perdedor sí tiene que entrar
         // (pushLoserToConsPure deshace el bye).
-        m[placeholderSide] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true, ...(sourceMain ? { sourceMain } : {}) };
-        // Auto-advance al rival a la siguiente ronda
-        advanceWinnerMut(next, 0, m.matchIndex, m[realSide]);
+        m[side] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true, ...(sourceMain ? { sourceMain } : {}) };
+        // Rival real → pasa directo. Rival BYE (placeholder-vs-BYE, o el 2º
+        // de un placeholder-vs-placeholder) → el partido queda vacío y el
+        // BYE sube a R1. Si el rival es otro placeholder, se queda a la
+        // espera: su propia liberación/colocación resolverá el partido.
+        if (isRealPair(other)) advanceWinnerMut(next, 0, m.matchIndex, other);
+        else if (other?.isBye) byeOutConsR0Mut(next, m, sourceMain);
         return { ...prev, [cat]: next };
       }
       return prev;
@@ -2767,19 +2814,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       toast('No hay cuadro de consolación que resolver.', 'error');
       return;
     }
-    const pending = catCons[0].filter(m => {
-      const p1Place = m.p1?.isPlaceholder;
-      const p2Place = m.p2?.isPlaceholder;
-      const p1Real = m.p1 && !m.p1.isBye && !m.p1.isPlaceholder;
-      const p2Real = m.p2 && !m.p2.isBye && !m.p2.isPlaceholder;
-      return (p1Place && p2Real) || (p2Place && p1Real);
-    });
+    // Cualquier placeholder de R0 cuenta, tenga enfrente una pareja real,
+    // un BYE u otro placeholder: todos son huecos que ya no se van a llenar.
+    const pending = catCons[0].filter(m => m.p1?.isPlaceholder || m.p2?.isPlaceholder);
     if (pending.length === 0) {
       toast('No hay placeholders pendientes que resolver.', 'success');
       return;
     }
     const ok = await confirmDialog(
-      `Hay ${pending.length} pareja${pending.length === 1 ? '' : 's'} esperando rival que no va a llegar. ¿Las pasamos directo a la siguiente ronda con BYE?`,
+      `Hay ${pending.length} hueco${pending.length === 1 ? '' : 's'} de consolación que no se va${pending.length === 1 ? '' : 'n'} a llenar. ¿Pasamos a las parejas que esperaban directo a la siguiente ronda con BYE?`,
       { title: 'Resolver placeholders pendientes', okText: 'Sí, avanzar' }
     );
     if (!ok) return;
@@ -2788,20 +2831,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (!cc || cc.length === 0) return prev;
       const next = cc.map(r => r.map(m => ({ ...m })));
       next[0].forEach(m => {
-        let placeholderSide = null;
-        let realSide = null;
-        if (m.p1?.isPlaceholder && m.p2 && !m.p2.isBye && !m.p2.isPlaceholder) {
-          placeholderSide = 'p1'; realSide = 'p2';
-        } else if (m.p2?.isPlaceholder && m.p1 && !m.p1.isBye && !m.p1.isPlaceholder) {
-          placeholderSide = 'p2'; realSide = 'p1';
+        for (const side of ['p1', 'p2']) {
+          if (!m[side]?.isPlaceholder) continue;
+          // Conservamos el vínculo con el principal para que una corrección
+          // posterior pueda deshacer el bye (pushLoserToConsPure PASS 1b).
+          const link = m[side].sourceMain;
+          m[side] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true, ...(link ? { sourceMain: link } : {}) };
+          const other = side === 'p1' ? m.p2 : m.p1;
+          if (isRealPair(other)) advanceWinnerMut(next, 0, m.matchIndex, other);
+          else if (other?.isBye) byeOutConsR0Mut(next, m, link);
         }
-        if (!placeholderSide) return;
-        m[placeholderSide] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true };
-        if (m[realSide]) advanceWinnerMut(next, 0, m.matchIndex, m[realSide]);
       });
       return { ...prev, [cat]: next };
     });
-    toast(`✓ ${pending.length} pareja${pending.length === 1 ? '' : 's'} avanzada${pending.length === 1 ? '' : 's'} a la siguiente ronda.`, 'success');
+    toast(`✓ ${pending.length} hueco${pending.length === 1 ? '' : 's'} resuelto${pending.length === 1 ? '' : 's'}: las parejas que esperaban pasan a la siguiente ronda.`, 'success');
   };
 
   const syncConsOnMainWinner = (cat, match, oldWinner, newWinner) => {
@@ -2855,14 +2898,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         toast(`No hay hueco en consolación para ${newLoser.name}. Revisa el cuadro de consolación.`, 'error');
       }
     }
-    if (updated) {
-      setConsRounds(prev => ({ ...prev, [cat]: updated }));
-      return;
-    }
-    // 3) Nadie de este match estaba en cons y el nuevo perdedor no es
-    //    elegible (ya jugó R0): liberamos SOLO el placeholder reservado a
-    //    este match para que el rival que esperaba avance.
-    if (!newEligible && !oldLoser && match.round === 1 && !hasPrelim) {
+    if (updated) setConsRounds(prev => ({ ...prev, [cat]: updated }));
+    // 3) El nuevo perdedor no es elegible (ya jugó R0): el placeholder
+    //    vinculado a este match (el original, o el que acaba de reponer el
+    //    swap) no se va a llenar nunca → lo liberamos como BYE conservando
+    //    sourceMain (PASS 1b de pushLoserToConsPure lo deshace si el admin
+    //    vuelve a corregir) y el rival que esperaba avanza. Los updaters se
+    //    encadenan en orden, así que este ve ya el estado del swap.
+    if (!newEligible && match.round === 1 && !hasPrelim) {
       releaseConsPlaceholderAsBye(cat, sourceMain);
     }
   };
@@ -5187,15 +5230,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       <option value="EUR">EUR €</option>
                     </select>
                   </div>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: '#166534', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={tConfig.registrationFeeRequired !== false}
-                      onChange={e => setTConfig({ ...tConfig, registrationFeeRequired: e.target.checked })}
-                      style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#16A34A' }}
-                    />
-                    El pago es obligatorio para confirmar la inscripción
-                  </label>
+                  {/* Con cuota activa el pago siempre es obligatorio: la inscripción
+                      queda pendiente hasta que se confirma (tarjeta o en el club).
+                      El antiguo interruptor registrationFeeRequired no lo leía nadie. */}
                 </div>
               )}
             </div>
@@ -6605,14 +6642,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           // avances por BYE hay que volver a aplicarlos.
                           const resetMain = (allRounds) =>
                             Object.fromEntries(Object.entries(allRounds).map(([cat, catRounds]) => {
-                              const produced = new Set();
+                              // Asientos (ronda:partido:lado) que un RESULTADO
+                              // rellenó: solo esos se vacían. Vaciar "por id de
+                              // ganador" borraba también a las parejas directas
+                              // que viven en R1 con ronda previa cuando ya
+                              // habían ganado su partido.
+                              const fed = new Set();
                               catRounds.forEach((rm, r) => {
-                                if (r < catRounds.length - 1) rm.forEach(m => { if (m.winner?.id) produced.add(m.winner.id); });
+                                if (r >= catRounds.length - 1) return;
+                                rm.forEach(m => {
+                                  if (!m.winner || m.isRR) return;
+                                  const slot = Number.isFinite(m.nextSlot) ? m.nextSlot : m.matchIndex;
+                                  fed.add(`${r + 1}:${Math.floor(slot / 2)}:${slot % 2 === 0 ? 'p1' : 'p2'}`);
+                                });
                               });
-                              const next = catRounds.map((rm, rIdx) => rm.map(m => {
-                                const keep = (p) => (m.isRR || rIdx === 0 || !p || !produced.has(p.id)) ? p : null;
-                                return { ...m, winner: null, score: null, p1: keep(m.p1), p2: keep(m.p2) };
-                              }));
+                              const next = catRounds.map((rm, rIdx) => rm.map(m => ({
+                                ...m, winner: null, score: null,
+                                p1: fed.has(`${rIdx}:${m.matchIndex}:p1`) ? null : m.p1,
+                                p2: fed.has(`${rIdx}:${m.matchIndex}:p2`) ? null : m.p2,
+                              })));
                               // Ronda previa: vuelve el placeholder "Ganador previa N" al hueco del principal
                               (next[0] || []).forEach(m => {
                                 if (m.isPrelim && Number.isFinite(m.nextSlot) && next[1]) {
@@ -6621,11 +6669,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                   if (tgt && !tgt[side]) tgt[side] = { id: `prelim-winner-${cat}-${m.matchIndex}`, name: `Ganador previa ${m.matchIndex + 1}`, isPrelimPlaceholder: true, prelimMatchIdx: m.matchIndex };
                                 }
                               });
-                              // Byes: mismo auto-avance que al generar el cuadro (conservando horarios)
+                              // Byes: mismo auto-avance que al generar el cuadro (conservando
+                              // horarios). En TODAS las rondas: con previa, R1 puede llevar
+                              // byes de seguridad.
                               const savedTimes = next.map(rm => rm.map(m => m.time));
-                              if (!next[0]?.[0]?.isRR) (next[0] || []).forEach(m => {
-                                if (m.p1?.isBye && m.p2 && !m.p2.isBye) advanceWinnerMut(next, 0, m.matchIndex, m.p2);
-                                else if (m.p2?.isBye && m.p1 && !m.p1.isBye) advanceWinnerMut(next, 0, m.matchIndex, m.p1);
+                              if (!next[0]?.[0]?.isRR) next.forEach((rm, r) => {
+                                if (r >= next.length - 1) return;
+                                rm.forEach(m => {
+                                  if (m.p1?.isBye && m.p2 && !m.p2.isBye && !m.p2.isPrelimPlaceholder) advanceWinnerMut(next, r, m.matchIndex, m.p2);
+                                  else if (m.p2?.isBye && m.p1 && !m.p1.isBye && !m.p1.isPrelimPlaceholder) advanceWinnerMut(next, r, m.matchIndex, m.p1);
+                                });
                               });
                               next.forEach((rm, r) => rm.forEach((m, i) => { if (!m.time && savedTimes[r][i]) m.time = savedTimes[r][i]; }));
                               return [cat, next];
