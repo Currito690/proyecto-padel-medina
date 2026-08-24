@@ -14,10 +14,52 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-function escapeHtml(s: string): string {
+function escapeHtml(s: unknown): string {
   return String(s ?? '').replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c] || c));
+}
+
+// Solo puede llamar el propio backend (service role) o un admin con sesión.
+// Sin esto, cualquiera con la anon key podía mandar correos "de Padel Medina"
+// a quien quisiera. La sesión se valida contra Auth y profiles.role, igual
+// que en admin-update-user.
+type AuthResult = { ok: true } | { ok: false; status: number; error: string };
+async function callerAutorizado(req: Request): Promise<AuthResult> {
+  // Trigger de BD (20260503100000 + 20260824*): manda x-notify-secret leído
+  // del Vault. Debe coincidir con el secret REGISTRATION_NOTIFY_SECRET de la
+  // función. Si el secret aún no está configurado en la función avisamos en
+  // el log y dejamos pasar para no dejar al club sin avisos de inscripción.
+  const notifySecret = (Deno.env.get('REGISTRATION_NOTIFY_SECRET') || '').trim();
+  const headerSecret = (req.headers.get('x-notify-secret') || '').trim();
+  if (notifySecret && headerSecret && headerSecret === notifySecret) return { ok: true };
+  if (!notifySecret) {
+    console.warn('REGISTRATION_NOTIFY_SECRET no configurado: se acepta la llamada sin comprobar el llamante. Configúralo (y el mismo valor en Vault como registration_notify_secret).');
+    return { ok: true };
+  }
+  const url = Deno.env.get('SUPABASE_URL') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return { ok: false, status: 401, error: 'No autenticado' };
+  if (serviceKey && token === serviceKey) return { ok: true };
+  if (!url || !serviceKey) return { ok: false, status: 500, error: 'Función mal configurada' };
+
+  const meRes = await fetch(`${url}/auth/v1/user`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${token}` },
+  });
+  if (!meRes.ok) return { ok: false, status: 401, error: 'Sesión inválida' };
+  const me = await meRes.json().catch(() => null);
+  const callerId = me?.id;
+  if (!callerId) return { ok: false, status: 401, error: 'Sesión inválida' };
+
+  const roleRes = await fetch(`${url}/rest/v1/profiles?id=eq.${encodeURIComponent(callerId)}&select=role`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+  });
+  const rows = await roleRes.json().catch(() => []);
+  if (!Array.isArray(rows) || rows[0]?.role !== 'admin') {
+    return { ok: false, status: 403, error: 'Solo un administrador puede hacer esto' };
+  }
+  return { ok: true };
 }
 
 function row(label: string, value: string): string {
@@ -114,6 +156,14 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders });
   }
   try {
+    const auth = await callerAutorizado(req);
+    if (!auth.ok) {
+      return new Response(JSON.stringify({ error: auth.error }), {
+        status: auth.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const payload = await req.json() as RegistrationPayload;
 
     if (!payload.tournamentName || !payload.category || !payload.player1Name || !payload.player2Name) {
@@ -135,6 +185,12 @@ Deno.serve(async (req: Request) => {
     const html = buildHtml(payload);
     // Versión texto plano. Resend la usa para multipart/alternative, lo que
     // mejora bastante la deliverability en clientes corporativos / Hotmail.
+    const payText = payload.paymentStatus === 'paid' ? 'Pagado'
+      : payload.paymentStatus === 'pending' ? 'Pendiente'
+      : payload.paymentStatus;
+    const methodText = payload.paymentMethod === 'card' ? ' - Tarjeta'
+      : payload.paymentMethod === 'club' ? ' - En el club'
+      : '';
     const textLines = [
       `Nueva inscripcion en ${payload.tournamentName}`,
       `Categoria: ${payload.category}`,
@@ -148,7 +204,7 @@ Deno.serve(async (req: Request) => {
         ? `Tallas: J1 ${payload.player1ShirtSize || '-'} / J2 ${payload.player2ShirtSize || '-'}`
         : '',
       payload.paymentStatus && payload.paymentStatus !== 'not_required'
-        ? `Pago: ${payload.paymentStatus}${payload.amount ? ` (${payload.amount}EUR)` : ''}`
+        ? `Pago: ${payText}${methodText}${payload.amount != null ? ` (${Number(payload.amount).toFixed(2)} EUR)` : ''}`
         : '',
       '',
       'Recuerda confirmar la pareja en el panel de admin para que entre en el cuadro.',

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
-import { toTitleCase, normalizeForCompare } from '../utils/names';
+import { toTitleCase } from '../utils/names';
 import { serverNowMs } from '../utils/serverTime';
 
 const HOURS = [
@@ -36,6 +36,35 @@ const fmtDayHeader = (label, startDate) => {
   return `${d.toLocaleDateString('es-ES', { weekday: 'short' })} ${label}`;
 };
 
+// Instante (ms) en el que vence el plazo, interpretado SIEMPRE en hora de
+// Madrid. `new Date('YYYY-MM-DDTHH:mm')` usa la zona horaria del navegador:
+// un jugador con el móvil en otra zona veía el plazo desplazado varias horas.
+const deadlineMs = (dateStr, timeStr) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mi] = (timeStr || '23:59').split(':').map(Number);
+  const wallUtc = Date.UTC(y, m - 1, d, hh, mi, 0);
+  try {
+    // Offset Madrid−UTC en esa fecha (+1h o +2h según horario de verano).
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Madrid', hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const p = {};
+    fmt.formatToParts(new Date(wallUtc)).forEach(({ type, value }) => { p[type] = value; });
+    const madridWall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+    return wallUtc - (madridWall - wallUtc);
+  } catch {
+    return new Date(`${dateStr}T${timeStr || '23:59'}:00`).getTime();
+  }
+};
+
+// Datos guardados antes de ir al TPV para poder "Reintentar pago" si vuelve
+// con ?inscripcion=fallo sin crear una segunda inscripción.
+const retryKey = (id) => `treg:${id}`;
+const readStoredRetry = (id) => {
+  try { return JSON.parse(sessionStorage.getItem(retryKey(id)) || 'null'); } catch { return null; }
+};
+
 export default function TournamentRegistration() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -43,6 +72,10 @@ export default function TournamentRegistration() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  // Vuelta del TPV (?inscripcion=ok|fallo): 'ok' | 'fallo' | null
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [payScreen, setPayScreen] = useState(null);
+  const [retrying, setRetrying] = useState(false);
 
   // Form state
   const [cat, setCat] = useState('');
@@ -78,6 +111,21 @@ export default function TournamentRegistration() {
         .select('*')
         .eq('id', id)
         .single();
+      // Vuelta del TPV: enseñamos el resultado del pago aunque el torneo haya
+      // cerrado o publicado el cuadro mientras el jugador estaba en Redsys.
+      // Antes nadie leía este parámetro y el jugador volvía al formulario
+      // vacío, creía que no había funcionado y se inscribía (y pagaba) otra vez.
+      const payResult = searchParams.get('inscripcion');
+      if (payResult === 'ok' || payResult === 'fallo') {
+        if (data) setTournament(data);
+        setPayScreen(payResult);
+        if (payResult === 'ok') {
+          try { sessionStorage.removeItem(retryKey(id)); } catch { /* ignore */ }
+        }
+        setSearchParams({}, { replace: true });
+        setLoading(false);
+        return;
+      }
       if (error || !data) {
         setError('Este torneo no existe o ya ha cerrado inscripciones.');
       } else {
@@ -115,7 +163,7 @@ export default function TournamentRegistration() {
     const time = tournament.config.registrationDeadlineTime || '23:59';
     // Hora del servidor (no del reloj del navegador) para que un usuario con
     // el reloj atrasado no pueda inscribirse fuera de plazo.
-    return serverNowMs() > new Date(`${tournament.config.registrationDeadline}T${time}:00`).getTime();
+    return serverNowMs() > deadlineMs(tournament.config.registrationDeadline, time);
   })();
 
   const getHoursForDay = (day) => {
@@ -181,7 +229,6 @@ export default function TournamentRegistration() {
 
   const giftIsShirt = tournament?.config?.gift === 'shirt';
   const feeEnabled = !!tournament?.config?.registrationFeeEnabled;
-  const feeRequired = tournament?.config?.registrationFeeRequired !== false;
   const feeAmount = parseFloat(tournament?.config?.registrationFeeAmount || 0);
 
   const handleSubmit = async (e) => {
@@ -231,25 +278,32 @@ export default function TournamentRegistration() {
     const p2NameNorm = toTitleCase(p2Name);
     const finalCategory = dualCategory && cat2 && cat2 !== cat ? `${cat} y ${cat2}` : cat;
 
-    // Comprobamos duplicado contra la BBDD: la misma pareja no puede inscribirse
-    // dos veces en la misma categoría (orden de jugadores indistinto).
+    // Re-comprobamos el plazo contra la BBDD justo antes de insertar: una
+    // pestaña abierta antes del cierre (manual o por fecha) no debe poder
+    // inscribirse después. Si la consulta falla seguimos con lo ya cargado.
+    // (Aquí había un SELECT a tournament_registrations para detectar parejas
+    // duplicadas, pero los jugadores no tienen policy SELECT y siempre
+    // devolvía vacío; el duplicado se detecta ahora por el error 23505 del INSERT.)
     try {
-      const { data: existingRegs } = await supabase
-        .from('tournament_registrations')
-        .select('player1_name, player2_name, category')
-        .eq('tournament_id', id);
-      const incoming = [normalizeForCompare(p1NameNorm), normalizeForCompare(p2NameNorm)].sort().join('|');
-      const dup = (existingRegs || []).some(r => {
-        if (r.category !== finalCategory) return false;
-        const existing = [normalizeForCompare(r.player1_name), normalizeForCompare(r.player2_name)].sort().join('|');
-        return existing === incoming;
-      });
-      if (dup) {
-        toast('Esta pareja ya está inscrita en esa categoría. Si crees que es un error, contacta con el club.', 'error');
-        return releaseLock();
+      const { data: fresh } = await supabase
+        .from('tournaments')
+        .select('status, config')
+        .eq('id', id)
+        .single();
+      if (fresh) {
+        const cfg = fresh.config || {};
+        const closedNow = fresh.status !== 'open'
+          || cfg.registrationClosed === true
+          || (!!cfg.registrationDeadline && serverNowMs() > deadlineMs(cfg.registrationDeadline, cfg.registrationDeadlineTime || '23:59'));
+        if (closedNow) {
+          toast('El plazo de inscripción ha finalizado.', 'error');
+          // Forzamos la vista "Inscripción Cerrada" con lo que dice la BBDD.
+          setTournament(t => (t ? { ...t, config: { ...t.config, ...cfg, registrationClosed: true } } : t));
+          return releaseLock();
+        }
       }
     } catch (chkErr) {
-      console.warn('No se pudo verificar duplicados antes de inscribir:', chkErr);
+      console.warn('No se pudo re-comprobar el plazo antes de inscribir:', chkErr);
     }
 
     // Convert grid to unavailable_times array
@@ -296,48 +350,30 @@ export default function TournamentRegistration() {
       });
 
     if (insError) {
-      toast('Hubo un error al registrarte. Vuelve a intentarlo.', 'error');
+      // 23505 = unique_violation: la misma pareja ya está inscrita en esa
+      // categoría (índice único en BBDD).
+      if (insError.code === '23505') {
+        toast('Esta pareja ya está inscrita en esa categoría. Si crees que es un error, contacta con el club.', 'error');
+      } else {
+        toast('Hubo un error al registrarte. Vuelve a intentarlo.', 'error');
+      }
       console.error(insError);
       setLoading(false);
       submitLockRef.current = false; // permitir reintento
       return;
     }
 
-    // Aviso al club por correo. Lo AWAITeamos para asegurar que la petición
-    // sale antes de cualquier redirect al TPV (si no, el navegador puede
-    // cancelar la fetch al navegar). Si falla, solo lo logueamos: la
-    // inscripción ya está guardada y el admin la verá en el panel.
-    try {
-      const { data: notifyData, error: notifyErr } = await supabase.functions.invoke('send-registration-admin-notify', {
-        body: {
-          tournamentName: tournament?.name || 'Torneo',
-          category: finalCategory,
-          player1Name: p1NameNorm,
-          player2Name: p2NameNorm,
-          player1Email: p1Email || null,
-          player2Email: p2Email || null,
-          player1Phone: p1Phone || null,
-          player2Phone: p2Phone || null,
-          player1ShirtSize: giftIsShirt ? (p1Size || null) : null,
-          player2ShirtSize: giftIsShirt ? (p2Size || null) : null,
-          paymentStatus,
-          paymentMethod: chosenMethod,
-          amount: totalFee || null,
-          registrationsUrl: `${window.location.origin}/admin`,
-        },
-      });
-      if (notifyErr || (notifyData && notifyData.error)) {
-        console.warn('Aviso al club falló:', notifyErr || notifyData?.error);
-      }
-    } catch (notifyErr) {
-      console.warn('No se pudo avisar al club por correo:', notifyErr);
-    }
+    // El aviso al club por correo lo envía un trigger de BBDD al insertar la
+    // fila (migración admin_notify_on_registration). No se llama desde aquí:
+    // hacerlo también duplicaba el correo al club en cada inscripción.
 
-    // Solo se redirige al TPV si el jugador eligió pagar con tarjeta.
+    // Si el jugador eligió tarjeta va SIEMPRE al TPV. Antes se saltaba cuando
+    // el pago no era "obligatorio" y el jugador creía haber pagado sin pagar.
     // Si eligió "Pago en el club" (chosenMethod === 'club') la inscripción
     // queda como 'pending' y será el admin quien marque el pago como recibido.
-    if (totalFee > 0 && feeRequired && chosenMethod === 'card') {
+    if (totalFee > 0 && chosenMethod === 'card') {
       try {
+        try { sessionStorage.setItem(retryKey(id), JSON.stringify({ registrationId, totalFee })); } catch { /* ignore */ }
         await redirectToRedsys(registrationId, totalFee);
         return; // el navegador navegará al TPV
       } catch (e) {
@@ -395,6 +431,22 @@ export default function TournamentRegistration() {
     form.submit();
   };
 
+  // Reintento del pago tras volver del TPV con ?inscripcion=fallo. Reusa el
+  // registrationId guardado antes del primer intento: redsys-create genera un
+  // orderId nuevo por llamada y redsys-notify pasa la fila de 'failed' a 'paid'.
+  const handleRetryPayment = async () => {
+    const stored = readStoredRetry(id);
+    if (!stored?.registrationId || !(stored.totalFee > 0)) return;
+    setRetrying(true);
+    try {
+      await redirectToRedsys(stored.registrationId, stored.totalFee);
+    } catch (e) {
+      console.error('Error reintentando pago:', e);
+      toast('No se pudo conectar con la pasarela de pago. Contacta con el club para abonar la cuota.', 'error');
+      setRetrying(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -419,14 +471,48 @@ export default function TournamentRegistration() {
     );
   }
 
-  if (success) {
+  // Vuelta del TPV con pago fallido/cancelado: la fila ya existe ('failed'),
+  // así que NO mostramos el formulario (evita una segunda inscripción).
+  if (payScreen === 'fallo') {
+    const canRetry = !!readStoredRetry(id)?.registrationId;
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFBEB' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FEF2F2' }}>
         <div style={{ backgroundColor: 'white', padding: '3rem', borderRadius: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxWidth: '440px' }}>
-          <div style={{ width: '64px', height: '64px', backgroundColor: '#FEF3C7', color: '#B45309', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', fontSize: '2rem' }}>⏳</div>
-          <h1 style={{ margin: '0 0 0.5rem', fontSize: '1.5rem', fontWeight: 900, color: '#0F172A' }}>Inscripción recibida</h1>
+          <div style={{ width: '64px', height: '64px', backgroundColor: '#FEE2E2', color: '#DC2626', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', fontSize: '2rem' }}>✕</div>
+          <h1 style={{ margin: '0 0 0.5rem', fontSize: '1.5rem', fontWeight: 900, color: '#0F172A' }}>Pago no completado</h1>
           <p style={{ color: '#475569', marginBottom: '1rem', lineHeight: '1.5' }}>
-            Tu inscripción está <strong>pendiente de confirmación</strong> por parte del club.
+            El pago no se ha completado, pero <strong>vuestra inscripción ya está registrada</strong> como pendiente. No hace falta inscribirse otra vez.
+          </p>
+          <p style={{ color: '#64748B', fontSize: '0.9rem', marginBottom: '2rem', lineHeight: '1.5' }}>
+            {canRetry
+              ? 'Puedes reintentar el pago ahora o abonar la cuota en el club.'
+              : 'Pasa por el club para abonar la cuota o escríbenos a padelmedina@hotmail.com.'}
+          </p>
+          {canRetry && (
+            <button onClick={handleRetryPayment} disabled={retrying} style={{ width: '100%', padding: '0.875rem', backgroundColor: '#15803D', color: 'white', border: 'none', borderRadius: '0.75rem', fontWeight: 700, cursor: retrying ? 'not-allowed' : 'pointer', fontSize: '1rem', marginBottom: '0.75rem' }}>
+              {retrying ? 'Conectando con la pasarela...' : 'Reintentar pago'}
+            </button>
+          )}
+          <button onClick={() => navigate('/')} style={{ width: '100%', padding: '0.875rem', backgroundColor: '#0F172A', color: 'white', border: 'none', borderRadius: '0.75rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem' }}>
+            Ir a Padel Medina
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Inscripción guardada (o vuelta del TPV con pago OK: ?inscripcion=ok).
+  if (success || payScreen === 'ok') {
+    const paid = payScreen === 'ok';
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: paid ? '#F0FDF4' : '#FFFBEB' }}>
+        <div style={{ backgroundColor: 'white', padding: '3rem', borderRadius: '1.5rem', textAlign: 'center', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxWidth: '440px' }}>
+          <div style={{ width: '64px', height: '64px', backgroundColor: paid ? '#DCFCE7' : '#FEF3C7', color: paid ? '#15803D' : '#B45309', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', fontSize: '2rem' }}>{paid ? '✓' : '⏳'}</div>
+          <h1 style={{ margin: '0 0 0.5rem', fontSize: '1.5rem', fontWeight: 900, color: '#0F172A' }}>{paid ? 'Pago recibido' : 'Inscripción recibida'}</h1>
+          <p style={{ color: '#475569', marginBottom: '1rem', lineHeight: '1.5' }}>
+            {paid
+              ? <>El pago se ha realizado correctamente. La inscripción queda <strong>pendiente de confirmación</strong> por parte del club.</>
+              : <>Tu inscripción está <strong>pendiente de confirmación</strong> por parte del club.</>}
           </p>
           <p style={{ color: '#64748B', fontSize: '0.9rem', marginBottom: '2rem', lineHeight: '1.5' }}>
             Recibiréis un correo cuando validemos que la pareja encaja en la categoría seleccionada.

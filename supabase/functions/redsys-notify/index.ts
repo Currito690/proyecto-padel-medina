@@ -70,6 +70,35 @@ async function alertaCobroSinReserva(orderId: string, detalle: string) {
   }).catch(console.warn);
 }
 
+// ── Alerta URGENTE al admin: cobro de inscripción a torneo que no se pudo
+// registrar (inscripción borrada/inexistente o importe que no cuadra).
+async function alertaCobroTorneo(orderId: string, detalle: string) {
+  const base = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` };
+  await fetch(`${base}/functions/v1/send-push`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: '🚨 COBRO TORNEO A REVISAR',
+      body: `Pedido Redsys ${orderId}. ${detalle}`.slice(0, 170),
+      url: '/admin',
+    }),
+  }).catch(console.warn);
+  await fetch(`${base}/functions/v1/send-booking-email`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      type: 'admin',
+      userName: `⚠️ COBRO TORNEO A REVISAR — pedido Redsys ${orderId}`,
+      courtName: detalle.slice(0, 140) || '(sin datos)',
+      date: '',
+      timeSlot: '—',
+      metodoPago: 'REVISAR EN REDSYS (inscripción torneo)',
+    }),
+  }).catch(console.warn);
+}
+
 serve(async (req) => {
   try {
     if (!SECRET_KEY) {
@@ -121,32 +150,106 @@ serve(async (req) => {
 
     // ── Pago de inscripción a torneo ─────────────────────────────────────
     if (kind === 'tournament') {
-      const amountCentsRaw = decoded.Ds_Amount ?? '0';
-      const amountPaid = parseFloat(amountCentsRaw) / 100;
+      const amountCents = parseInt(String(decoded.Ds_Amount ?? '0'), 10) || 0;
+      const amountPaid = amountCents / 100;
+      const pagoOk = responseCode <= 99;
+      const authCode = decoded.Ds_AuthorisationCode ?? '-';
 
-      if (responseCode <= 99) {
-        const { error: updErr } = await supabase
-          .from('tournament_registrations')
-          .update({
-            payment_status: 'paid',
-            payment_method: 'redsys',
-            paid_at: new Date().toISOString(),
-            amount_paid: amountPaid,
-          })
-          .eq('id', registrationId);
-        if (updErr) {
-          console.error('Error marcando inscripción como pagada:', updErr);
-          return new Response('KO', { status: 500 });
+      // Sin un registrationId válido no podemos tocar la BD (id=eq.undefined
+      // revienta en Postgres y Redsys reintentaría en bucle). Si hubo cobro,
+      // avisamos al admin y devolvemos OK: reintentar no lo arregla.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (typeof registrationId !== 'string' || !UUID_RE.test(registrationId)) {
+        console.error(`COBRO TORNEO SIN registrationId pedido=${orderId} ok=${pagoOk} decoded=${JSON.stringify(decoded).slice(0, 500)}`);
+        if (pagoOk) {
+          await alertaCobroTorneo(orderId, `Importe ${amountPaid}€. MerchantData sin inscripción válida (${String(registrationId)}). Auth ${authCode}. Revisar en Redsys.`);
         }
-        console.log(`Redsys OK: inscripción ${registrationId} marcada como pagada (${amountPaid}€)`);
-      } else {
-        const { error: failErr } = await supabase
-          .from('tournament_registrations')
-          .update({ payment_status: 'failed' })
-          .eq('id', registrationId);
-        if (failErr) console.warn('Error marcando inscripción como fallida:', failErr);
-        console.log(`Redsys: pago de inscripción ${registrationId} rechazado con código ${responseCode}`);
+        return new Response('OK', { status: 200 });
       }
+
+      // Cargamos la inscripción con la cuota del torneo: sirve para detectar
+      // que la borraron mientras el jugador pagaba y para comprobar el importe.
+      const { data: reg, error: regErr } = await supabase
+        .from('tournament_registrations')
+        .select('id, payment_status, tournaments(config)')
+        .eq('id', registrationId)
+        .maybeSingle();
+      if (regErr) {
+        console.error('Error cargando inscripción en notify:', regErr);
+        return new Response('KO', { status: 500 }); // error real de BD: que Redsys reintente
+      }
+
+      if (!pagoOk) {
+        if (reg && reg.payment_status !== 'paid') {
+          const { error: failErr } = await supabase
+            .from('tournament_registrations')
+            .update({ payment_status: 'failed' })
+            .eq('id', registrationId);
+          if (failErr) console.warn('Error marcando inscripción como fallida:', failErr);
+        }
+        console.log(`Redsys: pago de inscripción ${registrationId} rechazado con código ${responseCode}`);
+        return new Response('OK', { status: 200 });
+      }
+
+      // Cobro OK pero la inscripción ya no existe (borrada desde el panel
+      // mientras el jugador pagaba). La fila no va a reaparecer: avisar al
+      // admin y OK a Redsys para no entrar en bucle de reintentos.
+      if (!reg) {
+        console.error(`COBRO TORNEO SIN INSCRIPCIÓN pedido=${orderId} reg=${registrationId} importe=${amountPaid}`);
+        await alertaCobroTorneo(orderId, `Inscripción ${registrationId} no existe (borrada). Importe ${amountPaid}€. Auth ${authCode}. Revisar en Redsys y recrear o devolver.`);
+        return new Response('OK', { status: 200 });
+      }
+
+      // Idempotencia: Redsys puede reenviar la misma notificación.
+      if (reg.payment_status === 'paid') {
+        console.log(`notify duplicado: inscripción ${registrationId} ya pagada (idempotente)`);
+        return new Response('OK', { status: 200 });
+      }
+
+      // Importe esperado: el que firmó redsys-create (expectedCents) y, si el
+      // pago se inició antes de ese cambio, la cuota del torneo × 2.
+      let expectedCents = Number((merchantData as Record<string, unknown>).expectedCents);
+      if (!Number.isFinite(expectedCents) || expectedCents <= 0) {
+        const rel = (reg as Record<string, unknown>).tournaments;
+        const cfg = ((Array.isArray(rel) ? rel[0] : rel) as { config?: Record<string, unknown> } | null)?.config ?? {};
+        const fee = parseFloat(String(cfg.registrationFeeAmount ?? 0));
+        expectedCents = cfg.registrationFeeEnabled && fee > 0 ? Math.round(fee * 2 * 100) : 0;
+      }
+      if (expectedCents > 0 && amountCents !== expectedCents) {
+        // Se cobró otra cantidad: NO lo damos por pagado. Guardamos el importe
+        // real y el admin decide (devolver / cobrar la diferencia).
+        console.error(`Importe torneo NO coincide: pedido ${orderId} reg ${registrationId} cobrado ${amountCents} esperado ${expectedCents}`);
+        const { error: badErr } = await supabase
+          .from('tournament_registrations')
+          .update({ payment_status: 'failed', payment_method: 'redsys', amount_paid: amountPaid })
+          .eq('id', registrationId);
+        if (badErr) console.warn('Error guardando importe incorrecto:', badErr);
+        await alertaCobroTorneo(orderId, `Inscripción ${registrationId}: cobrado ${amountPaid}€, esperado ${(expectedCents / 100).toFixed(2)}€. Auth ${authCode}. REVISAR.`);
+        return new Response('OK', { status: 200 });
+      }
+
+      const { data: updRows, error: updErr } = await supabase
+        .from('tournament_registrations')
+        .update({
+          payment_status: 'paid',
+          payment_method: 'redsys',
+          paid_at: new Date().toISOString(),
+          amount_paid: amountPaid,
+        })
+        .eq('id', registrationId)
+        .neq('payment_status', 'paid')
+        .select('id');
+      if (updErr) {
+        console.error('Error marcando inscripción como pagada:', updErr);
+        return new Response('KO', { status: 500 });
+      }
+      if (!updRows || updRows.length === 0) {
+        // Entre el select y el update la fila desapareció (o ya estaba pagada).
+        console.error(`COBRO TORNEO: update sin filas pedido=${orderId} reg=${registrationId} importe=${amountPaid}`);
+        await alertaCobroTorneo(orderId, `Inscripción ${registrationId} no se pudo marcar como pagada (borrada). Importe ${amountPaid}€. Auth ${authCode}.`);
+        return new Response('OK', { status: 200 });
+      }
+      console.log(`Redsys OK: inscripción ${registrationId} marcada como pagada (${amountPaid}€)`);
 
       return new Response('OK', { status: 200 });
     }

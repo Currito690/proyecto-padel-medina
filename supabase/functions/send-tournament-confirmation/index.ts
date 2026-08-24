@@ -12,6 +12,43 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function escapeHtml(s: unknown): string {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c] || c));
+}
+
+// Solo puede llamar el propio backend (service role) o un admin con sesión.
+// Sin esto, cualquiera con la anon key podía mandar correos "de Padel Medina"
+// a quien quisiera. La sesión se valida contra Auth y profiles.role, igual
+// que en admin-update-user.
+type AuthResult = { ok: true } | { ok: false; status: number; error: string };
+async function callerAutorizado(req: Request): Promise<AuthResult> {
+  const url = Deno.env.get('SUPABASE_URL') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return { ok: false, status: 401, error: 'No autenticado' };
+  if (serviceKey && token === serviceKey) return { ok: true };
+  if (!url || !serviceKey) return { ok: false, status: 500, error: 'Función mal configurada' };
+
+  const meRes = await fetch(`${url}/auth/v1/user`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${token}` },
+  });
+  if (!meRes.ok) return { ok: false, status: 401, error: 'Sesión inválida' };
+  const me = await meRes.json().catch(() => null);
+  const callerId = me?.id;
+  if (!callerId) return { ok: false, status: 401, error: 'Sesión inválida' };
+
+  const roleRes = await fetch(`${url}/rest/v1/profiles?id=eq.${encodeURIComponent(callerId)}&select=role`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+  });
+  const rows = await roleRes.json().catch(() => []);
+  if (!Array.isArray(rows) || rows[0]?.role !== 'admin') {
+    return { ok: false, status: 403, error: 'Solo un administrador puede hacer esto' };
+  }
+  return { ok: true };
+}
+
 function confirmedHtml(coupleName: string, tournamentName: string, category: string): string {
   return `<!DOCTYPE html>
 <html lang="es">
@@ -115,7 +152,18 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { action, emails, coupleName, tournamentName, category } = await req.json();
+    const auth = await callerAutorizado(req);
+    if (!auth.ok) {
+      return new Response(JSON.stringify({ error: auth.error }), {
+        status: auth.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { action, emails, coupleName: coupleNameIn, tournamentName: tournamentNameIn, category: categoryIn } = await req.json();
+    const coupleName = String(coupleNameIn ?? '').trim().slice(0, 200);
+    const tournamentName = String(tournamentNameIn ?? '').trim().slice(0, 200);
+    const category = String(categoryIn ?? '').trim().slice(0, 100);
 
     if (!action || !Array.isArray(emails) || emails.length === 0 || !tournamentName || !category) {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), {
@@ -145,8 +193,8 @@ Deno.serve(async (req: Request) => {
       ? `Inscripción confirmada – ${tournamentName} (${category})`
       : `Inscripción al torneo ${tournamentName}: cambio de categoría`;
     const html = isConfirm
-      ? confirmedHtml(safeCouple, tournamentName, category)
-      : rejectedHtml(safeCouple, tournamentName, category);
+      ? confirmedHtml(escapeHtml(safeCouple), escapeHtml(tournamentName), escapeHtml(category))
+      : rejectedHtml(escapeHtml(safeCouple), escapeHtml(tournamentName), escapeHtml(category));
 
     // Validamos y deduplicamos los correos
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

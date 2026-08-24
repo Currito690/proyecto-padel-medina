@@ -16,6 +16,44 @@ const HOURS = [
 const fmtDateLabel = (d) =>
   `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
 
+// Categoría de una pareja → lista de categorías (doble inscripción "A y B",
+// también el separador antiguo "A + B").
+const SPLIT_CAT_RE = /\s+y\s+|\s+\+\s+/;
+const catsOf = (p) => (p?.category || '').split(SPLIT_CAT_RE).map(s => s.trim()).filter(Boolean);
+const sameCat = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+// ¿Juega la pareja en esta categoría? Primero el texto completo: si la
+// categoría del torneo lleva " y " en el nombre ("Masculino 4ª y 5ª") no hay
+// que trocearla.
+const playsInCat = (p, cat) => sameCat(p?.category, cat) || catsOf(p).some(c => sameCat(c, cat));
+
+// Cabeza de serie POR CATEGORÍA. Una pareja con doble inscripción puede ser
+// #1 en una categoría y no serlo en la otra, así que el número vive en
+// `seedByCat`. El campo antiguo `seed` (torneos ya guardados) sigue valiendo
+// para su (primera) categoría.
+const getSeed = (p, cat) => {
+  const v = p?.seedByCat?.[cat];
+  if (Number.isFinite(v)) return v;
+  if (Number.isFinite(p?.seed)) {
+    const cats = catsOf(p);
+    if (cats.length <= 1 || sameCat(cats[0], cat)) return p.seed;
+  }
+  return undefined;
+};
+// Devuelve una copia de la pareja con el seed de `cat` cambiado (n == null lo
+// quita). El `seed` antiguo se migra a su categoría para no perderlo.
+const withSeed = (p, cat, n) => {
+  const seedByCat = { ...(p.seedByCat || {}) };
+  if (Number.isFinite(p.seed)) {
+    const c0 = catsOf(p)[0];
+    if (c0 && seedByCat[c0] == null) seedByCat[c0] = p.seed;
+  }
+  if (n == null || !Number.isFinite(Number(n))) delete seedByCat[cat];
+  else seedByCat[cat] = Number(n);
+  const cp = { ...p, seedByCat };
+  delete cp.seed;
+  return cp;
+};
+
 const getActiveDates = (startDate, endDate) => {
   if (!startDate || !endDate) return [];
   const result = [];
@@ -91,6 +129,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [newCouple, setNewCouple] = useState('');
   // Default to first category so dropdown is never empty
   const [newCoupleCategory, setNewCoupleCategory] = useState(catListDefault[0] || '');
+  // Si las categorías cambian (carga desde BBDD, edición en Config) la
+  // seleccionada puede dejar de existir: se pasa a la primera real. El ''
+  // (filtro "Todas") se respeta.
+  useEffect(() => {
+    const cats = (tConfig.categories || '').split(',').map(c => c.trim()).filter(Boolean);
+    if (newCoupleCategory && !cats.includes(newCoupleCategory)) setNewCoupleCategory(cats[0] || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tConfig.categories]);
   const [rounds, setRounds] = useState(() => {
      if (savedData?.rounds && Array.isArray(savedData.rounds)) {
         return { 'General': savedData.rounds };
@@ -122,7 +168,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Reservas externas (gente que reservó pista normal) en el rango de
   // fechas del torneo. El scheduler las trata como slots ocupados, así
   // ningún partido del torneo cae sobre una reserva.
-  // Formato: { 'DD/MM HH:MM': Set<court_id> }
+  // Formato: { 'DD/MM HH:00': Set<nº de pista 1..courtsCount> } — la misma
+  // clave/pista que usa el scheduler, si no nunca coincidirían.
   const [externalBookings, setExternalBookings] = useState({});
   // Filtro de categoría en el panel de inscripciones. 'Todas' muestra todo.
   const [regsCatFilter, setRegsCatFilter] = useState('Todas');
@@ -207,26 +254,38 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           .eq('id', tournamentKey)
           .single();
         if (cancelled) return;
-        if (error) {
+        if (error || !data) {
+          // La fila ya no existe (borrada desde otro dispositivo o id viejo
+          // en localStorage): salimos del editor sin armar el autosave, si
+          // no cada cambio haría un UPDATE sobre 0 filas sin ningún error.
+          if (!error || error.code === 'PGRST116') {
+            localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
+            toast('Este torneo ya no existe (se eliminó desde otro dispositivo).', 'error');
+            onBack();
+            return;
+          }
           console.warn('No se pudo cargar el torneo desde DB:', error.message);
           setDbLoaded(true);
           return;
         }
-        if (data) {
-          setDbStatus(data.status || 'draft');
-          const cfg = data.config || {};
-          const hasDbData = !!(cfg.startDate || cfg.name || cfg.categories
-            || (cfg.rounds && Object.keys(cfg.rounds).length)
-            || (cfg.participants && cfg.participants.length));
-          if (hasDbData) {
-            const { rounds: dbRounds, consRounds: dbConsRounds, participants: dbParticipants, phase: dbPhase, ...dbTConfig } = cfg;
-            if (data.name && !dbTConfig.name) dbTConfig.name = data.name;
-            setTConfig(prev => ({ ...prev, ...dbTConfig }));
-            if (dbRounds && typeof dbRounds === 'object') setRounds(dbRounds);
-            if (dbConsRounds && typeof dbConsRounds === 'object') setConsRounds(dbConsRounds);
-            if (Array.isArray(dbParticipants)) setParticipants(dbParticipants);
-            if (dbPhase) setPhase(dbPhase);
-          }
+        setDbStatus(data.status || 'draft');
+        const cfg = data.config || {};
+        const hasDbData = !!(cfg.startDate || cfg.name || cfg.categories
+          || (cfg.rounds && Object.keys(cfg.rounds).length)
+          || (cfg.participants && cfg.participants.length));
+        if (hasDbData) {
+          const { rounds: dbRounds, consRounds: dbConsRounds, participants: dbParticipants, phase: dbPhase, ...dbTConfig } = cfg;
+          if (data.name && !dbTConfig.name) dbTConfig.name = data.name;
+          setTConfig(prev => ({ ...prev, ...dbTConfig }));
+          if (dbRounds && typeof dbRounds === 'object') setRounds(dbRounds);
+          if (dbConsRounds && typeof dbConsRounds === 'object') setConsRounds(dbConsRounds);
+          if (Array.isArray(dbParticipants)) setParticipants(dbParticipants);
+          if (dbPhase) setPhase(dbPhase);
+        } else if (data.name) {
+          // Torneo recién creado (config vacía): el nombre de la lista
+          // ("Nuevo Torneo" o el que puso el admin) pasa al editor para que
+          // el autosave no lo pise con "Torneo".
+          setTConfig(prev => (prev.name ? prev : { ...prev, name: data.name }));
         }
         setDbLoaded(true);
       } catch (e) {
@@ -235,21 +294,49 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       }
     })();
     return () => { cancelled = true; };
+    // onBack solo se usa si la fila ya no existe; no debe relanzar la carga.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentKey]);
 
   // Autosave a Supabase (debounced 1.2s) — solo después de haber cargado de DB
   // para no pisar datos remotos con estado local inicial.
+  // El último snapshot pendiente vive en un ref para poder volcarlo al
+  // desmontar: si el admin pulsa "Volver" (o cambia de pestaña del panel)
+  // antes de los 1,2 s el timer se cancelaba y ese último cambio se perdía.
+  const pendingSaveRef = useRef(null); // { key, config, name } | null
+  const flushTournamentSave = () => {
+    const snap = pendingSaveRef.current;
+    if (!snap) return Promise.resolve();
+    pendingSaveRef.current = null;
+    const upd = { config: snap.config };
+    // Sin nombre no se manda: así no se pisa el de la lista con "Torneo".
+    if (snap.name) upd.name = snap.name;
+    return supabase.from('tournaments')
+      .update(upd)
+      .eq('id', snap.key)
+      .then(({ error }) => { if (error) console.warn('Autosave torneo falló:', error.message); });
+  };
   useEffect(() => {
     if (!dbLoaded) return;
-    const timer = setTimeout(() => {
-      const config = { ...tConfig, rounds, consRounds, participants, phase };
-      supabase.from('tournaments')
-        .update({ config, name: tConfig.name || 'Torneo' })
-        .eq('id', tournamentKey)
-        .then(({ error }) => { if (error) console.warn('Autosave torneo falló:', error.message); });
-    }, 1200);
+    pendingSaveRef.current = {
+      key: tournamentKey,
+      config: { ...tConfig, rounds, consRounds, participants, phase },
+      name: tConfig.name || '',
+    };
+    const timer = setTimeout(flushTournamentSave, 1200);
     return () => clearTimeout(timer);
   }, [dbLoaded, tournamentKey, tConfig, rounds, consRounds, participants, phase]);
+
+  // Vuelca lo pendiente al desmontar el editor y al cerrar/recargar la
+  // pestaña del navegador. NO se hace en el cleanup del efecto anterior:
+  // ese corre en cada tecla y anularía el debounce.
+  useEffect(() => {
+    window.addEventListener('pagehide', flushTournamentSave);
+    return () => {
+      window.removeEventListener('pagehide', flushTournamentSave);
+      flushTournamentSave();
+    };
+  }, []);
 
   // Carga las reservas externas (gente que ha reservado pista normal) en
   // el rango de fechas del torneo. Las usa el scheduler para no pisar
@@ -258,20 +345,65 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const loadExternalBookings = async () => {
     if (!tConfig.startDate || !tConfig.endDate) return {};
     try {
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('date, time_slot, court_id, status')
-        .gte('date', tConfig.startDate)
-        .lte('date', tConfig.endDate)
-        .eq('status', 'confirmed');
-      if (error) throw error;
-      const map = {};
-      (data || []).forEach(b => {
-        const [y, m, d] = b.date.split('-');
-        const slot = `${d}/${m} ${b.time_slot}`;
-        if (!map[slot]) map[slot] = new Set();
-        map[slot].add(b.court_id);
+      // Reservas (confirmadas y holds de pago recientes), bloqueos/entrenos
+      // del admin y las pistas del club para traducir su UUID al nº de pista
+      // del torneo. bookings.time_slot es un rango "HH:MM - HH:MM".
+      const [bk, bl, ct] = await Promise.all([
+        supabase.from('bookings')
+          .select('date, time_slot, court_id, status, created_at')
+          .gte('date', tConfig.startDate)
+          .lte('date', tConfig.endDate)
+          .in('status', ['confirmed', 'pendiente_pago']),
+        supabase.from('blocked_slots')
+          .select('date, time_slot, court_id')
+          .gte('date', tConfig.startDate)
+          .lte('date', tConfig.endDate),
+        supabase.from('courts').select('id, name, created_at').order('created_at', { ascending: true }),
+      ]);
+      if (bk.error) throw bk.error;
+      if (ct.error) throw ct.error;
+      // Si los bloqueos no se pueden leer seguimos solo con las reservas
+      const blocked = bl.error ? [] : (bl.data || []);
+      const total = tConfig.courtsCount || 1;
+      // UUID de pista → nº de pista del torneo: por nombre igual al de la
+      // config, si no por el número que lleve el nombre ("Pista 2"), si no
+      // por orden de creación.
+      const courtNum = {};
+      (ct.data || []).forEach((c, i) => {
+        const name = String(c.name || '').trim().toLowerCase();
+        let n = null;
+        for (let k = 1; k <= total; k++) {
+          if (getCourtName(k).toLowerCase() === name) { n = k; break; }
+        }
+        if (n == null) {
+          const m = name.match(/(\d+)/);
+          n = m ? parseInt(m[1], 10) : i + 1;
+        }
+        courtNum[c.id] = n;
       });
+      const toMin = (t) => { const [h, m] = String(t).trim().split(':').map(Number); return h * 60 + (m || 0); };
+      const HOLD_MS = 15 * 60 * 1000; // un hold de pago solo ocupa la pista 15 min
+      const map = {};
+      const addRange = (b) => {
+        const court = courtNum[b.court_id];
+        if (!Number.isFinite(court) || court < 1 || court > total) return;
+        const [, m, d] = String(b.date || '').split('-');
+        const [ini, fin] = String(b.time_slot || '').split(' - ');
+        if (!d || !m || !ini) return;
+        const startMin = toMin(ini);
+        const endMin = fin ? toMin(fin) : startMin + 60;
+        if (!Number.isFinite(startMin) || !Number.isFinite(endMin)) return;
+        // Una reserva de 90 min pisa DOS slots de hora del torneo
+        for (let h = Math.floor(startMin / 60); h * 60 < endMin && h < 24; h++) {
+          const slot = `${d}/${m} ${String(h).padStart(2, '0')}:00`;
+          if (!map[slot]) map[slot] = new Set();
+          map[slot].add(court);
+        }
+      };
+      (bk.data || [])
+        .filter(b => b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS)
+        .forEach(addRange);
+      blocked.forEach(addRange);
       setExternalBookings(map);
       return map;
     } catch (e) {
@@ -279,12 +411,24 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       return {};
     }
   };
-  // Cargar al montar / cuando cambian las fechas del torneo
+  // Cargar al montar / cuando cambian las fechas o las pistas del torneo
   useEffect(() => {
     if (!dbLoaded) return;
     loadExternalBookings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dbLoaded, tConfig.startDate, tConfig.endDate]);
+  }, [dbLoaded, tConfig.startDate, tConfig.endDate, tConfig.courtsCount, tConfig.courtNames]);
+
+  // Si el ratón se suelta fuera de la ventana el onMouseUp del modal no llega
+  // y la selección por arrastre se quedaba "pegada" al pasar por las celdas.
+  useEffect(() => {
+    const up = () => setGridDragging(false);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('blur', up);
+    return () => {
+      window.removeEventListener('mouseup', up);
+      window.removeEventListener('blur', up);
+    };
+  }, []);
 
   // Helper: get available courts count for a given slot hour
   // Devuelve el nombre legible de una pista. Si tConfig.courtNames[N] está
@@ -318,21 +462,56 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Solo añadimos a participants las parejas con confirmation_status='confirmed'.
   // Las nuevas inscripciones nacen como 'pending' (no entran), y entran cuando
   // el admin las confirma (UPDATE).
+  // Pareja de `participants` a partir de una fila de tournament_registrations.
+  const participantFromReg = (reg) => {
+    const prefRules = reg.unavailable_times || [];
+    return {
+      id: reg.id,
+      name: `${reg.player1_name} y ${reg.player2_name}`,
+      category: reg.category,
+      prefRules,
+      prefNames: prefRules.map(p => p.label),
+    };
+  };
+  // ¿Es la misma pareja? Por id, o por nombre (sin tildes/mayúsculas) en una
+  // categoría compartida. Solo por nombre NO vale: la misma pareja puede
+  // inscribirse aparte en dos categorías y la segunda nunca entraba.
+  const sameCouple = (a, b) => a.id === b.id || (
+    normalizeForCompare(a.name || '') === normalizeForCompare(b.name || '')
+    && (sameCat(a.category, b.category) || catsOf(a).some(c => playsInCat(b, c)))
+  );
+  // Aviso cuando una pareja que sale/cambia ya estaba en un cuadro generado:
+  // el cuadro no se reescribe solo, hay que regenerarlo.
+  const warnIfDrawn = (category, msg) => {
+    const cats = Object.keys(rounds || {}).filter(k => (rounds[k] || []).length > 0 && playsInCat({ category }, k));
+    if (cats.length > 0) toast(`${msg} Ya había cuadro en ${cats.join(', ')}: vuelve a generarlo.`, 'error');
+  };
+
   useEffect(() => {
     if (!publishedId || !showAvailability) return;
     const addIfConfirmed = (reg) => {
       if (!reg || reg.confirmation_status !== 'confirmed') return;
-      const prefRules = reg.unavailable_times || [];
-      const prefNames = prefRules.map(p => p.label);
-      const newP = {
-        id: reg.id,
-        name: `${reg.player1_name} y ${reg.player2_name}`,
-        category: reg.category,
-        prefRules,
-        prefNames
-      };
+      const newP = participantFromReg(reg);
       setParticipants(prev => {
-        if (prev.some(p => p.id === reg.id || p.name === newP.name)) return prev;
+        if (prev.some(p => sameCouple(p, newP))) return prev;
+        return [...prev, newP];
+      });
+    };
+    // UPDATE: si deja de estar confirmada sale del elenco; si sigue
+    // confirmada se refrescan categoría/nombre/disponibilidad (o entra).
+    const upsertFromUpdate = (reg) => {
+      if (!reg) return;
+      if (reg.confirmation_status !== 'confirmed') {
+        setParticipants(prev => prev.some(p => p.id === reg.id) ? prev.filter(p => p.id !== reg.id) : prev);
+        return;
+      }
+      const newP = participantFromReg(reg);
+      setParticipants(prev => {
+        if (prev.some(p => p.id === reg.id)) {
+          // El nombre no se toca: el admin puede haberlo retocado a mano.
+          return prev.map(p => p.id === reg.id ? { ...p, category: newP.category, prefRules: newP.prefRules, prefNames: newP.prefNames } : p);
+        }
+        if (prev.some(p => sameCouple(p, newP))) return prev;
         return [...prev, newP];
       });
     };
@@ -349,27 +528,39 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         schema: 'public',
         table: 'tournament_registrations',
         filter: `tournament_id=eq.${publishedId}`
-      }, (payload) => addIfConfirmed(payload.new))
+      }, (payload) => upsertFromUpdate(payload.new))
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [publishedId, showAvailability]);
 
   const handleResetTournament = async () => {
     const ok = await confirmDialog(
-      '¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas y el cuadro generado.',
+      '¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas, las inscripciones online y el cuadro generado, y el torneo dejará de estar publicado.',
       { title: 'Reiniciar torneo', okText: 'Borrar y empezar', danger: true }
     );
-    if (ok) {
-      localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
-      setPhase('config');
-      setTConfig({ name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', registrationDeadlineTime: '23:59', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, courtStartHours: {}, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 } });
-      setParticipants([]);
-      setRounds({});
-      setConsRounds({});
-      setNewCouple('');
-      setNewCoupleCategory('');
-      setPublishedId(null);
-    }
+    if (!ok) return;
+    const freshConfig = { name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', registrationDeadlineTime: '23:59', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, courtStartHours: {}, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 }, formatByCategory: {}, dualCategoryMaxMatches: 1, restMinutesBetweenMatches: 30 };
+    // La fila sigue existiendo en Supabase: hay que reiniciarla ahí también
+    // (y pasarla a borrador). Antes solo se vaciaba el estado local, el
+    // autosave escribía la config vacía y el torneo seguía público con
+    // status 'open', aceptando inscripciones, y con las viejas colgando.
+    const { error: regErr } = await supabase.from('tournament_registrations').delete().eq('tournament_id', tournamentKey);
+    if (regErr) { toast('Error al borrar inscripciones: ' + regErr.message, 'error'); return; }
+    const { error } = await supabase.from('tournaments')
+      .update({ name: 'Torneo', status: 'draft', config: { ...freshConfig, rounds: {}, consRounds: {}, participants: [], phase: 'config' } })
+      .eq('id', tournamentKey);
+    if (error) { toast('Error al reiniciar el torneo: ' + error.message, 'error'); return; }
+    localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
+    setDbStatus('draft');
+    setPhase('config');
+    setTConfig(freshConfig);
+    setParticipants([]);
+    setRounds({});
+    setConsRounds({});
+    setRegsList([]);
+    setNewCouple('');
+    setNewCoupleCategory('Masculino');
+    // publishedId se mantiene: siempre es tournamentKey (la fila existe).
   };
 
   const handlePublish = async () => {
@@ -423,7 +614,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (!ok) return;
 
     const newStatus = action === 'confirm' ? 'confirmed' : 'rejected';
-    const updates = { confirmation_status: newStatus, confirmed_at: new Date().toISOString() };
+    const updates = { confirmation_status: newStatus, confirmed_at: newStatus === 'confirmed' ? new Date().toISOString() : null };
 
     const { error: updErr } = await supabase
       .from('tournament_registrations')
@@ -433,6 +624,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     // Optimistic update local
     setRegsList(prev => prev.map(r => r.id === reg.id ? { ...r, ...updates } : r));
+    // El elenco del cuadro (participants) tiene que reflejarlo: una pareja
+    // rechazada sale, y una confirmada entra sin depender de "Sincronizar".
+    if (newStatus === 'rejected') {
+      setParticipants(prev => prev.filter(p => p.id !== reg.id));
+      warnIfDrawn(reg.category, 'La pareja rechazada estaba en el cuadro.');
+    } else {
+      const newP = participantFromReg({ ...reg, ...updates });
+      setParticipants(prev => prev.some(p => sameCouple(p, newP)) ? prev : [...prev, newP]);
+    }
 
     // Disparamos el correo. Si falla solo avisamos: el cambio de estado ya está guardado.
     const emails = [reg.player1_email, reg.player2_email]
@@ -469,9 +669,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       updates.paid_at = new Date().toISOString();
       updates.payment_method = 'manual';
       const fee = parseFloat(tConfig.registrationFeeAmount || 0);
-      if (fee > 0) updates.amount_paid = fee;
+      // La cuota es por jugador; se guarda el importe por pareja, igual que
+      // hace el TPV con Ds_Amount (TournamentRegistration cobra fee * 2).
+      if (fee > 0) updates.amount_paid = fee * 2;
     } else {
       updates.paid_at = null;
+      updates.amount_paid = null;
+      updates.payment_method = null;
     }
     const { error } = await supabase
       .from('tournament_registrations')
@@ -539,25 +743,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const confirmed = (data || []).filter(r => r.confirmation_status === 'confirmed');
       const pendingCount = (data || []).filter(r => (r.confirmation_status || 'pending') === 'pending').length;
 
-      const newParticipants = [];
-      confirmed.forEach(reg => {
-        const prefRules = reg.unavailable_times || [];
-        const prefNames = prefRules.map(p => p.label);
-        const exists = participants.some(p => p.name === `${reg.player1_name} y ${reg.player2_name}` || p.id === reg.id);
-
-        if (!exists) {
-          newParticipants.push({
-            id: reg.id,
-            name: `${reg.player1_name} y ${reg.player2_name}`,
-            category: reg.category,
-            prefRules,
-            prefNames
-          });
-        }
-      });
+      // Dedupe por id o por nombre+categoría (sameCouple). El recuento del
+      // aviso sale del estado actual; la escritura es funcional para no
+      // pisar parejas añadidas mientras llegaba la consulta (realtime/manual).
+      const toAdd = confirmed.map(participantFromReg);
+      const newParticipants = toAdd.filter(n => !participants.some(p => sameCouple(p, n)));
 
       if (newParticipants.length > 0) {
-        setParticipants([...participants, ...newParticipants]);
+        setParticipants(prev => {
+          const fresh = toAdd.filter(n => !prev.some(p => sameCouple(p, n)));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
         toast(
           `Se han añadido ${newParticipants.length} pareja(s) confirmada(s) desde la web.` +
           (pendingCount > 0 ? `\n\n⚠️ Hay ${pendingCount} pareja(s) pendiente(s) de validar — no entran al cuadro hasta que las confirmes.` : '')
@@ -747,6 +943,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     const catList = tConfig.categories.split(',').map(c => c.trim()).filter(Boolean);
     const assignedCat = newCoupleCategory || catList[0] || 'General';
+    // Una categoría que no es del torneo (estado viejo de otro dispositivo)
+    // no se guarda: al generar el cuadro acababa en la primera sin avisar.
+    if (catList.length && !catList.includes(assignedCat)) {
+      toast(`Elige una categoría válida del torneo (${catList.join(', ')}).`, 'error');
+      return;
+    }
     const normalizedName = toTitleCase(newCouple);
 
     // Detección de duplicados en la misma categoría (case/accent insensitive).
@@ -803,29 +1005,57 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       // Limpiar el ganador y rastro de rondas futuras cuando el admin corrige
       // un ganador anterior. También borramos tiempos no-manuales aguas abajo
       // donde los jugadores se quedan "sin definir" (hay que re-programar).
-      let fR = rIdx + 1;
-      let fM = nextMatchIdx;
-      while (fR < rArray.length) {
-         rArray[fR][fM].winner = null;
-         const nextF = Math.floor(fM / 2);
-         if (fR < rArray.length - 1) {
-             const isTopF = fM % 2 === 0;
-             const downstream = rArray[fR + 1][nextF];
-             const downstreamPrev = isTopF ? downstream.p1 : downstream.p2;
-             if (downstreamPrev?.id !== winner.id) {
-               if (isTopF) downstream.p1 = null;
-               else downstream.p2 = null;
-               if (!downstream.timeManual) downstream.time = null;
-             }
-         }
-         fM = nextF;
-         fR++;
+      // SOLO si de verdad cambió la pareja que avanza: re-guardar el mismo
+      // resultado (corregir un marcador) no puede tumbar las rondas siguientes.
+      // Y el marcador del partido invalidado también se borra: ya no es de
+      // esa pareja.
+      if (changed) {
+        let fR = rIdx + 1;
+        let fM = nextMatchIdx;
+        while (fR < rArray.length) {
+           rArray[fR][fM].winner = null;
+           rArray[fR][fM].score = null;
+           const nextF = Math.floor(fM / 2);
+           if (fR < rArray.length - 1) {
+               const isTopF = fM % 2 === 0;
+               const downstream = rArray[fR + 1][nextF];
+               const downstreamPrev = isTopF ? downstream.p1 : downstream.p2;
+               if (downstreamPrev?.id !== winner.id) {
+                 if (isTopF) downstream.p1 = null;
+                 else downstream.p2 = null;
+                 if (!downstream.timeManual) downstream.time = null;
+               }
+           }
+           fM = nextF;
+           fR++;
+        }
       }
 
       // Auto-advance if opponent in next round is a bye
       if ((isTop && nextMatch.p2?.isBye) || (!isTop && nextMatch.p1?.isBye)) {
          advanceWinnerMut(rArray, rIdx + 1, nextMatchIdx, winner);
       }
+    }
+  };
+
+  // Liguilla+KO: el perdedor de cada semifinal va al partido de 3º y 4º
+  // puesto (el match `isThirdPlace` que generateLiguillaKO deja en la última
+  // ronda). Semi 0 → p1, semi 1 → p2. Si cambia la pareja, el partido se
+  // reinicia porque su resultado anterior ya no vale.
+  const syncThirdPlaceMut = (rArray, match, winner) => {
+    if (!winner || match.isThirdPlace) return;
+    const lastRound = rArray[rArray.length - 1];
+    const third = lastRound?.find(m => m.isThirdPlace);
+    if (!third || match.round !== rArray.length - 2) return; // solo semifinales
+    const cur = rArray[match.round][match.matchIndex];
+    const loser = winner.id === cur.p1?.id ? cur.p2 : cur.p1;
+    const side = match.matchIndex === 0 ? 'p1' : 'p2';
+    const newVal = loser && !loser.isBye ? loser : null;
+    if (third[side]?.id !== newVal?.id) {
+      third[side] = newVal;
+      third.winner = null;
+      third.score = null;
+      if (!third.timeManual) third.time = null;
     }
   };
 
@@ -1037,11 +1267,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const normalizedParticipants = expandedParticipants.map(exp => {
       if (exp.isBye) return exp;
       if (catList.length === 1) return { ...exp, category: catList[0] };
+      // Coincidencia exacta con una categoría del torneo, aunque su nombre
+      // lleve " y " ("Masculino 4ª y 5ª"): antes se troceaba, no coincidía
+      // ningún trozo y la pareja acababa en la primera categoría.
+      if (catList.some(c => sameCat(c, exp.category))) return exp;
       const parts = splitCatStr(exp.category);
       const anyValid = parts.some(p => catList.some(c => c.toLowerCase() === p.toLowerCase()));
       if (!anyValid) return { ...exp, category: catList[0] };
       return exp; // mantener tal cual (puede ser "A y B")
     });
+
+    // Categorías marcadas para regenerar pero sin parejas suficientes: se
+    // conserva su cuadro anterior y se avisa (antes desaparecía sin más).
+    const keptCats = [];
+    let generatedAny = false;
 
     catList.forEach(cat => {
        // Modo "regenerar solo algunas categorías": si opts.onlyCats está
@@ -1052,15 +1291,21 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          if (rounds && rounds[cat] && rounds[cat].length > 0) {
            newAllRounds[cat] = rounds[cat];
            // También marcamos sus slots como ocupados para que las cats
-           // que SÍ se regeneran no pisen los horarios existentes.
-           rounds[cat].forEach(round => round.forEach(m => {
-             if (!m.time || m.time === 'A convenir') return;
-             const parts = m.time.split(' - Pista');
-             const slot = parts[0].trim();
-             const court = parseInt(parts[1], 10);
-             if (Number.isFinite(court)) markOccupied(slot, court);
-             markPlayerSlot(slot, m.p1, m.p2);
-           }));
+           // que SÍ se regeneran no pisen los horarios existentes. Vale
+           // tanto para el cuadro principal como para su consolación, que
+           // también se conserva más abajo.
+           const markExisting = (catRounds) => {
+             (catRounds || []).forEach(round => round.forEach(m => {
+               if (!m.time || m.time === 'A convenir') return;
+               const parts = m.time.split(' - Pista');
+               const slot = parts[0].trim();
+               const court = parseInt(parts[1], 10);
+               if (Number.isFinite(court)) markOccupied(slot, court);
+               markPlayerSlot(slot, m.p1, m.p2);
+             }));
+           };
+           markExisting(rounds[cat]);
+           markExisting(consRounds?.[cat]);
          }
          return;
        }
@@ -1068,11 +1313,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // Una pareja con categoría "Masculino C y Masculino D" debe aparecer
        // en AMBAS catList (cuadro de C y cuadro de D). El scheduler enforce
        // que no se solapen sus partidos vía playerSlots.
-       let catParts = normalizedParticipants.filter(exp => {
-         const parts = splitCatStr(exp.category);
-         return parts.some(p => p.toLowerCase() === cat.toLowerCase()) || exp.category === cat;
-       });
-       if (catParts.length < 2) return;
+       let catParts = normalizedParticipants.filter(exp => playsInCat(exp, cat));
+       if (catParts.length < 2) {
+         if (rounds && rounds[cat] && rounds[cat].length > 0) {
+           newAllRounds[cat] = rounds[cat];
+           keptCats.push(cat);
+         }
+         return;
+       }
 
        // overrideFormats viene del modal de "Generar Cuadro" — lo aplicamos
        // aquí porque el setState de tConfig todavía puede no haberse aplicado.
@@ -1156,6 +1404,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        };
 
        if (format === 'liguilla') {
+         // Entre dos partidos de la misma pareja tiene que caber el partido
+         // entero más el descanso (igual que en la eliminatoria). Sin esto una
+         // pareja jugaba a las 10:00, 11:00 y 12:00 con partidos de 90 min.
+         const durationMinRR = tConfig.matchDurationByCategory?.[cat] ?? 90;
+         const restMinRR = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
+         const gapMinutesRR = Math.ceil((durationMinRR + restMinRR) / 60) * 60;
+         const lastMinuteByPair = {}; // participantId -> minutos de su último partido
          // Round-robin: circle method
          let pool = [...catParts];
          if (pool.length % 2 !== 0) pool.push({ id: `bye-rr-${cat}`, name: '---', isBye: true });
@@ -1171,13 +1426,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              const p2Slots = t2.finalSlots?.length ? t2.finalSlots : globalSlots;
              let common = p1Slots.filter(s => p2Slots.includes(s));
              if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-             const picked = pickSlotCourtForMatch(0, common, t1, t2);
+             const prevMins = [lastMinuteByPair[t1.id], lastMinuteByPair[t2.id]].filter(Number.isFinite);
+             const earliestRR = prevMins.length > 0 ? Math.max(...prevMins) + gapMinutesRR : 0;
+             const picked = pickSlotCourtForMatch(earliestRR, common, t1, t2);
              const time = picked
                ? `${picked.slot} - Pista ${picked.court}`
                : 'Sin horario';
              if (picked) {
                markOccupied(picked.slot, picked.court);
                markPlayerSlot(picked.slot, t1, t2);
+               const mins = slotMinutesGen(picked.slot);
+               lastMinuteByPair[t1.id] = Math.max(lastMinuteByPair[t1.id] ?? -1, mins);
+               lastMinuteByPair[t2.id] = Math.max(lastMinuteByPair[t2.id] ?? -1, mins);
              }
              roundMatches.push({
                id: `rr-${cat}-r${r}-m${roundMatches.length}`,
@@ -1191,6 +1451,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            pool.splice(1, 0, last);
          }
          newAllRounds[cat] = rrCatRounds;
+         generatedAny = true;
          return;
        }
 
@@ -1220,9 +1481,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        };
        const positions = seedPositions(mainBracketSize);
 
-       const seededHere = catParts
-         .filter(p => Number.isFinite(p.seed) && p.seed > 0)
-         .sort((a, b) => a.seed - b.seed);
+       // Seeds POR CATEGORÍA y saneados: sin números repetidos, dentro del
+       // cuadro y nunca más que plazas directas (con previa los seeds no la
+       // juegan; si sobran no queda hueco para los ganadores de la previa y
+       // el cuadro salía roto). Antes dos parejas con el mismo número se
+       // pisaban y una desaparecía del cuadro sin aviso. Los que no caben
+       // entran al sorteo como no cabezas.
+       const seedOf = (p) => getSeed(p, cat);
+       const maxSeeds = directCount;
+       const usedSeeds = new Set();
+       const seededHere = [];
+       const demotedSeeds = [];
+       catParts
+         .filter(p => Number.isFinite(seedOf(p)) && seedOf(p) > 0)
+         .sort((a, b) => seedOf(a) - seedOf(b) || String(a.id).localeCompare(String(b.id)))
+         .forEach(p => {
+           const s = seedOf(p);
+           const ok = s <= mainBracketSize && !usedSeeds.has(s) && seededHere.length < maxSeeds;
+           if (ok) { usedSeeds.add(s); seededHere.push(p); }
+           else demotedSeeds.push(`${p.name} (#${s})`);
+         });
+       if (demotedSeeds.length > 0) {
+         toast(`${cat}: solo caben ${maxSeeds} cabeza${maxSeeds === 1 ? '' : 's'} de serie (sin repetir número). Entran sin cabeza: ${demotedSeeds.join(', ')}.`, 'error');
+       }
        const unseededAll = catParts.filter(p => !seededHere.some(s => s.id === p.id));
        // Mezcla aleatoria del unseeded para evitar sesgo de orden de inscripción
        for (let i = unseededAll.length - 1; i > 0; i--) {
@@ -1234,7 +1515,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        // 1) Coloca los seeds en sus posiciones estándar (#1 y #2 en lados
        //    opuestos del cuadro, etc.)
        seededHere.forEach(p => {
-         const idx = positions.indexOf(p.seed);
+         const idx = positions.indexOf(seedOf(p));
          if (idx >= 0 && idx < mainBracketSize) slot[idx] = p;
        });
 
@@ -1250,7 +1531,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            let ui = 0;
            for (let i = 0; i < mainBracketSize; i++) {
              if (slot[i]) continue;
-             slot[i] = unseededAll[ui++];
+             // Red de seguridad: un hueco sin pareja nunca llega como undefined
+             slot[i] = unseededAll[ui++] || { id: `bye-${cat}-${i}`, name: '---', isBye: true };
            }
          } else {
            // useByes mode con sobrantes: distribuye byes inteligentemente.
@@ -1267,9 +1549,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            let byesAllocated = 0;
            // 1) Seeds primero
            const seedSlotsSorted = seededHere
-             .map(p => positions.indexOf(p.seed))
+             .map(p => positions.indexOf(seedOf(p)))
              .filter(i => i >= 0 && i < mainBracketSize)
-             .sort((a, b) => slot[a].seed - slot[b].seed);
+             .sort((a, b) => seedOf(slot[a]) - seedOf(slot[b]));
            for (const sIdx of seedSlotsSorted) {
              if (byesAllocated >= byesNeededHere) break;
              const matchIdx = Math.floor(sIdx / 2);
@@ -1392,7 +1674,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          let dui = 0;
          for (let i = 0; i < floorPow; i++) {
            if (slot[i]) continue;
-           slot[i] = directUnseeded[dui++];
+           // Red de seguridad: un hueco sin pareja nunca llega como undefined
+           slot[i] = directUnseeded[dui++] || { id: `bye-${cat}-${i}`, name: '---', isBye: true };
          }
          catParts = slot;
 
@@ -1483,6 +1766,21 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              match.time = `${picked.slot} - Pista ${picked.court}`;
            }
          });
+       }
+
+       // Los BYE de R0 se avanzan ANTES de programar R1+: advanceWinnerMut
+       // borra la hora del partido siguiente al cambiar la pareja, y si se
+       // hacía después de PASS 1 se llevaba por delante los horarios recién
+       // calculados de R1 hasta la final. Así además R1 ya conoce a la pareja
+       // que pasó y respeta su disponibilidad y anti-solape.
+       if (catRounds[0]) {
+          catRounds[0].forEach(match => {
+             if (match.p1?.isBye && match.p2 && !match.p2.isBye) {
+                advanceWinnerMut(catRounds, 0, match.matchIndex, match.p2);
+             } else if (match.p2?.isBye && match.p1 && !match.p1.isBye) {
+                advanceWinnerMut(catRounds, 0, match.matchIndex, match.p1);
+             }
+          });
        }
 
        // Pre-assign slots for rounds 1+ so the full schedule is visible upfront.
@@ -1630,22 +1928,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          }
        }
 
-       if (catRounds[0]) {
-          catRounds[0].forEach(match => {
-             if (match.p1?.isBye && match.p2 && !match.p2.isBye) {
-                advanceWinnerMut(catRounds, 0, match.matchIndex, match.p2);
-             } else if (match.p2?.isBye && match.p1 && !match.p1.isBye) {
-                advanceWinnerMut(catRounds, 0, match.matchIndex, match.p1);
-             }
-          });
-       }
-
        newAllRounds[cat] = catRounds;
+       generatedAny = true;
     });
 
-    if (Object.keys(newAllRounds).length === 0) {
+    if (!generatedAny) {
       toast('No hay suficientes parejas en ninguna categoría para generar un cuadro. Asegúrate de tener al menos 2 parejas por categoría.', 'error');
       return;
+    }
+    if (keptCats.length > 0) {
+      toast(`${keptCats.join(', ')}: menos de 2 parejas, no se ha generado y se conserva el cuadro anterior.`, 'error');
     }
 
     setRounds(newAllRounds);
@@ -1655,7 +1947,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       setConsRounds(prev => {
         const next = {};
         Object.entries(prev || {}).forEach(([cat, val]) => {
-          if (!opts.onlyCats.includes(cat)) next[cat] = val;
+          if (!opts.onlyCats.includes(cat) || keptCats.includes(cat)) next[cat] = val;
         });
         return next;
       });
@@ -1690,10 +1982,49 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const newRounds = targetRounds.map(r => r.map(m => ({ ...m })));
     const match1 = newRounds[0][selectedSwapSlot.matchIdx];
     const match2 = newRounds[0][matchIdx];
+    if (!match1 || !match2) { setSelectedSwapSlot(null); return; }
+    // Hueco de R1 que alimenta un partido de R0 (misma regla que advanceWinnerMut)
+    const r1SeatOf = (m) => {
+      if (newRounds.length < 2) return null;
+      const slot = Number.isFinite(m.nextSlot) ? m.nextSlot : m.matchIndex;
+      const nm = newRounds[1][Math.floor(slot / 2)];
+      return nm ? { nm, side: slot % 2 === 0 ? 'p1' : 'p2' } : null;
+    };
+    const isPlayed = (m) => !!m.score || (!!m.winner && !m.p1?.isBye && !m.p2?.isBye);
+    const r1Locked = (m) => { const s = r1SeatOf(m); return !!(s && (s.nm.winner || s.nm.score)); };
+    if (isPlayed(match1) || isPlayed(match2) || r1Locked(match1) || r1Locked(match2)) {
+      toast('No se puede cambiar el orden de un partido que ya tiene resultado (o cuyo ganador ya jugó la siguiente ronda). Borra el resultado primero.', 'error');
+      setSelectedSwapSlot(null);
+      return;
+    }
+    const affected = match1 === match2 ? [match1] : [match1, match2];
+    // Deshacer el pase automático por BYE antes de intercambiar: el hueco de
+    // R1 lo ocupaba la pareja que ahora cambia de partido.
+    affected.forEach(m => {
+      if (!m.winner) return;
+      const s = r1SeatOf(m);
+      if (s && s.nm[s.side]?.id === m.winner.id) {
+        s.nm[s.side] = null;
+        if (!s.nm.timeManual) s.nm.time = null;
+      }
+      m.winner = null;
+      m.score = null;
+    });
     const player1 = match1[selectedSwapSlot.side];
     const player2 = match2[side];
     match1[selectedSwapSlot.side] = player2;
     match2[side] = player1;
+    // La hora auto-asignada se eligió con la disponibilidad de la pareja
+    // anterior: la soltamos (las manuales se respetan). Cambiar de lado
+    // dentro del mismo partido no cambia la pareja.
+    if (match1 !== match2) {
+      affected.forEach(m => { if (!m.timeManual) m.time = null; });
+    }
+    // Volver a pasar por BYE a la pareja real que ahora lo tiene enfrente
+    affected.forEach(m => {
+      if (m.p1?.isBye && isRealPair(m.p2)) advanceWinnerMut(newRounds, 0, m.matchIndex, m.p2);
+      else if (m.p2?.isBye && isRealPair(m.p1)) advanceWinnerMut(newRounds, 0, m.matchIndex, m.p1);
+    });
     if (isCons) setConsRounds({ ...consRounds, [cat]: newRounds });
     else setRounds({ ...rounds, [cat]: newRounds });
     setSelectedSwapSlot(null);
@@ -1869,7 +2200,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           const ordered = catRounds[r]
             .map((m, mIdx) => {
               if (m.timeManual && m.time) return { m, mIdx, skip: true, demand: Infinity };
-              if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye) return { m, mIdx, skip: true, demand: Infinity };
+              // "Perdedor por definir" no se programa: no se sabe quién es ni
+              // cuándo acaba su partido del principal (igual que generateConsolation).
+              if (!m.p1 || !m.p2 || m.p1.isBye || m.p2.isBye || m.p1.isPlaceholder || m.p2.isPlaceholder) return { m, mIdx, skip: true, demand: Infinity };
               const p1Slots = expandPlayerSlots(m.p1, globalSlots);
               const p2Slots = expandPlayerSlots(m.p2, globalSlots);
               const common = p1Slots.filter(s => p2Slots.includes(s));
@@ -1896,6 +2229,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               const indices = predTimes.map(t => slotIdx(getSlot(t))).filter(i => i >= 0);
               const predEarliestIdx = indices.length > 0 ? Math.max(...indices) + gapSlots : 0;
               earliestIdx = Math.max(predEarliestIdx, barrierIdx, minDaySlot);
+            }
+            if (isCons && r === 0) {
+              // Consolación R0: nunca antes del partido del principal del que
+              // sale cada perdedor (+ duración + descanso).
+              const srcIdx = [m.p1, m.p2]
+                .map(p => p?.sourceMain && nextMain[cat]?.[p.sourceMain.round]?.[p.sourceMain.matchIndex]?.time)
+                .map(t => slotIdx(getSlot(t)))
+                .filter(i => i >= 0);
+              if (srcIdx.length > 0) earliestIdx = Math.max(earliestIdx, Math.max(...srcIdx) + gapSlots);
             }
 
             const occupied = buildOccupiedCourts(nextMain, nextCons);
@@ -1994,26 +2336,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return globalSlots.filter(gs => !blockedSlots.has(gs));
   };
 
+  // Normaliza un set escrito por el admin: quita el detalle del tie-break
+  // ("7-6(7-5)", "[10-8]") y devuelve [a, b] o null si no es un set "a-b".
+  // Tokens como "ret.", "W.O." o "ab." devuelven null y simplemente no cuentan.
+  const parseSetToken = (raw) => {
+    const s = String(raw).replace(/\(.*?\)/g, '').replace(/[[\]]/g, '');
+    const m = s.match(/^(\d+)-(\d+)$/);
+    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+  };
+
   // Helper: parse score string into per-player set values
-  // e.g. "6-4 3-6 7-6" with pIdx=0 → ['6','3','7']
+  // e.g. "6-4 3-6 7-6(7-5)" with pIdx=0 → ['6','3','7']
   const parseScore = (scoreStr, pIdx) => {
     if (!scoreStr) return [];
-    return scoreStr.trim().split(/\s+/).map(s => {
-      const p = s.split('-');
-      return p.length === 2 ? p[pIdx] : null;
-    }).filter(n => n !== null);
+    return scoreStr.trim().split(/\s+/).map(parseSetToken).filter(Boolean).map(set => String(set[pIdx]));
   };
+
+  // Pareja "real": ni BYE, ni placeholder de consolación, ni "Ganador previa".
+  // Solo entre dos parejas reales se puede registrar un resultado.
+  const isRealPair = (p) => !!p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
 
   // Determine winner automatically from score string
   const determineWinnerFromScore = (scoreStr, p1, p2) => {
-    if (!scoreStr || !p1 || !p2 || p1.isBye || p2.isBye) return null;
+    if (!scoreStr || !isRealPair(p1) || !isRealPair(p2)) return null;
     let p1Wins = 0, p2Wins = 0;
-    scoreStr.trim().split(/\s+/).forEach(s => {
-      const parts = s.split('-');
-      if (parts.length === 2) {
-        const a = parseInt(parts[0]), b = parseInt(parts[1]);
-        if (!isNaN(a) && !isNaN(b)) { if (a > b) p1Wins++; else if (b > a) p2Wins++; }
-      }
+    scoreStr.trim().split(/\s+/).forEach(raw => {
+      const set = parseSetToken(raw);
+      if (!set) return;
+      if (set[0] > set[1]) p1Wins++; else if (set[1] > set[0]) p2Wins++;
     });
     if (p1Wins > p2Wins) return p1;
     if (p2Wins > p1Wins) return p2;
@@ -2025,10 +2375,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setEditingScoreId(null);
     setScoreInput('');
     if (!trimmed) return;
+    // Nunca guardamos un marcador contra un placeholder o "Ganador previa":
+    // acabaría avanzando como si fuera una pareja de verdad.
+    if (!isRealPair(match.p1) || !isRealPair(match.p2)) {
+      toast('Este partido aún no tiene las dos parejas definidas.', 'error');
+      return;
+    }
     const targetRounds = (isCons ? consRounds : rounds)[cat];
     const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
-    nextRounds[match.round][match.matchIndex].score = trimmed;
     const winner = determineWinnerFromScore(trimmed, match.p1, match.p2);
+    if (!winner) {
+      if (match.winner) {
+        // El partido ya tiene ganador (y ha avanzado): un marcador que no lo
+        // decide lo contradiría. No lo guardamos.
+        toast('Ese resultado no determina ganador y el partido ya tiene uno. Corrige el marcador o fija el ganador a mano con 🏆.', 'error');
+        return;
+      }
+      toast('Resultado guardado, pero no determina ganador (empate, W.O., retirada...). Fija el ganador a mano con 🏆.');
+    }
+    nextRounds[match.round][match.matchIndex].score = trimmed;
     if (winner) {
       if (match.isRR) {
         nextRounds[match.round][match.matchIndex].winner = winner;
@@ -2037,26 +2402,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         return;
       }
       advanceWinnerMut(nextRounds, match.round, match.matchIndex, winner);
-      // Auto-schedule next match
-      const nextRoundIdx = match.round + 1;
-      const nextMatchIdx = Math.floor(match.matchIndex / 2);
-      if (nextRoundIdx < nextRounds.length) {
-        const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
-        if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye && !nextMatch.time) {
-          const globalSlots = buildGlobalSlots(14);
-          const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
-          const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
-          const slotUsage = buildSlotUsage(globalSlots, updatedMain, updatedCons);
-          const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
-          const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
-          let common = p1Slots.filter(s => p2Slots.includes(s));
-          if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-          let assigned = common.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
-          if (!assigned) assigned = globalSlots.find(s => (slotUsage[s] ?? 0) < tConfig.courtsCount);
-          if (!assigned) assigned = globalSlots[globalSlots.length - 1];
-          nextMatch.time = `${assigned} - Pista ${Math.min((slotUsage[assigned] ?? 0) + 1, tConfig.courtsCount)}`;
-        }
-      }
+      if (isCons) syncThirdPlaceMut(nextRounds, match, winner);
+      autoScheduleNextMatch(nextRounds, match, cat, isCons);
     }
     if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
     else {
@@ -2070,33 +2417,71 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
-  // Helper: reconstruct slotUsage from ALL matches that already have a time
-  const buildSlotUsage = (globalSlots, mainRounds, consRoundsSnap) => {
-    const usage = {};
-    globalSlots.forEach(s => { usage[s] = 0; });
-    const countRounds = (roundsObj) => {
-      Object.values(roundsObj).forEach(catR => {
-        catR.forEach(round => {
-          round.forEach(m => {
-            if (m.time && m.time !== 'A convenir') {
-              const base = m.time.split(' - Pista')[0].trim();
-              if (usage[base] !== undefined) usage[base]++;
-            }
-          });
-        });
-      });
-    };
-    countRounds(mainRounds);
-    countRounds(consRoundsSnap);
-    return usage;
+  // Programa el partido de la siguiente ronda al que acaba de llegar un
+  // ganador, cuando ya tiene a las dos parejas. Mismo criterio que
+  // "Recalcular horarios": después de sus predecesores + duración + descanso,
+  // nunca antes que el último partido de la ronda anterior, solo en pistas
+  // permitidas para la categoría, abiertas a esa hora y libres (contando las
+  // reservas normales del club). Las horas puestas a mano se respetan.
+  const autoScheduleNextMatch = (nextRounds, match, cat, isCons) => {
+    const nextRoundIdx = match.round + 1;
+    if (nextRoundIdx >= nextRounds.length) return;
+    const cur = nextRounds[match.round][match.matchIndex];
+    // Ronda previa: el ganador cae en el slot `nextSlot`, no en matchIndex/2.
+    const nextMatchIdx = Number.isFinite(cur?.nextSlot)
+      ? Math.floor(cur.nextSlot / 2)
+      : Math.floor(match.matchIndex / 2);
+    const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
+    if (!nextMatch || !isRealPair(nextMatch.p1) || !isRealPair(nextMatch.p2)) return;
+
+    const globalSlots = buildGlobalSlots(14);
+    const slotIdx = (s) => globalSlots.indexOf(s);
+    const getSlotFromMatch = (m) => m?.time ? m.time.split(' - Pista')[0].trim() : null;
+    const prevRound = nextRounds[match.round];
+    const hasPrelim = !!prevRound[0]?.isPrelim;
+    const preds = hasPrelim
+      ? prevRound.filter(p => p.isPrelim && [nextMatchIdx * 2, nextMatchIdx * 2 + 1].includes(p.nextSlot))
+      : [prevRound[nextMatchIdx * 2], prevRound[nextMatchIdx * 2 + 1]];
+    // Factor cansancio: nextStart >= predStart + duración + descanso
+    const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
+    const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
+    const gapSlots = Math.ceil((durationMin + restMin) / 60);
+    const predIdxs = preds.map(p => slotIdx(getSlotFromMatch(p))).filter(i => i >= 0);
+    const barrierIdxs = prevRound.map(p => slotIdx(getSlotFromMatch(p))).filter(i => i >= 0);
+    const earliestIdx = Math.max(
+      predIdxs.length ? Math.max(...predIdxs) + gapSlots : 0,
+      barrierIdxs.length ? Math.max(...barrierIdxs) + gapSlots : 0
+    );
+
+    // Re-programamos solo si no hay hora, o si la hora no es manual y viola
+    // el orden entre rondas.
+    const curIdx = slotIdx(getSlotFromMatch(nextMatch));
+    const violatesOrder = curIdx !== -1 && curIdx < earliestIdx;
+    if (nextMatch.time && (nextMatch.timeManual || !violatesOrder)) return;
+
+    nextMatch.time = null;
+    const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
+    const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
+    const occupied = buildOccupiedCourts(updatedMain, updatedCons);
+    const allowedCourts = getAllowedCourts(cat, isCons);
+    const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
+    const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
+    let common = p1Slots.filter(s => p2Slots.includes(s));
+    if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
+    const picked = pickSlotAndCourt(common, occupied, allowedCourts, globalSlots, earliestIdx);
+    nextMatch.time = picked ? `${picked.slot} - Pista ${picked.court}` : null;
   };
 
   // Pistas permitidas para una categoría/cuadro. Si el admin no ha marcado
   // ninguna en config, devuelve TODAS las pistas (comportamiento previo).
+  // Las pistas configuradas que ya no existen (el admin bajó el nº de
+  // pistas después) se ignoran.
   const getAllowedCourts = (cat, isCons) => {
+    const total = tConfig.courtsCount || 1;
     const cfg = tConfig.courtsByCategory?.[cat]?.[isCons ? 'cons' : 'main'];
-    if (Array.isArray(cfg) && cfg.length > 0) return cfg.slice();
-    return Array.from({ length: tConfig.courtsCount || 1 }, (_, i) => i + 1);
+    const valid = Array.isArray(cfg) ? cfg.filter(c => c >= 1 && c <= total) : [];
+    if (valid.length > 0) return valid;
+    return Array.from({ length: total }, (_, i) => i + 1);
   };
 
   // occupiedCourts[slot] = Set(court) — qué pistas están YA ocupadas en cada
@@ -2209,63 +2594,122 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const pushLoserToConsPure = (catConsRounds, loser, sourceMain = null) => {
     if (!catConsRounds || catConsRounds.length === 0 || !loser || loser.isBye) return null;
     const alreadyIn = catConsRounds.some(r => r.some(m => m.p1?.id === loser.id || m.p2?.id === loser.id));
-    if (alreadyIn) return null;
     const next = catConsRounds.map(r => r.map(m => ({ ...m })));
     const r0 = next[0];
+    // Auto-cura: consolaciones guardadas cuando el placeholder se
+    // auto-avanzaba con el BYE dejaban el R0 con winner=placeholder y el
+    // hueco de R1 ocupado por "Perdedor por definir" aunque ya hubiera
+    // llegado la pareja real. Si hay real-vs-BYE cuyo winner no es la real,
+    // la avanzamos ahora (en cuadros sanos es un no-op).
+    let healed = false;
+    for (const m of r0) {
+      const real = m.p1?.isBye && isRealPair(m.p2) ? m.p2 : (m.p2?.isBye && isRealPair(m.p1) ? m.p1 : null);
+      if (real && m.winner?.id !== real.id) { advanceWinnerMut(next, 0, m.matchIndex, real); healed = true; }
+    }
+    if (alreadyIn) return healed ? next : null;
+    // Coloca al perdedor en el lado indicado. Si el rival es un BYE, pasa
+    // directo a la siguiente ronda (winner + hueco de R1): antes solo se
+    // sustituía el placeholder y el partido quedaba sin ganador ni forma de
+    // avanzar (no hay botón de resultado contra un BYE).
+    const place = (m, side) => {
+      // Conservamos el vínculo con el partido del principal y soltamos la
+      // hora auto-asignada: se calculó para "Perdedor por definir", no para
+      // esta pareja (las manuales se respetan).
+      const link = m[side]?.sourceMain || loser.sourceMain;
+      m[side] = link ? { ...loser, sourceMain: link } : { ...loser };
+      if (!m.timeManual) m.time = null;
+      const other = side === 'p1' ? m.p2 : m.p1;
+      if (other?.isBye) advanceWinnerMut(next, 0, m.matchIndex, m[side]);
+      return next;
+    };
     // PASS 1 (espejo): buscar placeholder vinculado al main match origen.
     if (sourceMain && Number.isFinite(sourceMain.round) && Number.isFinite(sourceMain.matchIndex)) {
+      const linked = (p) => p?.sourceMain?.round === sourceMain.round && p?.sourceMain?.matchIndex === sourceMain.matchIndex;
       for (const m of r0) {
-        if (m.p1?.isPlaceholder && m.p1.sourceMain?.round === sourceMain.round && m.p1.sourceMain?.matchIndex === sourceMain.matchIndex) {
-          m.p1 = { ...loser }; return next;
-        }
-        if (m.p2?.isPlaceholder && m.p2.sourceMain?.round === sourceMain.round && m.p2.sourceMain?.matchIndex === sourceMain.matchIndex) {
-          m.p2 = { ...loser }; return next;
+        if (m.p1?.isPlaceholder && linked(m.p1)) return place(m, 'p1');
+        if (m.p2?.isPlaceholder && linked(m.p2)) return place(m, 'p2');
+      }
+      // PASS 1b: el placeholder vinculado se convirtió en BYE porque el
+      // resultado anterior de ese match no daba perdedor elegible
+      // (releaseConsPlaceholderAsBye). El admin corrigió el resultado y ahora
+      // sí hay perdedor: deshacemos el bye, el rival vuelve a tener partido y
+      // lo que había avanzado sin jugar se vacía.
+      for (const m of r0) {
+        for (const side of ['p1', 'p2']) {
+          if (!m[side]?.isBye || !linked(m[side])) continue;
+          m[side] = { ...loser, sourceMain: m[side].sourceMain };
+          m.winner = null; m.score = null;
+          if (!m.timeManual) m.time = null;
+          clearConsDownstreamMut(next, 0, m.matchIndex);
+          return next;
         }
       }
     }
     // PASS 2 (fallback legacy): primer placeholder libre.
     for (const m of r0) {
-      if (m.p1?.isPlaceholder) { m.p1 = { ...loser }; return next; }
-      if (m.p2?.isPlaceholder) { m.p2 = { ...loser }; return next; }
+      if (m.p1?.isPlaceholder) return place(m, 'p1');
+      if (m.p2?.isPlaceholder) return place(m, 'p2');
     }
     for (const m of r0) {
-      if (m.p1?.isBye && m.p2?.isBye) { m.p1 = { ...loser }; return next; }
+      if (m.p1?.isBye && m.p2?.isBye) return place(m, 'p1');
     }
+    // Sin hueco → null aunque hayamos auto-curado algo: el aviso de
+    // "no hay hueco" en syncConsOnMainWinner tiene prioridad.
     return null;
   };
 
-  // Reemplaza al perdedor "viejo" por uno "nuevo" en TODAS sus apariciones del
-  // cuadro de consolación: en R0 cambia el slot, en R1+ también, y limpia
-  // winner/score y time no-manual de los matches afectados (ya que el rastro
-  // anterior ya no aplica). Devuelve null si oldLoser no estaba en cons.
-  const swapLoserInConsPure = (catConsRounds, oldLoser, newLoser) => {
+  // Vacía todo lo que un match de consolación había alimentado aguas abajo
+  // (el hueco que ocupaba su ganador en la siguiente ronda, y así
+  // sucesivamente). Se usa cuando ese match tiene que volver a jugarse.
+  const clearConsDownstreamMut = (rArray, rIdx, mIdx) => {
+    let fR = rIdx + 1;
+    let fM = mIdx;
+    while (fR < rArray.length) {
+      const isTop = fM % 2 === 0;
+      fM = Math.floor(fM / 2);
+      const d = rArray[fR][fM];
+      if (!d) break;
+      if (isTop) d.p1 = null; else d.p2 = null;
+      d.winner = null; d.score = null;
+      if (!d.timeManual) d.time = null;
+      fR++;
+    }
+  };
+
+  // Sustituye al perdedor "viejo" por el "nuevo" SOLO en el partido de
+  // consolación por el que entró (R0, o R1 si venía de un partido movido).
+  // Ese partido tiene que volver a jugarse, así que se vacía su resultado y
+  // todo lo que había alimentado aguas abajo (la victoria de su rival en la
+  // ronda siguiente tampoco vale ya). Antes se sustituía en TODAS las rondas,
+  // y el nuevo perdedor aparecía "avanzado" a rondas que no había jugado.
+  // Si newLoser es null queda un placeholder vinculado a `sourceMain` para
+  // que una corrección posterior pueda rellenarlo.
+  // Devuelve null si oldLoser no estaba en cons.
+  const swapLoserInConsPure = (catConsRounds, oldLoser, newLoser, sourceMain = null) => {
     if (!catConsRounds || catConsRounds.length === 0 || !oldLoser) return null;
     const next = catConsRounds.map(r => r.map(m => ({ ...m })));
-    let changed = false;
+    const link = sourceMain ? { sourceMain } : {};
     const replaceWith = (newLoser && !newLoser.isBye)
-      ? { ...newLoser }
-      : { id: `cons-placeholder-replaced-${Date.now()}`, name: 'Perdedor por definir', isPlaceholder: true };
-    for (let r = 0; r < next.length; r++) {
-      for (const m of next[r]) {
-        if (m.p1?.id === oldLoser.id) {
-          m.p1 = { ...replaceWith };
-          m.winner = null; m.score = null;
-          if (!m.timeManual) m.time = null;
-          changed = true;
-        }
-        if (m.p2?.id === oldLoser.id) {
-          m.p2 = { ...replaceWith };
-          m.winner = null; m.score = null;
-          if (!m.timeManual) m.time = null;
-          changed = true;
-        }
-        if (m.winner?.id === oldLoser.id) {
-          m.winner = null;
-          changed = true;
-        }
-      }
+      ? { ...newLoser, ...link }
+      : { id: `cons-placeholder-replaced-${Date.now()}`, name: 'Perdedor por definir', isPlaceholder: true, ...link };
+    // Partido de entrada: primera ronda donde aparece oldLoser
+    let eR = -1, entry = null;
+    for (let r = 0; r < next.length && !entry; r++) {
+      entry = next[r].find(m => m.p1?.id === oldLoser.id || m.p2?.id === oldLoser.id) || null;
+      if (entry) eR = r;
     }
-    return changed ? next : null;
+    if (!entry) return null;
+    const side = entry.p1?.id === oldLoser.id ? 'p1' : 'p2';
+    const other = side === 'p1' ? entry.p2 : entry.p1;
+    entry[side] = { ...replaceWith };
+    entry.winner = null; entry.score = null;
+    if (!entry.timeManual) entry.time = null;
+    clearConsDownstreamMut(next, eR, entry.matchIndex);
+    // Si el rival era un BYE, la nueva pareja pasa directa igual que la vieja.
+    if (other?.isBye && !replaceWith.isPlaceholder) {
+      advanceWinnerMut(next, eR, entry.matchIndex, entry[side]);
+    }
+    return next;
   };
 
   // Sincroniza la consolación tras asignar/cambiar el winner de un match del
@@ -2276,29 +2720,37 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Aplica solo a matches R0 (siempre) o R1 cuyo perdedor tuvo BYE en R0.
   // Cuando un placeholder de cons no se va a llenar (porque el cuarto que
   // se reservó para él produjo un loser que ya jugó 2 partidos y no aplica),
-  // convertimos el primer placeholder libre en BYE y auto-advance al rival.
-  // Así la pareja que estaba esperando no se queda sin partido.
-  const releaseConsPlaceholderAsBye = (cat) => {
+  // convertimos SOLO ese placeholder (el vinculado a `sourceMain`) en BYE y
+  // auto-advance al rival. Así la pareja que estaba esperando no se queda
+  // sin partido. Los placeholders de otros cuartos siguen esperando a su
+  // perdedor: liberar "el primero que haya" dejaba a ese perdedor sin sitio.
+  // Si la consolación es antigua (placeholders sin `sourceMain`) y no se
+  // pasa origen, solo se liberan placeholders sin vínculo.
+  const releaseConsPlaceholderAsBye = (cat, sourceMain = null) => {
     setConsRounds(prev => {
       const catCons = prev[cat];
       if (!catCons || catCons.length === 0) return prev;
       const next = catCons.map(r => r.map(m => ({ ...m })));
-      // Buscar primer R0 con un placeholder y un rival real
+      const isLinked = (p) => !!p?.isPlaceholder && (
+        sourceMain
+          ? (p.sourceMain?.round === sourceMain.round && p.sourceMain?.matchIndex === sourceMain.matchIndex)
+          : !p.sourceMain
+      );
       for (const m of next[0]) {
         let placeholderSide = null;
         let realSide = null;
-        if (m.p1?.isPlaceholder && m.p2 && !m.p2.isBye && !m.p2.isPlaceholder) {
+        if (isLinked(m.p1) && m.p2 && !m.p2.isBye && !m.p2.isPlaceholder) {
           placeholderSide = 'p1'; realSide = 'p2';
-        } else if (m.p2?.isPlaceholder && m.p1 && !m.p1.isBye && !m.p1.isPlaceholder) {
+        } else if (isLinked(m.p2) && m.p1 && !m.p1.isBye && !m.p1.isPlaceholder) {
           placeholderSide = 'p2'; realSide = 'p1';
         }
         if (!placeholderSide) continue;
-        // Convertir placeholder a BYE
-        m[placeholderSide] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true };
+        // Convertir placeholder a BYE. Guardamos el vínculo por si el admin
+        // corrige el resultado y el perdedor sí tiene que entrar
+        // (pushLoserToConsPure deshace el bye).
+        m[placeholderSide] = { id: `cons-bye-released-${Date.now()}-${m.matchIndex}`, name: '---', isBye: true, ...(sourceMain ? { sourceMain } : {}) };
         // Auto-advance al rival a la siguiente ronda
-        if (m[realSide]) {
-          advanceWinnerMut(next, 0, m.matchIndex, m[realSide]);
-        }
+        advanceWinnerMut(next, 0, m.matchIndex, m[realSide]);
         return { ...prev, [cat]: next };
       }
       return prev;
@@ -2358,6 +2810,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     const newLoser = newWinner.id === match.p1.id ? match.p2 : match.p1;
     if (!newLoser || newLoser.isBye) return;
+    const oldLoser = oldWinner ? (oldWinner.id === match.p1.id ? match.p2 : match.p1) : null;
+    if (oldLoser && oldLoser.id === newLoser.id) return;
 
     // hasPrelim = R0 son partidos isPrelim → la primera ronda real del cuadro
     // principal es R1 (cuartos en el caso típico). En ese caso TODOS los
@@ -2366,51 +2820,68 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const r0 = (rounds[cat] || [])[0] || [];
     const hasPrelim = !!r0[0]?.isPrelim;
 
-    let sendToCons = false;
-    if (match.round === 0) {
-      sendToCons = true;
-    } else if (match.round === 1) {
-      if (hasPrelim) {
-        sendToCons = true;
-      } else {
-        const r0Match = r0.find(r0m => r0m.p1?.id === newLoser.id || r0m.p2?.id === newLoser.id);
-        if (r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye)) sendToCons = true;
+    // Elegible para consolación: perdedor de R0 (siempre) o de R1 si R1 fue
+    // su primer partido (había previa, o tuvo BYE en R0).
+    const eligible = (p) => {
+      if (match.round === 0) return true;
+      if (match.round !== 1) return false;
+      if (hasPrelim) return true;
+      const r0Match = r0.find(r0m => r0m.p1?.id === p.id || r0m.p2?.id === p.id);
+      return !!(r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye));
+    };
+    const newEligible = eligible(newLoser);
+    // sourceMain identifica la posición espejo donde debe ir el perdedor.
+    // Para R1 con bye (sin previa), el placeholder está vinculado al R1
+    // donde compitió por primera vez, no al R0 (que era bye).
+    const sourceMain = { round: match.round, matchIndex: match.matchIndex };
+
+    const catCons = consRounds[cat];
+    if (!catCons || catCons.length === 0) return;
+
+    // 1) El perdedor viejo estaba en cons → lo sustituye el nuevo (si es
+    //    elegible) o vuelve a quedar un placeholder vinculado a este match.
+    //    Hay que mirar a los DOS perdedores: antes solo se miraba al nuevo y,
+    //    si no era elegible, el viejo se quedaba en consolación aunque
+    //    hubiera pasado a ganar en el principal.
+    let updated = null;
+    if (oldLoser) {
+      updated = swapLoserInConsPure(catCons, oldLoser, newEligible ? newLoser : null, sourceMain);
+    }
+    // 2) El viejo no estaba en cons (o no había) → inyectar al nuevo si es elegible.
+    if (!updated && newEligible) {
+      const alreadyIn = catCons.some(r => r.some(m => m.p1?.id === newLoser.id || m.p2?.id === newLoser.id));
+      updated = pushLoserToConsPure(catCons, newLoser, sourceMain);
+      if (!updated && !alreadyIn) {
+        toast(`No hay hueco en consolación para ${newLoser.name}. Revisa el cuadro de consolación.`, 'error');
       }
     }
-    if (!sendToCons) {
-      // El loser de R1 no es cons-eligible (ya jugó 2 partidos). Si la cons
-      // tenía un placeholder reservado para este cuarto, lo liberamos como
-      // BYE para que el rival que estaba esperando avance.
-      if (match.round === 1 && !hasPrelim) {
-        releaseConsPlaceholderAsBye(cat);
-      }
+    if (updated) {
+      setConsRounds(prev => ({ ...prev, [cat]: updated }));
       return;
     }
-
-    const oldLoser = oldWinner ? (oldWinner.id === match.p1.id ? match.p2 : match.p1) : null;
-    if (oldLoser && oldLoser.id === newLoser.id) return;
-
-    setConsRounds(prev => {
-      const catCons = prev[cat];
-      if (!catCons || catCons.length === 0) return prev;
-      let updated = null;
-      if (oldLoser && oldLoser.id !== newLoser.id) {
-        updated = swapLoserInConsPure(catCons, oldLoser, newLoser);
-      } else {
-        // sourceMain identifica la posición espejo donde debe ir el perdedor.
-        // Para R1 con bye (sin previa), el placeholder está vinculado al R1
-        // donde compitió por primera vez, no al R0 (que era bye).
-        updated = pushLoserToConsPure(catCons, newLoser, { round: match.round, matchIndex: match.matchIndex });
-      }
-      return updated ? { ...prev, [cat]: updated } : prev;
-    });
+    // 3) Nadie de este match estaba en cons y el nuevo perdedor no es
+    //    elegible (ya jugó R0): liberamos SOLO el placeholder reservado a
+    //    este match para que el rival que esperaba avance.
+    if (!newEligible && !oldLoser && match.round === 1 && !hasPrelim) {
+      releaseConsPlaceholderAsBye(cat, sourceMain);
+    }
   };
 
-  const handleSetWinner = (match, participant, isCons = false, cat) => {
-    if (!participant || participant.isBye) return;
+  // Ganador fijado a mano por el admin (W.O., retirada, marcador que no
+  // decide...). Si se pasa `scoreStr` se guarda también como marcador.
+  const handleSetWinner = (match, participant, isCons = false, cat, scoreStr = '') => {
+    setEditingScoreId(null);
+    setScoreInput('');
+    if (!isRealPair(participant)) return;
+    if (!isRealPair(match.p1) || !isRealPair(match.p2)) {
+      toast('Este partido aún no tiene las dos parejas definidas.', 'error');
+      return;
+    }
     const targetRoundsGlob = isCons ? consRounds : rounds;
     const targetRounds = targetRoundsGlob[cat];
     const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+    const trimmed = (scoreStr || '').trim();
+    if (trimmed) nextRounds[match.round][match.matchIndex].score = trimmed;
     if (match.isRR) {
       nextRounds[match.round][match.matchIndex].winner = participant;
       if (isCons) setConsRounds({ ...consRounds, [cat]: nextRounds });
@@ -2418,53 +2889,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       return;
     }
     advanceWinnerMut(nextRounds, match.round, match.matchIndex, participant);
-
-    // Auto-schedule the next round match if both players are now known
-    const nextRoundIdx = match.round + 1;
-    const nextMatchIdx = Math.floor(match.matchIndex / 2);
-
-    if (nextRoundIdx < nextRounds.length) {
-      const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
-      if (nextMatch && nextMatch.p1 && nextMatch.p2 && !nextMatch.p1.isBye && !nextMatch.p2.isBye) {
-        const globalSlots = buildGlobalSlots(14);
-        const slotIdx = (s) => globalSlots.indexOf(s);
-        const getSlotFromMatch = (m) => m?.time ? m.time.split(' - Pista')[0].trim() : null;
-        const predA = nextRounds[match.round][nextMatchIdx * 2];
-        const predB = nextRounds[match.round][nextMatchIdx * 2 + 1];
-        const predAIdx = slotIdx(getSlotFromMatch(predA));
-        const predBIdx = slotIdx(getSlotFromMatch(predB));
-        // Factor cansancio: nextStart >= predStart + duración + descanso
-        const durationMin = tConfig.matchDurationByCategory?.[cat] ?? 90;
-        const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
-        const gapSlots = Math.ceil((durationMin + restMin) / 60);
-        const earliestIdx = Math.max(predAIdx, predBIdx) + gapSlots;
-
-        // Cuándo re-schedulear:
-        //   · si no hay hora asignada aún, o
-        //   · si la hora actual no la fijó el admin Y viola el orden entre rondas
-        //     (p.ej. la generó una versión vieja del auto-scheduler sin enforcement).
-        const curIdx = slotIdx(getSlotFromMatch(nextMatch));
-        const violatesOrder = curIdx !== -1 && curIdx < earliestIdx;
-        const shouldSchedule = !nextMatch.time || (!nextMatch.timeManual && violatesOrder);
-
-        if (shouldSchedule) {
-          if (violatesOrder && !nextMatch.timeManual) nextMatch.time = null;
-
-          const updatedMain = isCons ? rounds : { ...rounds, [cat]: nextRounds };
-          const updatedCons = isCons ? { ...consRounds, [cat]: nextRounds } : consRounds;
-          const occupied = buildOccupiedCourts(updatedMain, updatedCons);
-          const allowedCourts = getAllowedCourts(cat, isCons);
-
-          const p1Slots = expandPlayerSlots(nextMatch.p1, globalSlots);
-          const p2Slots = expandPlayerSlots(nextMatch.p2, globalSlots);
-          let common = p1Slots.filter(s => p2Slots.includes(s));
-          if (common.length === 0) common = p1Slots.length > 0 ? p1Slots : (p2Slots.length > 0 ? p2Slots : globalSlots);
-
-          const picked = pickSlotAndCourt(common, occupied, allowedCourts, globalSlots, earliestIdx);
-          nextMatch.time = picked ? `${picked.slot} - Pista ${picked.court}` : '';
-        }
-      }
-    }
+    if (isCons) syncThirdPlaceMut(nextRounds, match, participant);
+    autoScheduleNextMatch(nextRounds, match, cat, isCons);
 
     if (isCons) {
       setConsRounds({ ...consRounds, [cat]: nextRounds });
@@ -2492,34 +2918,49 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (match.p1.isPrelimPlaceholder || match.p2.isPrelimPlaceholder) return;
     if (!window.confirm(`¿Pasar el partido completo a la siguiente ronda?\n\n${match.p1.name}\nvs\n${match.p2.name}\n\nLas dos parejas se enfrentarán en la ronda siguiente sin jugar este partido.`)) return;
 
-    setConsRounds(prev => {
-      const targetRounds = prev[cat];
-      if (!targetRounds || match.round + 1 >= targetRounds.length) {
-        toast('No hay siguiente ronda a la que avanzar.');
-        return prev;
-      }
-      const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
-      const cur = nextRounds[match.round][match.matchIndex];
-      const nextIdx = Math.floor(match.matchIndex / 2);
-      const next = nextRounds[match.round + 1][nextIdx];
-      if (!next) return prev;
+    // Se calcula sobre el estado actual (no dentro del updater) para poder
+    // avisar al admin de por qué no se mueve.
+    const targetRounds = consRounds[cat];
+    if (!targetRounds || match.round + 1 >= targetRounds.length) {
+      toast('No hay siguiente ronda a la que avanzar.', 'error');
+      return;
+    }
+    const nextRounds = targetRounds.map(r => r.map(m => ({ ...m })));
+    const cur = nextRounds[match.round][match.matchIndex];
+    const nextIdx = Math.floor(match.matchIndex / 2);
+    const next = nextRounds[match.round + 1][nextIdx];
+    if (!next) {
+      toast('No hay siguiente ronda a la que avanzar.', 'error');
+      return;
+    }
 
-      // Colocar ambas parejas en el partido siguiente.
-      next.p1 = cur.p1;
-      next.p2 = cur.p2;
-      if (!next.timeManual) next.time = null;
+    // El hueco del partido hermano (matchIndex ^ 1) en la siguiente ronda.
+    // Si ya lo ocupa una pareja real (ganador del hermano, avance por BYE o
+    // un partido movido antes), mover este partido la pisaría.
+    const isTop = match.matchIndex % 2 === 0;
+    const siblingSlot = isTop ? next.p2 : next.p1;
+    if (siblingSlot && !siblingSlot.isBye) {
+      toast('No se puede mover: la siguiente ronda ya tiene una pareja del partido hermano.', 'error');
+      return;
+    }
 
-      // Marcar el partido actual como movido — se vacían parejas, ganador,
-      // marcador y hora para que no acepte resultado y muestre un aviso.
-      cur.p1 = { id: `moved-${cur.id}-p1`, name: '↗ Movido a siguiente ronda', isBye: true };
-      cur.p2 = { id: `moved-${cur.id}-p2`, name: '↗ Movido a siguiente ronda', isBye: true };
-      cur.winner = null;
-      cur.score = null;
-      if (!cur.timeManual) cur.time = null;
-      cur.movedUp = true;
+    // Colocar ambas parejas en el partido siguiente.
+    next.p1 = cur.p1;
+    next.p2 = cur.p2;
+    next.winner = null;
+    next.score = null;
+    if (!next.timeManual) next.time = null;
 
-      return { ...prev, [cat]: nextRounds };
-    });
+    // Marcar el partido actual como movido — se vacían parejas, ganador,
+    // marcador y hora para que no acepte resultado y muestre un aviso.
+    cur.p1 = { id: `moved-${cur.id}-p1`, name: '↗ Movido a siguiente ronda', isBye: true };
+    cur.p2 = { id: `moved-${cur.id}-p2`, name: '↗ Movido a siguiente ronda', isBye: true };
+    cur.winner = null;
+    cur.score = null;
+    if (!cur.timeManual) cur.time = null;
+    cur.movedUp = true;
+
+    setConsRounds(prev => ({ ...prev, [cat]: nextRounds }));
     toast('Partido movido a la siguiente ronda');
   };
 
@@ -2657,7 +3098,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     };
 
     (catRounds[1] || []).forEach((m, mIdx) => {
-      if (!m.p1 || !m.p2) return;
+      // OJO: no exigimos las dos parejas. Una pareja con BYE en R0 ya está
+      // en su match de R1 (generateBracket la avanza al crear el cuadro)
+      // mientras el otro lado sigue null hasta que se juegue su R0. Ese es
+      // justo el caso cons-eligible: hay que reservar su slot espejo YA o,
+      // cuando pierda en R1, no habrá placeholder para ella y se perdería.
+      const known = [m.p1, m.p2].filter(Boolean);
+      if (known.length === 0) return;            // nadie conocido aún
+      if (m.p1?.isBye && m.p2?.isBye) return;    // bye vs bye → sin perdedor
       // Solo R1 cons-eligibles:
       //   · con previa → todos los R1 (la previa cuenta como su 1er partido)
       //   · sin previa → solo si AL MENOS UNO vino de bye en R0
@@ -2667,16 +3115,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       // como loser de su R0). Ahora calculamos el loser SOLO si es cons-eligible.
       const p1FromBye = cameFromBye(m.p1);
       const p2FromBye = cameFromBye(m.p2);
-      let eligible = false;
-      if (hasPrelim) {
-        eligible = !(m.p1.isBye && m.p2.isBye);
-      } else {
-        eligible = p1FromBye || p2FromBye;
-      }
+      const eligible = hasPrelim ? true : (p1FromBye || p2FromBye);
       if (!eligible) return;
 
       let loser = null;
-      if (m.winner && !m.p1.isBye && !m.p2.isBye) {
+      if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) {
         const candidateLoser = m.winner.id === m.p1.id ? m.p2 : m.p1;
         if (candidateLoser?.isBye) {
           loser = null;
@@ -2690,6 +3133,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           loser = loserCameFromBye ? candidateLoser : null;
         }
       }
+      // Match de R1 ya resuelto cuyo perdedor NO es cons-eligible (jugó
+      // R0+R1) o cuyo "perdedor" es un BYE: nunca va a mandar a nadie a
+      // consolación, así que no reservamos slot. Antes dejaba un placeholder
+      // muerto y su rival se quedaba en "Esperando rival" para siempre.
+      if (m.winner && !loser) return;
       mainSources.push({ sourceMain: { round: 1, matchIndex: mIdx }, loser });
     });
 
@@ -2777,6 +3225,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // tener tracking por pista para que un partido de cons no se cuele en P1
     // cuando P2 está libre — y al revés.
     const occupied = buildOccupiedCourts(rounds, consRounds);
+    // Anti-solape por pareja (igual que playerSlots en generateBracket): una
+    // pareja inscrita en dos categorías puede haber perdido en esta y seguir
+    // viva en la otra. Sin esto su partido de consolación caía en la misma
+    // franja que su partido del principal de la otra categoría (otra pista).
+    // Se mira TODO: principal y consolación de todas las categorías, salvo
+    // la consolación de esta categoría, que es la que se está regenerando.
+    const playerSlots = {}; // { participantId: Set<slot> }
+    const markPlayerSlot = (slot, p1, p2) => {
+      [p1, p2].forEach(p => {
+        if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return;
+        if (!playerSlots[p.id]) playerSlots[p.id] = new Set();
+        playerSlots[p.id].add(slot);
+      });
+    };
+    const arePlayersFree = (slot, p1, p2) => {
+      for (const p of [p1, p2]) {
+        if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) continue;
+        if (playerSlots[p.id]?.has(slot)) return false;
+      }
+      return true;
+    };
+    [rounds, consRounds].forEach(obj => Object.entries(obj || {}).forEach(([c, catR]) => {
+      if (obj === consRounds && c === cat) return;
+      (catR || []).forEach(round => (round || []).forEach(m => {
+        if (!m.time || m.time === 'A convenir') return;
+        markPlayerSlot(m.time.split(' - Pista')[0].trim(), m.p1, m.p2);
+      }));
+    }));
     const allowedCourtsForCons = getAllowedCourts(cat, true);
     const markOccupied = (slot, court) => {
       if (!occupied[slot]) occupied[slot] = new Set();
@@ -2795,10 +3271,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // pickSlotCourtForCons: respeta earliestMinutes + allowedCourtsForCons +
     // courtStartHours + occupied. Igual que en generateBracket pero con las
     // pistas de CONSOLACIÓN.
-    const pickSlotCourtForCons = (earliestMinutes, preferred = null) => {
+    // p1/p2: parejas del match (si se conocen) para no solaparlas con otro
+    // partido suyo en la misma franja.
+    const pickSlotCourtForCons = (earliestMinutes, preferred = null, p1 = null, p2 = null) => {
       const tryList = (list) => {
         for (const s of list) {
           if (slotMinutesGen(s) < earliestMinutes) continue;
+          if (!arePlayersFree(s, p1, p2)) continue; // anti-solape
           const hourPart = s.split(' ')[1];
           for (const c of allowedCourtsForCons) {
             if (!isCourtFree(s, c)) continue;
@@ -2822,6 +3301,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         for (let h = lastHourIdx + 1; h < HOURS.length; h++) {
           const s = `${lastDateLabel} ${HOURS[h]}`;
           if (slotMinutesGen(s) < earliestMinutes) continue;
+          if (!arePlayersFree(s, p1, p2)) continue;
           for (const c of allowedCourtsForCons) {
             if (!isCourtFree(s, c)) continue;
             const startsAt = tConfig.courtStartHours?.[c];
@@ -2838,6 +3318,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           for (let h = 0; h < HOURS.length; h++) {
             const s = `${nextLabel} ${HOURS[h]}`;
             if (slotMinutesGen(s) < earliestMinutes) continue;
+            if (!arePlayersFree(s, p1, p2)) continue;
             for (const c of allowedCourtsForCons) {
               if (!isCourtFree(s, c)) continue;
               const startsAt = tConfig.courtStartHours?.[c];
@@ -2892,12 +3373,31 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           const p2Final = match.p2.finalSlots || [];
           pickList = p1Final.length > 0 ? p1Final : (p2Final.length > 0 ? p2Final : globalSlots);
         }
-        const picked = pickSlotCourtForCons(0, pickList);
+        const picked = pickSlotCourtForCons(0, pickList, match.p1, match.p2);
         if (picked) {
           markOccupied(picked.slot, picked.court);
+          markPlayerSlot(picked.slot, match.p1, match.p2);
           match.time = `${picked.slot} - Pista ${picked.court}`;
         }
       });
+    }
+
+    // Los BYE de R0 se avanzan ANTES de programar R1+ (advanceWinnerMut borra
+    // la hora del partido siguiente al cambiar la pareja; hacerlo después
+    // tumbaba los horarios recién calculados hasta la final).
+    if (newRounds[0]) {
+       // Solo avanzamos parejas REALES contra BYE. Un placeholder contra BYE
+       // se queda quieto: cuando llegue el perdedor real, pushLoserToConsPure
+       // lo avanza. Antes se avanzaba el placeholder y al llegar la pareja el
+       // R0 se quedaba con winner=placeholder y R1 con "Perdedor por definir"
+       // sin ninguna forma de arreglarlo.
+       newRounds[0].forEach(match => {
+          if (match.p1?.isBye && isRealPair(match.p2)) {
+             advanceWinnerMut(newRounds, 0, match.matchIndex, match.p2);
+          } else if (match.p2?.isBye && isRealPair(match.p1)) {
+             advanceWinnerMut(newRounds, 0, match.matchIndex, match.p1);
+          }
+       });
     }
 
     // Pre-scheduling de R1+: cada match va DESPUÉS de sus predecesores Y de
@@ -2925,12 +3425,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       };
 
       // PASS 1: pre-asigna respetando earliestMinutes + allowedCourtsForCons + occupied
+      // Un predecesor "bloquea" si aún no tiene hora y su pareja ganadora no
+      // se conoce: partido real sin hora, o placeholder (aunque vaya contra
+      // un BYE). Un real-vs-BYE sin hora no bloquea: la pareja ya se sabe.
+      const predBlocks = (m) => {
+        if (!m || m.time) return false;
+        if (m.p1?.isPlaceholder || m.p2?.isPlaceholder) return true;
+        return !(m.p1?.isBye || m.p2?.isBye);
+      };
       for (let r = 1; r < newRounds.length; r++) {
         newRounds[r].forEach((match, mIdx) => {
+          // No pre-programar si algún predecesor aún no tiene hora (caso
+          // habitual: consolación generada antes de jugar el principal, R0
+          // son placeholders sin hora → earliest=0 metía semis/final en la
+          // primera hora libre del día 1 y ocupaba pistas fantasma). La hora
+          // se asignará en handleSetWinner / Recalcular horarios cuando se
+          // conozcan las parejas. Mismo criterio que manualR0 en generateBracket.
+          const predA = newRounds[r - 1][mIdx * 2];
+          const predB = newRounds[r - 1][mIdx * 2 + 1];
+          if (predBlocks(predA) || predBlocks(predB)) return;
           const earliestMinutes = computeEarliestMinutes(r, mIdx);
-          const picked = pickSlotCourtForCons(earliestMinutes);
+          const picked = pickSlotCourtForCons(earliestMinutes, null, match.p1, match.p2);
           if (picked) {
             markOccupied(picked.slot, picked.court);
+            markPlayerSlot(picked.slot, match.p1, match.p2);
             match.time = `${picked.slot} - Pista ${picked.court}`;
           }
         });
@@ -2953,9 +3471,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               if (occupied[oldSlot] && Number.isFinite(oldCourt)) {
                 occupied[oldSlot].delete(oldCourt);
               }
-              const picked = pickSlotCourtForCons(earliestMinutes);
+              [match.p1, match.p2].forEach(p => {
+                if (p && playerSlots[p.id]) playerSlots[p.id].delete(oldSlot);
+              });
+              const picked = pickSlotCourtForCons(earliestMinutes, null, match.p1, match.p2);
               if (picked) {
                 markOccupied(picked.slot, picked.court);
+                markPlayerSlot(picked.slot, match.p1, match.p2);
                 match.time = `${picked.slot} - Pista ${picked.court}`;
                 fixed++;
               } else {
@@ -2967,16 +3489,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         }
         if (fixed === 0) break;
       }
-    }
-
-    if (newRounds[0]) {
-       newRounds[0].forEach(match => {
-          if (match.p1?.isBye && match.p2 && !match.p2.isBye) {
-             advanceWinnerMut(newRounds, 0, match.matchIndex, match.p2);
-          } else if (match.p2?.isBye && match.p1 && !match.p1.isBye) {
-             advanceWinnerMut(newRounds, 0, match.matchIndex, match.p1);
-          }
-       });
     }
 
     setConsRounds(prev => ({...prev, [cat]: newRounds}));
@@ -2995,47 +3507,51 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       // legibles sin cambiar la UI normal.
       const exportStyle = document.createElement('style');
       exportStyle.id = 'tm-pdf-export-styles';
+      // Escapamos el id: viene del nombre de la categoría (solo se cambian
+      // espacios) y con "/", "+", "(" el selector era inválido y el navegador
+      // descartaba TODAS las reglas en silencio (PDF sin refuerzo de contraste).
+      const idSel = `#${typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(elementId) : elementId}`;
       exportStyle.textContent = `
-        #${elementId} { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; -webkit-font-smoothing: antialiased !important; -moz-osx-font-smoothing: grayscale !important; text-rendering: geometricPrecision !important; }
-        #${elementId} * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; -webkit-font-smoothing: antialiased !important; }
+        ${idSel} { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; -webkit-font-smoothing: antialiased !important; -moz-osx-font-smoothing: grayscale !important; text-rendering: geometricPrecision !important; }
+        ${idSel} * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; -webkit-font-smoothing: antialiased !important; }
         /* Texto un punto más grueso y oscuro para que se lea mejor en papel */
-        #${elementId} { color: #0F172A !important; }
+        ${idSel} { color: #0F172A !important; }
         /* Refuerzo de bordes para que las cajas se distingan en papel */
-        #${elementId} [style*="border"] { border-width: 2px !important; }
+        ${idSel} [style*="border"] { border-width: 2px !important; }
         /* Bordes y fondos de los matches: contraste más fuerte */
-        #${elementId} [style*="#E2E8F0"] { border-color: #64748B !important; }
+        ${idSel} [style*="#E2E8F0"] { border-color: #64748B !important; }
         /* Verde ganador: saturado */
-        #${elementId} [style*="DCFCE7"] { background-color: #BBF7D0 !important; }
-        #${elementId} [style*="#16A34A"] { color: #15803D !important; }
+        ${idSel} [style*="DCFCE7"] { background-color: #BBF7D0 !important; }
+        ${idSel} [style*="#16A34A"] { color: #15803D !important; }
         /* Naranja consolación: saturado */
-        #${elementId} [style*="FEF3C7"] { background-color: #FDE68A !important; }
-        #${elementId} [style*="#D97706"] { color: #B45309 !important; }
+        ${idSel} [style*="FEF3C7"] { background-color: #FDE68A !important; }
+        ${idSel} [style*="#D97706"] { color: #B45309 !important; }
         /* Texto secundario más oscuro para legibilidad */
-        #${elementId} [style*="#64748B"] { color: #1E293B !important; }
-        #${elementId} [style*="#94A3B8"] { color: #334155 !important; }
-        #${elementId} [style*="#475569"] { color: #1E293B !important; }
+        ${idSel} [style*="#64748B"] { color: #1E293B !important; }
+        ${idSel} [style*="#94A3B8"] { color: #334155 !important; }
+        ${idSel} [style*="#475569"] { color: #1E293B !important; }
         /* Nombres de pareja en negrita más fuerte */
-        #${elementId} span[style*="font-weight: 600"] { font-weight: 700 !important; }
-        #${elementId} span[style*="font-weight: 700"] { font-weight: 800 !important; }
+        ${idSel} span[style*="font-weight: 600"] { font-weight: 700 !important; }
+        ${idSel} span[style*="font-weight: 700"] { font-weight: 800 !important; }
         /* Fuentes ~25% más grandes solo en el PDF para que se lean en papel.
            Se bumpean los tamaños relativos más usados en el render del cuadro.
            No afecta a la UI normal porque solo se inyecta durante la captura. */
-        #${elementId} [style*="font-size: 0.62rem"] { font-size: 0.85rem !important; }
-        #${elementId} [style*="font-size: 0.65rem"] { font-size: 0.88rem !important; }
-        #${elementId} [style*="font-size: 0.68rem"] { font-size: 0.9rem !important; }
-        #${elementId} [style*="font-size: 0.7rem"]  { font-size: 0.92rem !important; }
-        #${elementId} [style*="font-size: 0.72rem"] { font-size: 0.95rem !important; }
-        #${elementId} [style*="font-size: 0.75rem"] { font-size: 0.98rem !important; }
-        #${elementId} [style*="font-size: 0.78rem"] { font-size: 1rem !important; }
-        #${elementId} [style*="font-size: 0.8rem"]  { font-size: 1.02rem !important; }
-        #${elementId} [style*="font-size: 0.82rem"] { font-size: 1.05rem !important; }
-        #${elementId} [style*="font-size: 0.85rem"] { font-size: 1.08rem !important; }
-        #${elementId} [style*="font-size: 0.9rem"]  { font-size: 1.12rem !important; }
-        #${elementId} [style*="font-size: 0.95rem"] { font-size: 1.18rem !important; }
-        #${elementId} [style*="font-size: 1rem"]    { font-size: 1.22rem !important; }
-        #${elementId} [style*="font-size: 1.05rem"] { font-size: 1.28rem !important; }
-        #${elementId} [style*="font-size: 1.1rem"]  { font-size: 1.35rem !important; }
-        #${elementId} [style*="font-size: 1.25rem"] { font-size: 1.55rem !important; }
+        ${idSel} [style*="font-size: 0.62rem"] { font-size: 0.85rem !important; }
+        ${idSel} [style*="font-size: 0.65rem"] { font-size: 0.88rem !important; }
+        ${idSel} [style*="font-size: 0.68rem"] { font-size: 0.9rem !important; }
+        ${idSel} [style*="font-size: 0.7rem"]  { font-size: 0.92rem !important; }
+        ${idSel} [style*="font-size: 0.72rem"] { font-size: 0.95rem !important; }
+        ${idSel} [style*="font-size: 0.75rem"] { font-size: 0.98rem !important; }
+        ${idSel} [style*="font-size: 0.78rem"] { font-size: 1rem !important; }
+        ${idSel} [style*="font-size: 0.8rem"]  { font-size: 1.02rem !important; }
+        ${idSel} [style*="font-size: 0.82rem"] { font-size: 1.05rem !important; }
+        ${idSel} [style*="font-size: 0.85rem"] { font-size: 1.08rem !important; }
+        ${idSel} [style*="font-size: 0.9rem"]  { font-size: 1.12rem !important; }
+        ${idSel} [style*="font-size: 0.95rem"] { font-size: 1.18rem !important; }
+        ${idSel} [style*="font-size: 1rem"]    { font-size: 1.22rem !important; }
+        ${idSel} [style*="font-size: 1.05rem"] { font-size: 1.28rem !important; }
+        ${idSel} [style*="font-size: 1.1rem"]  { font-size: 1.35rem !important; }
+        ${idSel} [style*="font-size: 1.25rem"] { font-size: 1.55rem !important; }
       `;
       document.head.appendChild(exportStyle);
 
@@ -3054,6 +3570,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         console.warn('No se pudo cargar el logo para el PDF:', e);
       }
 
+      // Guardamos el style inline que puso React para restaurarlo al final.
+      // removeAttribute('style') lo borraba y React no lo vuelve a escribir
+      // (el prop no cambia entre renders), así que la caja del cuadro se
+      // quedaba sin padding, fondo ni margen hasta desmontar el componente.
+      const prevCssText = element.style.cssText;
       try {
         // Forzar expansión para captura completa si hay scroll horizontal.
         // Reservo padding-top extra para el logo y el título.
@@ -3134,7 +3655,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         console.error("Error generating PDF:", err);
         toast("Hubo un error al generar el PDF.", 'error');
       } finally {
-        element.removeAttribute('style');
+        element.style.cssText = prevCssText;
         const injected = document.getElementById('tm-pdf-export-styles');
         if (injected) injected.remove();
         setIsExporting(false);
@@ -3146,7 +3667,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Texto seleccionable, búsqueda en visor de PDF, tipografía nítida en
   // papel y paginación automática. Acepta filtro por día.
   const handleDownloadMatchesPDF = async (items, byDay, dayKeys, filterDay) => {
-    const targetDays = filterDay === 'all' ? dayKeys : dayKeys.filter(d => d === filterDay);
+    // Si el día filtrado ya no tiene partidos (se recalcularon horarios,
+    // cambiaron las fechas…) se comporta como "Todos los días".
+    const targetDays = (filterDay === 'all' || !dayKeys.includes(filterDay)) ? dayKeys : dayKeys.filter(d => d === filterDay);
     if (targetDays.length === 0) {
       toast('No hay partidos para ese día.', 'warning');
       return;
@@ -3253,7 +3776,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const rows = byDay[day] || [];
 
         rows.forEach((it, idx) => {
-          const roundName = it.isCons ? 'Cons.' : (it.isPrelim ? 'Previa' : `R${it.round + 1}`);
+          const roundName = it.isPrelim ? 'Previa' : (it.roundName || `R${it.round + 1}`);
           const courtName = getCourtName(it.court);
           pdf.setFontSize(9);
           const p1Lines = pdf.splitTextToSize(it.p1 || '', cols[3].width - 3).slice(0, 2);
@@ -3417,7 +3940,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return ranges;
   };
 
-  const saveEditGrid = () => {
+  const saveEditGrid = async () => {
     const byDay = {};
     activeDays.forEach(day => {
       const blocked = getHoursForDay(day).filter(h => gridBlockedSlots.has(`${day} ${h}`));
@@ -3432,11 +3955,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         slots: hours.map(h => `${day} ${h}`),
       };
     });
+    const editedId = editingParticipant.id;
     setParticipants(prev => prev.map(p =>
-      p.id === editingParticipant.id ? { ...p, prefRules, prefNames: prefRules.map(r => r.label) } : p
+      p.id === editedId ? { ...p, prefRules, prefNames: prefRules.map(r => r.label) } : p
     ));
     setEditingParticipant(null);
     setGridBlockedSlots(new Set());
+    // Si la pareja viene de una inscripción online (id = UUID de la fila),
+    // guardamos también en la inscripción para que no queden dos
+    // disponibilidades distintas (las manuales llevan id numérico).
+    const isOnlineReg = !!publishedId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(editedId));
+    if (isOnlineReg) {
+      const { error } = await supabase
+        .from('tournament_registrations')
+        .update({ unavailable_times: prefRules })
+        .eq('id', editedId)
+        .eq('tournament_id', publishedId);
+      if (error) toast('Horarios guardados en el cuadro, pero no en la inscripción: ' + error.message, 'error');
+      else setRegsList(prev => prev.map(r => r.id === editedId ? { ...r, unavailable_times: prefRules } : r));
+    }
   };
 
   const handleCellMouseDown = (day, hour) => {
@@ -3470,15 +4007,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const partCats = Array.from(new Set(participants.map(p => p.category).filter(Boolean)));
     const allCats = cfgCats.length > 0 ? cfgCats : partCats;
 
-    const setSeed = (participantId, seedValue) => {
-      // seedValue: número o null (sin seed)
-      setParticipants(prev => prev.map(p => {
-        if (p.id !== participantId) return p;
-        const next = { ...p };
-        if (seedValue == null) delete next.seed;
-        else next.seed = Number(seedValue);
-        return next;
-      }));
+    const setSeed = (participantId, cat, seedValue) => {
+      // seedValue: número o null (sin seed). Solo toca la categoría `cat`:
+      // una pareja con doble inscripción tiene seed independiente en cada una.
+      setParticipants(prev => prev.map(p => (p.id === participantId ? withSeed(p, cat, seedValue) : p)));
     };
 
     const saveSeeds = async () => {
@@ -3533,11 +4065,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           // Parejas de esa categoría (solo cuentan si están en participants)
           // Acepta tanto el separador nuevo " y " como el antiguo " + " para no
           // romper inscripciones legacy guardadas antes del cambio de formato.
-          const catParts = participants.filter(p => {
-            const raw = p.category || '';
-            const parts = raw.split(/\s+y\s+|\s+\+\s+/);
-            return parts.includes(cat) || p.category === cat;
-          });
+          // Mismo criterio que generateBracket: con una sola categoría entran
+          // todas las parejas; si no, coincidencia sin distinguir mayúsculas.
+          const catParts = allCats.length === 1 ? participants : participants.filter(p => playsInCat(p, cat));
           const n = catParts.length;
           if (n < 2) {
             return (
@@ -3552,14 +4082,26 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           // floorPow = mayor potencia de 2 ≤ n. Si n > floorPow → previa.
           let floorPow = 1; while (floorPow * 2 <= n) floorPow *= 2;
           const prelimMatchCount = n - floorPow;
+          const directCount = floorPow - prelimMatchCount;
           // Cabezas de serie permitidos: hasta 4 (estándar de torneos pequeños)
-          // o tantos como ganadores de previa haya, lo que sea mayor.
-          const seedSlots = Math.min(n - 1, Math.max(prelimMatchCount, Math.min(4, Math.floor(floorPow / 2))));
+          // o tantos como ganadores de previa haya, lo que sea mayor — pero
+          // nunca más que plazas directas: con previa los seeds no la juegan y
+          // si sobran no queda sitio para los ganadores de la previa (n=7
+          // ofrecía 3 seeds con 1 sola plaza directa y el cuadro salía roto).
+          let seedSlots = Math.min(n - 1, Math.max(prelimMatchCount, Math.min(4, Math.floor(floorPow / 2))));
+          if (prelimMatchCount > 0) seedSlots = Math.min(seedSlots, directCount);
 
           // Mapa actual seed → participantId, para saber qué hay y bloquear duplicados
           const seedMap = {};
           catParts.forEach(p => {
-            if (Number.isFinite(p.seed) && p.seed > 0 && p.seed <= seedSlots) seedMap[p.seed] = p.id;
+            const s = getSeed(p, cat);
+            if (Number.isFinite(s) && s > 0 && s <= seedSlots && !seedMap[s]) seedMap[s] = p.id;
+          });
+          // Seeds que no se ven en los selectores (fuera de rango o número
+          // repetido): se avisan en vez de esconderlos.
+          const straySeeds = catParts.filter(p => {
+            const s = getSeed(p, cat);
+            return Number.isFinite(s) && (s <= 0 || s > seedSlots || seedMap[s] !== p.id);
           });
 
           return (
@@ -3574,6 +4116,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </span>
               </div>
 
+              {straySeeds.length > 0 && (
+                <div style={{ marginBottom: '0.6rem', padding: '0.5rem 0.8rem', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '0.5rem', fontSize: '0.8rem', color: '#991B1B', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {straySeeds.map(p => (
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ flex: 1 }}>⚠️ {p.name} tiene el seed #{getSeed(p, cat)} (fuera de rango o repetido; máx. {seedSlots}). Al generar entrará sin cabeza de serie.</span>
+                      <button onClick={() => setSeed(p.id, cat, null)} style={{ background: 'white', border: '1px solid #FECACA', color: '#991B1B', borderRadius: '0.4rem', cursor: 'pointer', padding: '0.25rem 0.5rem', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>Quitar</button>
+                    </div>
+                  ))}
+                </div>
+              )}
               {seedSlots === 0 ? (
                 <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '0.7rem 0.9rem', borderRadius: '0.5rem' }}>
                   Pocas parejas para asignar cabezas de serie. Añade más y vuelve.
@@ -3594,36 +4146,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             const newId = e.target.value;
                             // Si la pareja seleccionada ya tenía OTRO seed, lo limpia.
                             // Si el slot tenía OTRA pareja, le quita el seed a esa pareja.
-                            setParticipants(prev => {
-                              let next = prev.map(p => {
-                                // Quitar seed si esta pareja ya estaba en otro slot
-                                if (newId && p.id === newId && p.seed && p.seed !== seedNum) {
-                                  const cp = { ...p }; delete cp.seed; return cp;
-                                }
-                                // Quitar seed a la pareja anterior de este slot (si la había)
-                                if (currentId && p.id === currentId) {
-                                  const cp = { ...p }; delete cp.seed; return cp;
-                                }
-                                return p;
-                              });
-                              // Asignar el nuevo seed (si no es vacío)
-                              if (newId) {
-                                next = next.map(p => p.id === newId ? { ...p, seed: seedNum } : p);
-                              }
-                              return next;
-                            });
+                            // Solo se toca el seed de ESTA categoría: el que
+                            // tenga la pareja en su otra categoría se respeta.
+                            setParticipants(prev => prev.map(p => {
+                              if (newId && p.id === newId) return withSeed(p, cat, seedNum);
+                              // Quitar el seed a la pareja anterior de este slot (si la había)
+                              if (currentId && p.id === currentId) return withSeed(p, cat, null);
+                              return p;
+                            }));
                           }}
                           style={{ flex: 1, padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', fontSize: '0.88rem', fontWeight: 600, color: '#0F172A', cursor: 'pointer' }}
                         >
                           <option value="">— Sin asignar —</option>
-                          {catParts.map(p => (
-                            <option key={p.id} value={p.id} disabled={Number.isFinite(p.seed) && p.seed !== seedNum && p.seed <= seedSlots}>
-                              {p.name}{Number.isFinite(p.seed) && p.seed !== seedNum && p.seed <= seedSlots ? ` (ya es #${p.seed})` : ''}
-                            </option>
-                          ))}
+                          {catParts.map(p => {
+                            const s = getSeed(p, cat);
+                            const taken = Number.isFinite(s) && s !== seedNum;
+                            return (
+                              <option key={p.id} value={p.id} disabled={taken}>
+                                {p.name}{taken ? ` (ya es #${s})` : ''}
+                              </option>
+                            );
+                          })}
                         </select>
                         {currentId && (
-                          <button onClick={() => setSeed(currentId, null)} title="Quitar de cabezas de serie" style={{ background: 'none', border: '1px solid #CBD5E1', color: '#94A3B8', borderRadius: '0.4rem', cursor: 'pointer', padding: '0.3rem 0.55rem', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>✕</button>
+                          <button onClick={() => setSeed(currentId, cat, null)} title="Quitar de cabezas de serie" style={{ background: 'none', border: '1px solid #CBD5E1', color: '#94A3B8', borderRadius: '0.4rem', cursor: 'pointer', padding: '0.3rem 0.55rem', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>✕</button>
                         )}
                       </div>
                     );
@@ -3673,7 +4219,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Filtro: una pareja aparece si juega en la categoría seleccionada
     // (soporta dobles categorías). 'Todas' no filtra nada.
     const matchesFilter = (cat) =>
-      regsCatFilter === 'Todas' || splitCats(cat).some(c =>
+      regsCatFilter === 'Todas' || sameCat(cat, regsCatFilter) || splitCats(cat).some(c =>
         c.toLowerCase() === regsCatFilter.toLowerCase()
       );
 
@@ -3712,7 +4258,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           .eq('id', reg.id);
         if (error) throw error;
         setRegsList(prev => prev.map(r => r.id === reg.id ? { ...r, category: newCat } : r));
+        // La copia ya sincronizada en participants también cambia de
+        // categoría; si no, seguía jugando en la antigua.
+        setParticipants(prev => prev.map(p => p.id === reg.id ? { ...p, category: newCat } : p));
         toast(`✓ Pareja movida a ${newCat}.`, 'success');
+        warnIfDrawn(reg.category, 'La pareja estaba en el cuadro de su categoría anterior.');
+        warnIfDrawn(newCat, 'La nueva categoría ya tiene cuadro y la pareja no está en él.');
       } catch (e) {
         console.error('changeRegCategory error:', e);
         toast('Error al cambiar la categoría: ' + (e.message || e), 'error');
@@ -3735,7 +4286,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           .eq('id', reg.id);
         if (error) throw error;
         setRegsList(prev => prev.filter(r => r.id !== reg.id));
+        // Fuera también del elenco: si no, reaparecía como "añadida
+        // manualmente", contaba tallas y entraba al cuadro.
+        setParticipants(prev => prev.filter(p => p.id !== reg.id));
         toast('🗑️ Inscripción borrada.', 'success');
+        warnIfDrawn(reg.category, 'La pareja borrada estaba en el cuadro.');
       } catch (e) {
         console.error('deleteRegistration error:', e);
         toast('Error al borrar la inscripción: ' + (e.message || e), 'error');
@@ -3760,18 +4315,27 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           const blocked = getHoursForDay(day).filter(h => gridBlockedSlots.has(`${day} ${h}`));
           if (blocked.length > 0) byDay[day] = blocked;
         });
-        const unavailableTimes = Object.entries(byDay).map(([day, hours]) => ({
+        // Los bloqueos de días que el cuadrante no muestra (fechas del
+        // torneo cambiadas o sin poner) se conservan: si no, Guardar los
+        // borraba sin que el admin los viera.
+        const kept = (editingRegAvail.unavailable_times || []).filter(b => b?.day && !activeDays.includes(b.day));
+        const unavailableTimes = [...kept, ...Object.entries(byDay).map(([day, hours]) => ({
           id: `${day}-${Date.now()}`,
           day,
           label: `${day}: ${hoursToRanges(hours).join(', ')}`,
           slots: hours.map(h => `${day} ${h}`),
-        }));
+        }))];
         const { error } = await supabase
           .from('tournament_registrations')
           .update({ unavailable_times: unavailableTimes })
           .eq('id', editingRegAvail.id);
         if (error) throw error;
         setRegsList(prev => prev.map(r => r.id === editingRegAvail.id ? { ...r, unavailable_times: unavailableTimes } : r));
+        // La pareja ya importada al cuadro usa la misma disponibilidad: el
+        // scheduler solo lee participants[].prefRules.
+        setParticipants(prev => prev.map(p => p.id === editingRegAvail.id
+          ? { ...p, prefRules: unavailableTimes, prefNames: unavailableTimes.map(r => r.label) }
+          : p));
         toast('✓ Disponibilidad actualizada.', 'success');
         setEditingRegAvail(null);
         setGridBlockedSlots(new Set());
@@ -3825,7 +4389,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 {regsList.length} pareja{regsList.length === 1 ? '' : 's'} online
                 {manualParticipants.length > 0 && ` · ${manualParticipants.length} manual${manualParticipants.length === 1 ? '' : 'es'}`}
                 {tConfig.gift === 'shirt' && ' · 🎁 Camiseta'}
-                {tConfig.registrationFeeEnabled && tConfig.registrationFeeAmount > 0 && ` · 💳 ${tConfig.registrationFeeAmount}€`}
+                {tConfig.registrationFeeEnabled && tConfig.registrationFeeAmount > 0 && ` · 💳 ${tConfig.registrationFeeAmount}€/jugador`}
               </p>
               {tConfig.gift === 'shirt' && shirtTally.total > 0 && (
                 <div style={{ marginTop: '0.6rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.4rem' }}>
@@ -3994,7 +4558,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         )}
                         {tConfig.registrationFeeEnabled && (
                           <td style={tdCell}>
-                            {r.payment_status !== 'not_required' && (
+                            {/* También para 'not_required' (se inscribieron
+                                antes de activar la cuota): si no, no había
+                                forma de apuntar el cobro en el club. */}
+                            {(
                               <button onClick={() => markRegistrationPaid(r.id, r.payment_status)} style={{ padding: '0.3rem 0.7rem', borderRadius: '0.4rem', border: 'none', background: r.payment_status === 'paid' ? '#FEF2F2' : '#16A34A', color: r.payment_status === 'paid' ? '#DC2626' : 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
                                 {r.payment_status === 'paid' ? 'Marcar pendiente' : 'Marcar pagado'}
                               </button>
@@ -4280,7 +4847,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: 'white', padding: '1.5rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <p className="section-label" style={{ margin: 0 }}>Configuración del Torneo</p>
-            {(participants.length > 0 || rounds.length > 0) && (
+            {(participants.length > 0 || Object.keys(rounds || {}).length > 0) && (
                <button onClick={handleResetTournament} style={{ padding: '0.4rem 0.8rem', borderRadius: '0.5rem', backgroundColor: '#FEE2E2', color: '#EF4444', border: 'none', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>Borrar Torneo Viejo</button>
             )}
           </div>
@@ -5001,11 +5568,29 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Seed</span>
                         <input
                           type="number" min="1" max="64"
-                          value={p.seed ?? ''}
+                          value={getSeed(p, catsOf(p)[0]) ?? ''}
                           onChange={e => {
                             const v = e.target.value;
-                            const seedNum = v === '' ? null : Math.max(1, parseInt(v, 10));
-                            setParticipants(prev => prev.map(x => x.id === p.id ? { ...x, seed: seedNum } : x));
+                            const parsed = v === '' ? null : parseInt(v, 10);
+                            const seedNum = parsed == null || !Number.isFinite(parsed) ? null : Math.min(64, Math.max(1, parsed));
+                            const cats = catsOf(p);
+                            setParticipants(prev => {
+                              // Dos parejas de la misma categoría no pueden llevar el
+                              // mismo número: en el cuadro una pisaba a la otra.
+                              const dup = seedNum != null && prev.some(x => x.id !== p.id && cats.some(c => playsInCat(x, c) && getSeed(x, c) === seedNum));
+                              if (dup) {
+                                toast(`Ya hay una pareja con el seed #${seedNum} en esta categoría.`, 'error');
+                                return prev;
+                              }
+                              return prev.map(x => {
+                                if (x.id !== p.id) return x;
+                                // Este campo aplica a todas las categorías de la pareja;
+                                // para afinar por categoría está el panel de cabezas.
+                                return cats.length > 0
+                                  ? cats.reduce((acc, c) => withSeed(acc, c, seedNum), x)
+                                  : { ...x, seed: seedNum };
+                              });
+                            });
                           }}
                           style={{ width: '40px', padding: '0.15rem 0.3rem', border: '1px solid #FDE68A', borderRadius: '0.3rem', fontSize: '0.78rem', fontWeight: 700, textAlign: 'center', backgroundColor: 'white', color: '#0F172A' }}
                         />
@@ -5642,6 +6227,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   day, hour, court,
                   cat, isCons,
                   round: rIdx,
+                  // Mismo nombre de ronda que en el cuadro (Cuartos, Semis…);
+                  // antes pantalla y PDF ponían R{n} con un desfase de 1.
+                  roundName: getRoundName(rIdx, catRs),
                   isPrelim: !!m.p1?.isPrelim || !!m.isPrelim || !!round[0]?.isPrelim,
                   p1: m.p1?.name || (m.p1?.isBye ? 'BYE' : (m.p1?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
                   p2: m.p2?.name || (m.p2?.isBye ? 'BYE' : (m.p2?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
@@ -5688,7 +6276,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <select
-                    value={matchesListDayFilter}
+                    value={dayKeys.includes(matchesListDayFilter) ? matchesListDayFilter : 'all'}
                     onChange={e => setMatchesListDayFilter(e.target.value)}
                     title="Filtrar por día (también afecta al PDF descargado)"
                     style={{ padding: '0.45rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', background: 'white', color: '#0F172A', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
@@ -5715,7 +6303,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     Aún no hay partidos con horario asignado. Genera el cuadro o usa "Recalcular horarios" para asignar tiempos.
                   </p>
                 ) : (
-                  (matchesListDayFilter === 'all' ? dayKeys : dayKeys.filter(d => d === matchesListDayFilter)).map(d => (
+                  (matchesListDayFilter === 'all' || !dayKeys.includes(matchesListDayFilter) ? dayKeys : dayKeys.filter(d => d === matchesListDayFilter)).map(d => (
                     <div key={d} style={{ marginBottom: '1.25rem' }}>
                       <h4 style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.85rem', fontSize: '0.85rem', fontWeight: 800, color: 'white', background: 'linear-gradient(135deg,#1E293B,#334155)', borderRadius: '0.5rem', display: 'inline-block' }}>
                         📅 {d} · {byDay[d].length} partido{byDay[d].length === 1 ? '' : 's'}
@@ -5736,7 +6324,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             {byDay[d].map((it, i) => {
                               const isP1Win = it.winner && it.winner === it.p1;
                               const isP2Win = it.winner && it.winner === it.p2;
-                              const roundName = it.isCons ? 'Cons.' : (it.isPrelim ? 'Previa' : `R${it.round}`);
+                              const roundName = it.isPrelim ? 'Previa' : (it.roundName || `R${it.round + 1}`);
                               return (
                                 <tr key={i} style={{ borderTop: '1px solid #F1F5F9', backgroundColor: it.winner ? '#F0FDF4' : 'white' }}>
                                   <td style={{ padding: '0.5rem 0.6rem', fontWeight: 800, color: '#0F172A' }}>{it.hour}</td>
@@ -6006,27 +6594,47 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       onClick={async () => {
                         setActionsMenuOpen(false);
                         const ok = await confirmDialog(
-                          '¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro.',
+                          '¿Reiniciar resultados? Se borrarán todos los ganadores y marcadores, pero las parejas quedarán en el mismo sitio del cuadro. La consolación (o las eliminatorias finales) se vaciará: vuelve a generarla cuando haya nuevos perdedores.',
                           { title: 'Reiniciar resultados', okText: 'Reiniciar', danger: true }
                         );
                         if (ok) {
-                          const resetRounds = (allRounds) =>
-                            Object.fromEntries(
-                              Object.entries(allRounds).map(([cat, catRounds]) => [
-                                cat,
-                                catRounds.map((roundMatches, rIdx) =>
-                                  roundMatches.map(m => ({
-                                    ...m,
-                                    winner: null,
-                                    score: null,
-                                    p1: rIdx === 0 ? m.p1 : null,
-                                    p2: rIdx === 0 ? m.p2 : null,
-                                  }))
-                                ),
-                              ])
-                            );
-                          setRounds(prev => resetRounds(prev));
-                          setConsRounds(prev => resetRounds(prev));
+                          // Solo se vacían los huecos que un RESULTADO produjo.
+                          // No vale "todo lo que no sea R0": en liguilla cada
+                          // jornada es una ronda con parejas reales, con ronda
+                          // previa las parejas directas viven en R1, y los
+                          // avances por BYE hay que volver a aplicarlos.
+                          const resetMain = (allRounds) =>
+                            Object.fromEntries(Object.entries(allRounds).map(([cat, catRounds]) => {
+                              const produced = new Set();
+                              catRounds.forEach((rm, r) => {
+                                if (r < catRounds.length - 1) rm.forEach(m => { if (m.winner?.id) produced.add(m.winner.id); });
+                              });
+                              const next = catRounds.map((rm, rIdx) => rm.map(m => {
+                                const keep = (p) => (m.isRR || rIdx === 0 || !p || !produced.has(p.id)) ? p : null;
+                                return { ...m, winner: null, score: null, p1: keep(m.p1), p2: keep(m.p2) };
+                              }));
+                              // Ronda previa: vuelve el placeholder "Ganador previa N" al hueco del principal
+                              (next[0] || []).forEach(m => {
+                                if (m.isPrelim && Number.isFinite(m.nextSlot) && next[1]) {
+                                  const tgt = next[1][Math.floor(m.nextSlot / 2)];
+                                  const side = m.nextSlot % 2 === 0 ? 'p1' : 'p2';
+                                  if (tgt && !tgt[side]) tgt[side] = { id: `prelim-winner-${cat}-${m.matchIndex}`, name: `Ganador previa ${m.matchIndex + 1}`, isPrelimPlaceholder: true, prelimMatchIdx: m.matchIndex };
+                                }
+                              });
+                              // Byes: mismo auto-avance que al generar el cuadro (conservando horarios)
+                              const savedTimes = next.map(rm => rm.map(m => m.time));
+                              if (!next[0]?.[0]?.isRR) (next[0] || []).forEach(m => {
+                                if (m.p1?.isBye && m.p2 && !m.p2.isBye) advanceWinnerMut(next, 0, m.matchIndex, m.p2);
+                                else if (m.p2?.isBye && m.p1 && !m.p1.isBye) advanceWinnerMut(next, 0, m.matchIndex, m.p1);
+                              });
+                              next.forEach((rm, r) => rm.forEach((m, i) => { if (!m.time && savedTimes[r][i]) m.time = savedTimes[r][i]; }));
+                              return [cat, next];
+                            }));
+                          setRounds(prev => resetMain(prev));
+                          // La consolación / KO se deriva de los resultados que
+                          // acabamos de borrar: se vacía para regenerarla.
+                          setConsRounds({});
+                          toast('Resultados reiniciados. La consolación se ha vaciado: vuelve a generarla cuando haya nuevos perdedores.', 'success');
                         }
                       }}
                       style={{ padding: '0.55rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: 'transparent', color: '#DC2626', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
@@ -6213,8 +6821,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                    <button onClick={() => handleScoreSubmit(match, scoreInput, false, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✓</button>
                                    <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✕</button>
                                  </div>
+                                 <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.3rem' }}>
+                                   {[match.p1, match.p2].map((p, i) => (
+                                     <button key={i} onClick={() => handleSetWinner(match, p, false, cat, scoreInput)} title="Fijar ganador a mano (W.O., retirada...)" style={{ flex: 1, minWidth: 0, padding: '0.25rem 0.4rem', border: '1px solid #FDE68A', borderRadius: '0.4rem', backgroundColor: '#FFFBEB', color: '#92400E', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏆 {p?.name}</button>
+                                   ))}
+                                 </div>
                                  <p style={{ margin: '0.3rem 0 0', fontSize: '0.62rem', color: '#16A34A', fontWeight: 600, textAlign: 'center' }}>
-                                   ✨ El ganador se detecta automáticamente al guardar
+                                   ✨ El ganador se detecta automáticamente; si no es posible (W.O., retirada), márcalo con 🏆
                                  </p>
                                </>
                              ) : (
@@ -6270,11 +6883,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                {!isExporting && match.p1 && match.p2 && (
                                  <div style={{ padding: '0.3rem 0.5rem', borderTop: '1px solid #FEF3C7' }}>
                                    {editingScoreId === match.id ? (
-                                     <div style={{ display: 'flex', gap: '0.3rem' }}>
-                                       <input autoFocus type="text" placeholder="Ej: 6-4 6-3" value={scoreInput} onChange={e => setScoreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, true, cat); if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); } }} style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem' }} />
-                                       <button onClick={() => handleScoreSubmit(match, scoreInput, true, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✓</button>
-                                       <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✕</button>
-                                     </div>
+                                     <>
+                                       <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                         <input autoFocus type="text" placeholder="Ej: 6-4 6-3" value={scoreInput} onChange={e => setScoreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleScoreSubmit(match, scoreInput, true, cat); if (e.key === 'Escape') { setEditingScoreId(null); setScoreInput(''); } }} style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1.5px solid #CBD5E1', borderRadius: '0.4rem', fontSize: '0.78rem' }} />
+                                         <button onClick={() => handleScoreSubmit(match, scoreInput, true, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✓</button>
+                                         <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>✕</button>
+                                       </div>
+                                       <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.3rem' }}>
+                                         {[match.p1, match.p2].map((p, i) => (
+                                           <button key={i} onClick={() => handleSetWinner(match, p, true, cat, scoreInput)} title="Fijar ganador a mano (W.O., retirada...)" style={{ flex: 1, minWidth: 0, padding: '0.25rem 0.4rem', border: '1px solid #FDE68A', borderRadius: '0.4rem', backgroundColor: '#FFFBEB', color: '#92400E', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏆 {p?.name}</button>
+                                         ))}
+                                       </div>
+                                     </>
                                    ) : (
                                      <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, textAlign: 'center', padding: '0.3rem 0.5rem' }}>
                                        {match.score ? `✎ ${match.score}` : '+ Introducir resultado'}
@@ -6447,7 +7067,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         const player = match[side];
                         const isWinner = match.winner?.id === player?.id;
                         const isSelected = isSwapping && selectedSwapSlot?.key === swapKey && selectedSwapSlot?.matchIdx === match.matchIndex && selectedSwapSlot?.side === side && rIdx === 0;
-                        const swappable = isSwapping && rIdx === 0 && !player?.isBye;
+                        // Un partido ya jugado no se reordena (se borraría su resultado)
+                        const swappable = isSwapping && rIdx === 0 && !player?.isBye && !match.score && !(match.winner && !match.p1?.isBye && !match.p2?.isBye);
                         const baseBg = isWinner ? (bracket.isCons ? '#FEF3C7' : '#DCFCE7') : (sIdx === 1 ? '#F8FAFC' : 'transparent');
                         const bg = isSelected ? '#EDE9FE' : baseBg;
                         return (
@@ -6490,7 +7111,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         // parejas son reales y conocidas. Si alguna sigue siendo un placeholder
                         // o aún no se ha resuelto la ronda anterior, mostramos un aviso
                         // y deshabilitamos la edición.
-                        const ready = match.p1 && match.p2 && !match.p1.isPlaceholder && !match.p2.isPlaceholder;
+                        const ready = isRealPair(match.p1) && isRealPair(match.p2);
                         if (!ready) {
                           return (
                             <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid #F1F5F9' }}>
@@ -6520,8 +7141,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                   <button onClick={() => handleScoreSubmit(match, scoreInput, bracket.isCons, cat)} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#16A34A', color: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✓</button>
                                   <button onClick={() => { setEditingScoreId(null); setScoreInput(''); }} style={{ padding: '0.3rem 0.5rem', border: 'none', borderRadius: '0.4rem', backgroundColor: '#F1F5F9', color: '#64748B', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit' }}>✕</button>
                                 </div>
+                                <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.3rem' }}>
+                                  {[match.p1, match.p2].map((p, i) => (
+                                    <button key={i} onClick={() => handleSetWinner(match, p, bracket.isCons, cat, scoreInput)} title="Fijar ganador a mano (W.O., retirada...)" style={{ flex: 1, minWidth: 0, padding: '0.25rem 0.4rem', border: '1px solid #FDE68A', borderRadius: '0.4rem', backgroundColor: '#FFFBEB', color: '#92400E', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏆 {p?.name}</button>
+                                  ))}
+                                </div>
                                 <p style={{ margin: '0.3rem 0 0', fontSize: '0.62rem', color: '#16A34A', fontWeight: 600, textAlign: 'center' }}>
-                                  ✨ El ganador se detecta automáticamente al guardar
+                                  ✨ El ganador se detecta automáticamente; si no es posible (W.O., retirada), márcalo con 🏆
                                 </p>
                               </>
                             ) : (
@@ -6529,7 +7155,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                 <button onClick={() => { setEditingScoreId(match.id); setScoreInput(match.score || ''); }} style={{ width: '100%', background: match.score ? 'transparent' : '#F0FDF4', border: match.score ? 'none' : '1px solid #BBF7D0', borderRadius: '0.4rem', cursor: 'pointer', color: match.score ? '#64748B' : '#15803D', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', textAlign: 'center', padding: '0.35rem 0.5rem' }}>
                                   {match.score ? `✎ ${match.score}` : '+ Introducir resultado (auto-detecta ganador)'}
                                 </button>
-                                {bracket.isCons && !match.score && match.round + 1 < catCons.length && (
+                                {bracket.isCons && !match.score && match.round + 1 < catCons.length && (() => {
+                                  // Solo si el hueco del partido hermano en la siguiente ronda sigue libre
+                                  const nxt = catCons[match.round + 1]?.[Math.floor(match.matchIndex / 2)];
+                                  const sib = match.matchIndex % 2 === 0 ? nxt?.p2 : nxt?.p1;
+                                  return !(sib && !sib.isBye);
+                                })() && (
                                   <button
                                     onClick={() => handleAdvanceMatchWhole(match, cat)}
                                     title="Mueve el partido entero a la siguiente ronda sin jugarlo aquí"
@@ -6706,9 +7337,13 @@ const TournamentManager = () => {
   const [listError, setListError] = useState(null);
 
   const [activeId, setActiveId] = useState(() => localStorage.getItem('adminActiveTournamentId') || null);
+  // Copia siempre actual para leerla tras un await sin closure viejo.
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
 
   const setActiveIdPersist = (id) => {
     setActiveId(id);
+    activeIdRef.current = id;
     if (id) localStorage.setItem('adminActiveTournamentId', id);
     else localStorage.removeItem('adminActiveTournamentId');
   };
@@ -6731,6 +7366,11 @@ const TournamentManager = () => {
       status: t.status,
       config: t.config || {},
     })));
+    // Un activeId guardado en localStorage que ya no está en la BBDD
+    // (borrado desde otro dispositivo) abría un editor "fantasma" cuyas
+    // ediciones no iban a ninguna parte.
+    const ids = new Set((data || []).map(t => t.id));
+    if (activeIdRef.current && !ids.has(activeIdRef.current)) setActiveIdPersist(null);
     setLoadingList(false);
   };
 
@@ -6744,7 +7384,10 @@ const TournamentManager = () => {
         if (!legacy) return;
         const list = JSON.parse(legacy);
         if (!Array.isArray(list) || list.length === 0) return;
-        const { data: existing } = await supabase.from('tournaments').select('id').limit(1);
+        const { data: existing, error: exErr } = await supabase.from('tournaments').select('id').limit(1);
+        // Si la consulta falla no sabemos si ya hay torneos: no insertar
+        // (se reintenta en la próxima carga) para no duplicar.
+        if (exErr) return;
         if (existing && existing.length > 0) {
           // Ya hay torneos en DB: solo limpiamos el legacy, no migramos para evitar duplicados.
           localStorage.removeItem('padel_medina_tournaments_list');
@@ -6756,7 +7399,8 @@ const TournamentManager = () => {
           const config = { ...(cfg.tConfig || {}), rounds: cfg.rounds || {}, consRounds: cfg.consRounds || {}, participants: cfg.participants || [], phase: cfg.phase || 'config' };
           return { name: t.name || 'Sin nombre', config, status: 'draft', admin_id: user?.id || null };
         });
-        await supabase.from('tournaments').insert(rows);
+        const { error: insErr } = await supabase.from('tournaments').insert(rows);
+        if (insErr) throw insErr;
         localStorage.removeItem('padel_medina_tournaments_list');
         fetchTournaments();
       } catch (e) {
@@ -6835,11 +7479,18 @@ const TournamentManager = () => {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
         const data = JSON.parse(raw);
+        // El editor escribe esta clave para CUALQUIER torneo abierto (con su
+        // UUID de Supabase), no solo para los legacy (id numérico de
+        // Date.now()). Los que nacieron en la BBDD no son candidatos: si no,
+        // se re-subían (o resucitaban) como torneos nuevos en borrador.
+        const localId = key.slice('padel_medina_tournament_'.length);
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(localId);
+        if (isUuid || (typeof data.publishedId === 'string' && data.publishedId)) continue;
         const cfg = data.tConfig || {};
         const name = cfg.name || data.name || null;
         if (!name) continue;
         const config = { ...cfg, rounds: data.rounds || {}, consRounds: data.consRounds || {}, participants: data.participants || [], phase: data.phase || 'config' };
-        found.push({ name, config, startDate: cfg.startDate || null, localKey: key });
+        found.push({ name, config, startDate: cfg.startDate || null, localKey: key, localId });
       } catch {}
     }
     if (found.length === 0) {
@@ -6859,8 +7510,9 @@ const TournamentManager = () => {
       (t.name || '').trim().toLowerCase() === candidate.name.trim().toLowerCase()
       && (t.config?.startDate || null) === (candidate.startDate || null)
     );
+    const existingIds = new Set((existing || []).map(t => t.id));
 
-    const toUpload = found.filter(f => !isDup(f));
+    const toUpload = found.filter(f => !existingIds.has(f.localId) && !isDup(f));
     if (toUpload.length === 0) {
       toast(`Los ${found.length} torneos locales ya están en la base de datos. No se subió nada nuevo.`);
       return;
@@ -6879,13 +7531,17 @@ const TournamentManager = () => {
       return;
     }
 
+    // Ya viven en la BBDD: la copia local no se vuelve a ofrecer.
+    toUpload.forEach(f => localStorage.removeItem(f.localKey));
     toast(`✅ ${toUpload.length} torneo${toUpload.length === 1 ? '' : 's'} subido${toUpload.length === 1 ? '' : 's'} a la base de datos. Se verá${toUpload.length === 1 ? '' : 'n'} ahora desde cualquier dispositivo.`);
     fetchTournaments();
   };
 
   if (activeId) {
-     return <TournamentEditor tournamentKey={activeId} onBack={(newName) => {
-         if (newName) updateTournamentName(activeId, newName);
+     // El nombre se guarda antes de recargar la lista: si no, el SELECT
+     // podía adelantarse al UPDATE y mostrar el nombre viejo.
+     return <TournamentEditor tournamentKey={activeId} onBack={async (newName) => {
+         if (newName) await updateTournamentName(activeId, newName);
          setActiveIdPersist(null);
          fetchTournaments();
      }} />;

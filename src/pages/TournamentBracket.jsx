@@ -2,14 +2,32 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 
-const getRoundName = (roundIndex, totalRounds) => {
+// getRoundName: si pasas el array de rondas, detectamos si hay ronda
+// previa (round 0 con isPrelim) y la llamamos "Ronda Previa" en vez de
+// darle el nombre de la ronda siguiente. Si pasas un número, comportamiento
+// clásico (misma regla que el panel del admin).
+const getRoundName = (roundIndex, allRoundsOrLength) => {
+  const isArr = Array.isArray(allRoundsOrLength);
+  const totalRounds = isArr ? allRoundsOrLength.length : allRoundsOrLength;
+  const hasPrelim = isArr && allRoundsOrLength[0]?.[0]?.isPrelim === true;
+  if (hasPrelim && roundIndex === 0) return 'Ronda Previa';
   const left = totalRounds - roundIndex;
   if (left === 1) return 'Final';
   if (left === 2) return 'Semifinales';
   if (left === 3) return 'Cuartos de Final';
   if (left === 4) return 'Octavos de Final';
   if (left === 5) return 'Dieciseisavos';
+  if (left === 6) return 'Treintaidosavos';
+  if (left === 7) return 'Sesentaicuatroavos';
   return `Ronda ${roundIndex + 1}`;
+};
+
+// Partidos sin juego real que no se pintan: bye-vs-bye y placeholder-vs-bye
+// (en consolación el placeholder se auto-resuelve a la siguiente ronda).
+// Misma regla que usa el panel del admin.
+const isHiddenMatch = (m) => {
+  const byeVsPlaceholder = (a, b) => a?.isBye && b?.isPlaceholder;
+  return !!((m.p1?.isBye && m.p2?.isBye) || byeVsPlaceholder(m.p1, m.p2) || byeVsPlaceholder(m.p2, m.p1));
 };
 
 const fmtDateDisplay = (iso) => {
@@ -60,7 +78,8 @@ function MatchCard({ match, isCons, compact = false, courtNames }) {
         </div>
       )}
       {[{ player: match.p1, side: 0 }, { player: match.p2, side: 1 }].map(({ player, side }) => {
-        const isWinner = match.winner?.id === player?.id;
+        // Sin ganador o con hueco vacío no hay ganador (evita undefined === undefined).
+        const isWinner = !!match.winner && !!player && match.winner.id === player.id;
         const isBye = player?.isBye;
         return (
           <div
@@ -327,6 +346,36 @@ export default function TournamentBracket() {
                         </div>
                       </div>
                     ))}
+
+                    {/* Eliminatorias finales (liguilla + KO): el admin guarda el
+                        playoff en consRounds[cat]. Sin esto los jugadores no veían
+                        semis/final ni sus horarios. */}
+                    {catCons.length > 0 && (
+                      <div style={{ marginTop: '2rem', padding: '1.25rem', backgroundColor: '#FFFBEB', borderRadius: '1rem', border: '1.5px solid #FDE68A' }}>
+                        <h3 style={{ margin: '0 0 1rem', fontSize: '1.05rem', fontWeight: 800, color: '#92400E' }}>🏆 Eliminatorias Finales</h3>
+                        {catCons.map((roundMatches, kIdx) => {
+                          const visible = roundMatches.filter(m => !isHiddenMatch(m));
+                          if (visible.length === 0) return null;
+                          return (
+                            <div key={kIdx} style={{ marginBottom: '1.25rem' }}>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.5rem' }}>
+                                {getRoundName(kIdx, catCons)}
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {visible.map(match => (
+                                  <div key={match.id}>
+                                    {match.isThirdPlace && (
+                                      <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#92400E', textTransform: 'uppercase', marginBottom: '0.25rem' }}>3º y 4º puesto</div>
+                                    )}
+                                    <MatchCard match={match} isCons={false} courtNames={cfg.courtNames} />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               }
@@ -365,12 +414,12 @@ export default function TournamentBracket() {
                         {/* Mobile: vertical list */}
                         <div className="bracket-mobile">
                           {renderedRounds.map(({ round: roundMatches, originalIdx }) => {
-                            const visibleMatches = roundMatches.filter(m => !(m.p1?.isBye && m.p2?.isBye));
+                            const visibleMatches = roundMatches.filter(m => !isHiddenMatch(m));
                             if (visibleMatches.length === 0) return null;
                             return (
                               <div key={originalIdx} style={{ marginBottom: '1.25rem' }}>
                                 <div style={{ display: 'inline-block', padding: '0.3rem 0.875rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#EBF0FA', color: bracket.isCons ? '#92400E' : '#1B3A6E', borderRadius: '2rem', fontWeight: 800, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
-                                  {getRoundName(originalIdx, bracket.data.length)}
+                                  {getRoundName(originalIdx, bracket.data)}
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                   {visibleMatches.map(match => (
@@ -386,15 +435,15 @@ export default function TournamentBracket() {
                         <div className="bracket-desktop" style={{ overflowX: 'auto', paddingBottom: '1rem' }}>
                           <div style={{ display: 'flex', gap: '1.5rem', minWidth: 'max-content', alignItems: 'stretch', paddingRight: '0.5rem' }}>
                             {renderedRounds.map(({ round: roundMatches, originalIdx }) => {
-                              const visibleMatches = roundMatches.filter(m => !(m.p1?.isBye && m.p2?.isBye));
+                              const visibleMatches = roundMatches.filter(m => !isHiddenMatch(m));
                               if (visibleMatches.length === 0 && originalIdx > 0) return null;
                               return (
                                 <div key={originalIdx} style={{ display: 'flex', flexDirection: 'column', width: '210px', flexShrink: 0 }}>
                                   <div style={{ textAlign: 'center', padding: '0.4rem 0.75rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#EBF0FA', color: bracket.isCons ? '#92400E' : '#1B3A6E', borderRadius: '0.5rem', fontWeight: 800, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.875rem', whiteSpace: 'nowrap', border: `1px solid ${bracket.isCons ? '#FDE68A' : '#C3D4F5'}` }}>
-                                    {getRoundName(originalIdx, bracket.data.length)}
+                                    {getRoundName(originalIdx, bracket.data)}
                                   </div>
                                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', gap: '0.75rem' }}>
-                                    {roundMatches.map(match => (
+                                    {visibleMatches.map(match => (
                                       <MatchCard key={match.id} match={match} isCons={bracket.isCons} compact courtNames={cfg.courtNames} />
                                     ))}
                                   </div>

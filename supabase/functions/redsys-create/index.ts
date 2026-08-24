@@ -2,6 +2,7 @@
 // Genera los parámetros firmados para redirigir al TPV de Redsys (Producción)
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import CryptoJS from 'https://esm.sh/crypto-js@4.2.0';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -62,14 +63,53 @@ serve(async (req) => {
     const { amount, orderId: customOrderId, courtId, userId, date, timeSlot, successUrl, failUrl, notifyUrl, paymentMethod, isSharedPayment, sharedPhones, splitToken, kind, registrationId, tournamentName, bookingId } = await req.json();
 
     const orderId = customOrderId ?? generateOrderId();
-    const amountCents = Math.round(amount * 100).toString().padStart(4, '0');
 
     // Diferenciamos pago de reserva (kind='booking', default) vs pago de
     // inscripción a torneo (kind='tournament').
     const isTournament = kind === 'tournament';
 
+    // Importe a cobrar. Para torneos NO nos fiamos del que manda el navegador:
+    // lo calculamos aquí desde la cuota del torneo (cuota por jugador × 2,
+    // igual que hace TournamentRegistration.jsx). Si no, cualquiera podría
+    // pagar 1 céntimo y quedar como "pagado".
+    let chargeAmount = amount;
+    let expectedCents: number | null = null;
+    if (isTournament) {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (typeof registrationId !== 'string' || !UUID_RE.test(registrationId)) {
+        throw new Error('Inscripción no válida');
+      }
+      const admin = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      );
+      const { data: reg, error: regErr } = await admin
+        .from('tournament_registrations')
+        .select('id, payment_status, tournaments!inner(config)')
+        .eq('id', registrationId)
+        .maybeSingle();
+      if (regErr) {
+        console.error('Error cargando inscripción para cobro:', regErr);
+        throw new Error('No se pudo comprobar la inscripción');
+      }
+      if (!reg) throw new Error('Inscripción no encontrada');
+      if (reg.payment_status === 'paid') throw new Error('Esta inscripción ya está pagada');
+      // supabase-js devuelve la relación como objeto (o array según versión).
+      const rel = (reg as Record<string, unknown>).tournaments;
+      const cfg = ((Array.isArray(rel) ? rel[0] : rel) as { config?: Record<string, unknown> } | null)?.config ?? {};
+      const fee = parseFloat(String(cfg.registrationFeeAmount ?? 0));
+      if (!cfg.registrationFeeEnabled || !(fee > 0)) {
+        throw new Error('Este torneo no tiene cuota de inscripción online');
+      }
+      chargeAmount = Math.round(fee * 2 * 100) / 100; // por pareja
+      expectedCents = Math.round(chargeAmount * 100);
+    }
+    const amountCents = Math.round(chargeAmount * 100).toString().padStart(4, '0');
+
+    // expectedCents viaja firmado en MerchantData: redsys-notify comprueba que
+    // lo cobrado coincide antes de marcar la inscripción como pagada.
     const merchantDataObj: Record<string, unknown> = isTournament
-      ? { kind: 'tournament', registrationId }
+      ? { kind: 'tournament', registrationId, expectedCents }
       : {
           kind: 'booking',
           bookingId: bookingId || null, // reserva 'pendiente_pago' pre-creada (tolerancia cero)

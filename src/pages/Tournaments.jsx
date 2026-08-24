@@ -9,6 +9,29 @@ const fmtDate = (iso) => {
   return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+// Instante (ms) en el que vence el plazo, interpretado SIEMPRE en hora de
+// Madrid. `new Date('YYYY-MM-DDTHH:mm')` usa la zona horaria del navegador:
+// un visitante con el móvil en otra zona veía el torneo abierto/cerrado a
+// una hora distinta de la que aplica el club.
+const deadlineMs = (dateStr, timeStr) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mi] = (timeStr || '23:59').split(':').map(Number);
+  const wallUtc = Date.UTC(y, m - 1, d, hh, mi, 0);
+  try {
+    // Offset Madrid−UTC en esa fecha (+1h o +2h según horario de verano).
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Madrid', hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const p = {};
+    fmt.formatToParts(new Date(wallUtc)).forEach(({ type, value }) => { p[type] = value; });
+    const madridWall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+    return wallUtc - (madridWall - wallUtc);
+  } catch {
+    return new Date(`${dateStr}T${timeStr || '23:59'}:00`).getTime();
+  }
+};
+
 const TrophyIcon = () => (
   <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
@@ -63,10 +86,14 @@ const Tournaments = () => {
   const deadlinePassed = (t) => {
     if (!t.config?.registrationDeadline) return false;
     const time = t.config.registrationDeadlineTime || '23:59';
-    return serverNowMs() > new Date(`${t.config.registrationDeadline}T${time}:00`).getTime();
+    return serverNowMs() > deadlineMs(t.config.registrationDeadline, time);
   };
 
-  const isOpen = (t) => t.status === 'open' || t.status == null;
+  // Cierre manual del admin ("Cerrar inscripción" guarda config.registrationClosed).
+  // La página de inscripción ya lo respetaba; la lista seguía diciendo "abierta".
+  const manuallyClosed = (t) => t.config?.registrationClosed === true;
+
+  const isOpen = (t) => (t.status === 'open' || t.status == null) && !manuallyClosed(t);
 
   const getStatusBadge = (t) => {
     if (hasBracket(t)) return { label: 'Cuadro publicado', bg: '#EFF6FF', color: '#1D4ED8', dot: '#3B82F6' };
@@ -132,6 +159,8 @@ const Tournaments = () => {
             const startFmt = fmtDate(t.config?.startDate);
             const endFmt = fmtDate(t.config?.endDate);
             const deadlineFmt = fmtDate(t.config?.registrationDeadline);
+            const dlTime = t.config?.registrationDeadlineTime;
+            const deadlineTimeFmt = dlTime && dlTime !== '23:59' ? ` a las ${dlTime}` : '';
             const bracket = hasBracket(t);
             const open = isOpen(t) && !deadlinePassed(t) && !bracket;
 
@@ -211,10 +240,11 @@ const Tournaments = () => {
                   </div>
 
                   {/* Deadline note */}
-                  {deadlineFmt && !bracket && (
-                    <p style={{ margin: '0 0 1rem', fontSize: '0.78rem', fontWeight: 600, color: deadlinePassed(t) ? '#DC2626' : '#92400E' }}>
-                      {deadlinePassed(t) ? 'Plazo cerrado: ' : 'Plazo inscripción: '}
-                      {deadlineFmt}
+                  {(deadlineFmt || manuallyClosed(t)) && !bracket && (
+                    <p style={{ margin: '0 0 1rem', fontSize: '0.78rem', fontWeight: 600, color: (manuallyClosed(t) || deadlinePassed(t)) ? '#DC2626' : '#92400E' }}>
+                      {manuallyClosed(t)
+                        ? 'Inscripción cerrada por el club'
+                        : `${deadlinePassed(t) ? 'Plazo cerrado: ' : 'Plazo inscripción: '}${deadlineFmt}${deadlineTimeFmt}`}
                     </p>
                   )}
 

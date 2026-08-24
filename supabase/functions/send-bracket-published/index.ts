@@ -12,7 +12,46 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-function bracketHtml(tournamentName: string, tournamentUrl: string, isUpdate: boolean): string {
+function escapeHtml(s: unknown): string {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c] || c));
+}
+
+// Solo puede llamar el propio backend (service role) o un admin con sesión.
+// Sin esto, cualquiera con la anon key podía mandar correos "de Padel Medina"
+// a quien quisiera. La sesión se valida contra Auth y profiles.role, igual
+// que en admin-update-user.
+type AuthResult = { ok: true } | { ok: false; status: number; error: string };
+async function callerAutorizado(req: Request): Promise<AuthResult> {
+  const url = Deno.env.get('SUPABASE_URL') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return { ok: false, status: 401, error: 'No autenticado' };
+  if (serviceKey && token === serviceKey) return { ok: true };
+  if (!url || !serviceKey) return { ok: false, status: 500, error: 'Función mal configurada' };
+
+  const meRes = await fetch(`${url}/auth/v1/user`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${token}` },
+  });
+  if (!meRes.ok) return { ok: false, status: 401, error: 'Sesión inválida' };
+  const me = await meRes.json().catch(() => null);
+  const callerId = me?.id;
+  if (!callerId) return { ok: false, status: 401, error: 'Sesión inválida' };
+
+  const roleRes = await fetch(`${url}/rest/v1/profiles?id=eq.${encodeURIComponent(callerId)}&select=role`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+  });
+  const rows = await roleRes.json().catch(() => []);
+  if (!Array.isArray(rows) || rows[0]?.role !== 'admin') {
+    return { ok: false, status: 403, error: 'Solo un administrador puede hacer esto' };
+  }
+  return { ok: true };
+}
+
+function bracketHtml(tournamentNameRaw: string, tournamentUrlRaw: string, isUpdate: boolean): string {
+  const tournamentName = escapeHtml(tournamentNameRaw);
+  const tournamentUrl = escapeHtml(tournamentUrlRaw);
   const heroLabel = isUpdate ? 'Cuadro actualizado' : '¡Cuadro publicado!';
   const title = isUpdate ? 'El cuadro se ha actualizado' : '¡Ya está el cuadro!';
   const intro = isUpdate
@@ -77,11 +116,33 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders });
   }
   try {
-    const { emails, tournamentName, tournamentUrl, kind } = await req.json();
+    const auth = await callerAutorizado(req);
+    if (!auth.ok) {
+      return new Response(JSON.stringify({ error: auth.error }), {
+        status: auth.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { emails, tournamentName: tournamentNameIn, tournamentUrl: tournamentUrlIn, kind } = await req.json();
     const isUpdate = kind === 'updated';
+    const tournamentName = String(tournamentNameIn ?? '').trim().slice(0, 200);
+    const tournamentUrl = String(tournamentUrlIn ?? '').trim();
 
     if (!Array.isArray(emails) || emails.length === 0 || !tournamentName || !tournamentUrl) {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // El enlace va en un href: solo http(s), nunca javascript: ni similares.
+    let urlOk = false;
+    try {
+      const u = new URL(tournamentUrl);
+      urlOk = u.protocol === 'https:' || u.protocol === 'http:';
+    } catch (_e) { urlOk = false; }
+    if (!urlOk) {
+      return new Response(JSON.stringify({ error: 'Invalid tournamentUrl' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
