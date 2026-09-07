@@ -86,7 +86,7 @@ export default function MonitorView() {
     setLoading(true);
     try {
       const [bk, bl, ct] = await Promise.all([
-        supabase.from('bookings').select('id, court_id, time_slot, observaciones, status, user_id, metodo_pago, cobro_confirmado, created_at').eq('date', d),
+        supabase.from('bookings').select('id, court_id, time_slot, observaciones, status, user_id, metodo_pago, cobro_confirmado, pagos_jugadores, created_at').eq('date', d),
         supabase.from('blocked_slots').select('court_id, time_slot, tipo, entreno_grupo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
@@ -110,6 +110,7 @@ export default function MonitorView() {
         ensure(b.court_id).slots.push({
           time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago,
           bookingId: b.id, cobro: !!b.cobro_confirmado, esHold: b.status === 'pendiente_pago',
+          pagos: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
         });
       });
       (bl.data || []).forEach((s) => {
@@ -574,6 +575,34 @@ export default function MonitorView() {
       slots: c.slots.map(x => x.bookingId === s.bookingId ? { ...x, cobro: !s.cobro } : x),
     }));
     toast(!s.cobro ? '✅ Cobro en club confirmado (ya consta en Finanzas)' : 'Cobro marcado como pendiente', 'success');
+  };
+
+  // ── Cómo pagó CADA JUGADOR de la reserva (🏪 club / 💳 tarjeta / 📱 bizum,
+  // repetir = desmarcar). Mismo campo bookings.pagos_jugadores que marca el
+  // admin en su Horario: los dos ven lo mismo. Va por RPC blindada.
+  const [pagosAbiertos, setPagosAbiertos] = useState({}); // bookingId -> bool
+  const [pagoJugadorGuardando, setPagoJugadorGuardando] = useState(null); // "bookingId|idx"
+  const marcarPagoJugador = async (courtId, s, idx, metodo) => {
+    if (pagoJugadorGuardando || !s.bookingId) return;
+    const actual = (Array.isArray(s.pagos) ? s.pagos : [])[idx] || null;
+    const nuevo = actual === metodo ? null : metodo; // repetir el mismo = desmarcar
+    setPagoJugadorGuardando(`${s.bookingId}|${idx}`);
+    const { data, error } = await supabase.rpc('monitor_marcar_pago_jugador', {
+      p_booking_id: s.bookingId,
+      p_idx: idx,
+      p_metodo: nuevo,
+    });
+    setPagoJugadorGuardando(null);
+    if (error) {
+      toast(/monitor_marcar_pago_jugador/i.test(error.message || '')
+        ? 'Falta aplicar la migración monitor_pagos_jugadores en Supabase'
+        : 'No se pudo guardar el pago: ' + error.message, 'error');
+      return;
+    }
+    setCourts(prev => prev.map(c => c.id !== courtId ? c : {
+      ...c,
+      slots: c.slots.map(x => x.bookingId === s.bookingId ? { ...x, pagos: data } : x),
+    }));
   };
 
   // Entrenos del día visible (para la tarjeta de clases)
@@ -1077,6 +1106,42 @@ export default function MonitorView() {
                             {cobroGuardando === s.bookingId ? 'Guardando…' : s.cobro ? '✅ Cobro confirmado' : '💶 Confirmar cobro'}
                           </button>
                         )}
+                        {/* Cómo pagó cada jugador (mismo campo que marca el admin en su Horario) */}
+                        {s.tipo === 'reserva' && !s.esHold && s.bookingId && (() => {
+                          const pagos = Array.isArray(s.pagos) ? s.pagos : [];
+                          const marcados = pagos.filter(Boolean).length;
+                          const abierto = !!pagosAbiertos[s.bookingId];
+                          return (
+                            <div style={{ marginTop: 5 }}>
+                              <button onClick={() => setPagosAbiertos(prev => ({ ...prev, [s.bookingId]: !abierto }))}
+                                style={{ width: '100%', padding: '0.3rem 0.45rem', borderRadius: '0.5rem', fontSize: '0.64rem', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit', border: '1.5px solid #E2E8F0', background: marcados ? '#F0FDF4' : 'white', color: marcados ? '#15803D' : '#64748B' }}>
+                                👥 Pagos jugadores {marcados}/4 {abierto ? '▲' : '▼'}
+                              </button>
+                              {abierto && (
+                                <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  {[0, 1, 2, 3].map(i => (
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                      <span style={{ fontSize: '0.62rem', fontWeight: 800, color: '#64748B', minWidth: 18 }}>J{i + 1}</span>
+                                      {[['club', '🏪', 'Pagó en el club'], ['tarjeta', '💳', 'Pagó con tarjeta'], ['bizum', '📱', 'Pagó por Bizum']].map(([mk, emoji, titulo]) => (
+                                        <button key={mk} title={titulo}
+                                          disabled={pagoJugadorGuardando === `${s.bookingId}|${i}`}
+                                          onClick={() => marcarPagoJugador(c.id, s, i, mk)}
+                                          style={{
+                                            flex: 1, padding: '0.28rem 0', borderRadius: '0.45rem', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1,
+                                            border: `1.5px solid ${pagos[i] === mk ? '#16A34A' : '#E2E8F0'}`,
+                                            background: pagos[i] === mk ? '#DCFCE7' : 'white',
+                                            opacity: pagoJugadorGuardando === `${s.bookingId}|${i}` ? 0.5 : 1,
+                                          }}>
+                                          {emoji}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })
