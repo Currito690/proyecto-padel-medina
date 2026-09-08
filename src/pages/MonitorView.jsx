@@ -1106,8 +1106,11 @@ export default function MonitorView() {
                             {cobroGuardando === s.bookingId ? 'Guardando…' : s.cobro ? '✅ Cobro confirmado' : '💶 Confirmar cobro'}
                           </button>
                         )}
-                        {/* Cómo pagó cada jugador (mismo campo que marca el admin en su Horario) */}
-                        {s.tipo === 'reserva' && !s.esHold && s.bookingId && (() => {
+                        {/* Cómo pagó cada jugador: SOLO en pago en el club. Si la
+                            pista se pagó con tarjeta/bizum ya está pagada entera por
+                            una persona (los jugadores se lo arreglan entre ellos), así
+                            que a lolo no le aparece nada que marcar. */}
+                        {s.tipo === 'reserva' && s.metodo === 'club' && !s.esHold && s.bookingId && (() => {
                           const pagos = Array.isArray(s.pagos) ? s.pagos : [];
                           const marcados = pagos.filter(Boolean).length;
                           const abierto = !!pagosAbiertos[s.bookingId];
