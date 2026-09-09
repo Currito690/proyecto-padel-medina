@@ -9,6 +9,24 @@ const VAPID_MAILTO = `mailto:${Deno.env.get('VAPID_EMAIL') || 'admin@padelmedina
 
 webpush.setVapidDetails(VAPID_MAILTO, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
+// Solo el propio backend (service role) o un usuario con sesión válida:
+// sin esto, cualquiera con la anon key podía mandar notificaciones push a
+// todos los móviles suscritos.
+type AuthResult = { ok: true } | { ok: false; status: number; error: string };
+async function callerAutorizado(req: Request): Promise<AuthResult> {
+    const url = Deno.env.get('SUPABASE_URL') || '';
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+    if (!token) return { ok: false, status: 401, error: 'No autenticado' };
+    if (serviceKey && token === serviceKey) return { ok: true };
+    if (!url || !serviceKey) return { ok: false, status: 500, error: 'Función mal configurada' };
+    const meRes = await fetch(`${url}/auth/v1/user`, {
+        headers: { apikey: serviceKey, Authorization: `Bearer ${token}` },
+    });
+    if (!meRes.ok) return { ok: false, status: 401, error: 'Sesión inválida' };
+    return { ok: true };
+}
+
 Deno.serve(async (req: Request) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', {
@@ -21,6 +39,14 @@ Deno.serve(async (req: Request) => {
 
     if (req.method !== 'POST') {
         return new Response('Method not allowed', { status: 405 });
+    }
+
+    const auth = await callerAutorizado(req);
+    if (!auth.ok) {
+        return new Response(JSON.stringify({ error: auth.error }), {
+            status: auth.status,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        });
     }
 
     const supabase = createClient(

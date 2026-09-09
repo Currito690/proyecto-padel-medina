@@ -69,21 +69,19 @@ const MyBookings = () => {
 
   const sendConfirmationEmail = (booking) => {
     if (!user?.email) return;
-    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-booking-email`;
-    fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    // Va con la sesión del usuario (invoke añade apikey y token): la función
+    // ahora exige un llamador autenticado.
+    supabase.functions.invoke('send-booking-email', {
+      body: {
         type: 'confirmation',
         email: user.email,
         userName: user.name,
         courtName: booking.courts?.name || 'Pista',
         date: booking.date,
         timeSlot: booking.time_slot,
-      }),
+      },
     })
-      .then(r => r.json())
-      .then(r => console.log('Email result:', r))
+      .then(r => console.log('Email result:', r.data ?? r.error))
       .catch(e => console.error('Email error:', e));
   };
 
