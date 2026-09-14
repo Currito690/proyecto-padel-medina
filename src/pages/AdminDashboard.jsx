@@ -157,7 +157,22 @@ function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMeto
       return;
     }
     setPagos(next);
-    onSaved?.({ pagosJugadores: next });
+    // Con los 4 pagos marcados, la BD confirma el cobro sola (trigger
+    // bookings_autoconfirma_por_pagos) y lo deshace al desmarcar uno:
+    // reflejarlo aquí sin tener que reabrir la reserva.
+    const antes = pagos.filter(Boolean).length;
+    const despues = next.filter(Boolean).length;
+    if (despues >= 4 && antes < 4) {
+      setCobro(true);
+      if (metodo === 'manual') setIsFree(false);
+      onSaved?.({ pagosJugadores: next, cobroConfirmado: true });
+    } else if (antes >= 4 && despues < 4 && cobro) {
+      setCobro(false);
+      if (metodo === 'manual') setIsFree(true);
+      onSaved?.({ pagosJugadores: next, cobroConfirmado: false });
+    } else {
+      onSaved?.({ pagosJugadores: next });
+    }
   };
 
   const togglePagada = async () => {

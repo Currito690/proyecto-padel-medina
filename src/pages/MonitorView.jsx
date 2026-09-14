@@ -599,10 +599,17 @@ export default function MonitorView() {
         : 'No se pudo guardar el pago: ' + error.message, 'error');
       return;
     }
+    // Con los 4 pagos marcados, la BD confirma el cobro sola (y lo deshace si
+    // se desmarca uno): reflejarlo en el chip sin recargar.
+    const antes = (Array.isArray(s.pagos) ? s.pagos : []).filter(Boolean).length;
+    const despues = (Array.isArray(data) ? data : []).filter(Boolean).length;
+    const cobroNuevo = despues >= 4 ? true : (antes >= 4 && despues < 4 ? false : s.cobro);
     setCourts(prev => prev.map(c => c.id !== courtId ? c : {
       ...c,
-      slots: c.slots.map(x => x.bookingId === s.bookingId ? { ...x, pagos: data } : x),
+      slots: c.slots.map(x => x.bookingId === s.bookingId ? { ...x, pagos: data, cobro: cobroNuevo } : x),
     }));
+    if (despues >= 4 && antes < 4) toast('✅ Los 4 pagos marcados: la reserva queda cobrada (ya consta en Finanzas)', 'success');
+    else if (antes >= 4 && despues < 4) toast('Reserva de vuelta a pendiente de cobro', 'info');
   };
 
   // Entrenos del día visible (para la tarjeta de clases)
@@ -1106,11 +1113,13 @@ export default function MonitorView() {
                             {cobroGuardando === s.bookingId ? 'Guardando…' : s.cobro ? '✅ Cobro confirmado' : '💶 Confirmar cobro'}
                           </button>
                         )}
-                        {/* Cómo pagó cada jugador: SOLO en pago en el club. Si la
-                            pista se pagó con tarjeta/bizum ya está pagada entera por
-                            una persona (los jugadores se lo arreglan entre ellos), así
-                            que a lolo no le aparece nada que marcar. */}
-                        {s.tipo === 'reserva' && s.metodo === 'club' && !s.esHold && s.bookingId && (() => {
+                        {/* Cómo pagó cada jugador: en pago en el club y en las reservas
+                            que mete el admin a mano. Si la pista se pagó con tarjeta/
+                            bizum ya está pagada entera por una persona (los jugadores se
+                            lo arreglan entre ellos), así que ahí no hay nada que marcar.
+                            Con los 4 marcados la reserva queda cobrada en Finanzas
+                            (lo hace un trigger en la base de datos). */}
+                        {s.tipo === 'reserva' && (s.metodo === 'club' || s.metodo === 'manual') && !s.esHold && s.bookingId && (() => {
                           const pagos = Array.isArray(s.pagos) ? s.pagos : [];
                           const marcados = pagos.filter(Boolean).length;
                           const abierto = !!pagosAbiertos[s.bookingId];
@@ -1118,7 +1127,7 @@ export default function MonitorView() {
                             <div style={{ marginTop: 5 }}>
                               <button onClick={() => setPagosAbiertos(prev => ({ ...prev, [s.bookingId]: !abierto }))}
                                 style={{ width: '100%', padding: '0.3rem 0.45rem', borderRadius: '0.5rem', fontSize: '0.64rem', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit', border: '1.5px solid #E2E8F0', background: marcados ? '#F0FDF4' : 'white', color: marcados ? '#15803D' : '#64748B' }}>
-                                👥 Pagos jugadores {marcados}/4 {abierto ? '▲' : '▼'}
+                                👥 Pagos jugadores {marcados}/4{s.cobro ? ' · ✅ cobrada' : ''} {abierto ? '▲' : '▼'}
                               </button>
                               {abierto && (
                                 <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
