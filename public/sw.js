@@ -1,4 +1,4 @@
-// Version 2026-09-14b: cambio de version para que las pestañas/apps abiertas se recarguen solas
+// Version 2026-09-14c (corte al Plesk): las apps abiertas se recargan solas al detectar esta version
 // Service Worker — Padel Medina PWA
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
