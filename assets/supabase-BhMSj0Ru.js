@@ -1,0 +1,1 @@
+import{t as e}from"./supabase-vendor-DzZbqjtm.js";var a="https://iquibawtbpamhaottlbr.supabase.co",s="sb_publishable_09M_gTKlTnc6z6ANBuK55w_Gry94doZ",r=e(a,s,{auth:{persistSession:!0,autoRefreshToken:!0,detectSessionInUrl:!0},global:{headers:{"x-client-info":"padel-medina"}},realtime:{params:{eventsPerSecond:2}}});export{r as t};
