@@ -1388,3 +1388,10 @@ Comparativa: la reescritura a Postgres + Node (Diseño 2) son 22-32 días/person
 12. **Certificado/HSTS de `api.`** (`includeSubDomains` del apex): emitido ≥ 3 días antes; renovación por Plesk; UptimeRobot avisa si caduca.
 
 Fin del documento.
+
+## Incidencia 2026-09-16: trigger de perfiles perdido en la restauración
+
+- **Síntoma**: un usuario registrado tras el corte reservó el jueves 17 y en el panel salía como "Cliente"; tampoco aparecía en la lista de usuarios.
+- **Causa**: el trigger `on_auth_user_created` (crea la fila en `public.profiles` al registrarse) vive en `auth.users`. El volcado del cloud restauró la función `public.handle_new_user` pero no el trigger, porque el esquema `auth` lo crean las migraciones de GoTrue y solo se restauraron sus datos.
+- **Arreglo**: `supabase/migrations/20260916090000_auth_users_trigger_perfil.sql` (idempotente: recrea el trigger y rellena los perfiles que falten). Aplicado en el Plesk el 2026-09-16; afectaba a 2 usuarios, ya corregidos. Copia en el servidor: `/root/padel-migracion/fix-trigger-perfil.sql`.
+- **Ojo**: si algún día se vuelve a restaurar la base de datos desde un volcado (`resync.sh` / `restore.sh` / backups), hay que volver a ejecutar ese script después, porque el trigger de `auth.users` no viaja en el volcado.
