@@ -18,6 +18,7 @@ const TournamentBracket = lazy(() => import('./pages/TournamentBracket'));
 const Cart = lazy(() => import('./pages/Cart'));
 const SharedPayment = lazy(() => import('./pages/SharedPayment'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const LegalNotice = lazy(() => import('./pages/LegalNotice'));
 const Tournaments = lazy(() => import('./pages/Tournaments'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const MonitorView = lazy(() => import('./pages/MonitorView'));
@@ -245,6 +246,7 @@ function App() {
           <Route path="/torneos/:id/cuadro" element={<TournamentBracket />} />
           <Route path="/pago-compartido" element={<SharedPayment />} />
           <Route path="/privacidad" element={<PrivacyPolicy />} />
+          <Route path="/aviso-legal" element={<LegalNotice />} />
           <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* Admin Routes */}

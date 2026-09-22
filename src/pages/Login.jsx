@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { sanitizeInput } from '../utils/sanitize';
+import { VERSION_TEXTOS_LEGALES } from '../utils/legal';
+
+const MSG_ACEPTAR = 'Para registrarte tienes que aceptar la Política de Privacidad y el Aviso legal.';
 
 const Login = () => {
   const { loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resetPassword } = useAuth();
@@ -16,10 +19,18 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState('');
+  // Aceptación de la Política de Privacidad y el Aviso legal (obligatoria para registrarse)
+  const [aceptaLegal, setAceptaLegal] = useState(false);
+  const [avisarLegal, setAvisarLegal] = useState(false);
 
   // Enviar formulario de login o registro
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!isLogin && !aceptaLegal) {
+      setAvisarLegal(true);
+      setError(MSG_ACEPTAR);
+      return;
+    }
     setLoading(true);
     setError(null);
     setSuccessMsg('');
@@ -33,7 +44,8 @@ const Login = () => {
           sanitizeInput(email),
           password,
           sanitizeInput(name),
-          sanitizeInput(phone)
+          sanitizeInput(phone),
+          { aceptadoAt: new Date().toISOString(), version: VERSION_TEXTOS_LEGALES }
         );
         setSuccessMsg(`¡Cuenta creada! Hemos enviado un código de verificación a ${email}. Introdúcelo para activar tu cuenta.`);
         setStep(2);
@@ -59,6 +71,16 @@ const Login = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Google también crea cuentas: en la pestaña de registro exige la casilla
+  const handleGoogle = () => {
+    if (!isLogin && !aceptaLegal) {
+      setAvisarLegal(true);
+      setError(MSG_ACEPTAR);
+      return;
+    }
+    loginWithGoogle();
   };
 
   // Verificar el código OTP de registro
@@ -287,6 +309,26 @@ const Login = () => {
         }
         .login-google:hover { background: #F8FAFC; border-color: #CBD5E1; }
 
+        /* Aceptación de textos legales */
+        .login-consent {
+          display: flex; align-items: flex-start; gap: 0.625rem;
+          margin: 0.25rem 0 1rem; padding: 0.75rem 0.875rem;
+          border: 1.5px solid #E2E8F0; border-radius: 0.625rem;
+          background: #F8FAFC; cursor: pointer;
+          font-size: 0.82rem; line-height: 1.45; color: #475569;
+          transition: border-color 0.2s, background 0.2s;
+        }
+        .login-consent input {
+          width: 18px; height: 18px; margin: 0.05rem 0 0; flex-shrink: 0;
+          accent-color: #1B3A6E; cursor: pointer;
+        }
+        .login-consent a, .login-legal-hint a { color: #1B3A6E; font-weight: 600; text-decoration: underline; }
+        .login-consent-error { border-color: #FCA5A5; background: #FEF2F2; }
+        .login-legal-hint {
+          margin: 0.75rem 0 0; text-align: center;
+          font-size: 0.72rem; line-height: 1.45; color: #94A3B8;
+        }
+
         /* Spin animation */
         @keyframes spin {
           from { transform: rotate(0deg); }
@@ -352,7 +394,7 @@ const Login = () => {
                 return (
                   <button
                     key={tab}
-                    onClick={() => { setIsLogin(i === 0); setError(null); }}
+                    onClick={() => { setIsLogin(i === 0); setError(null); setAvisarLegal(false); }}
                     className={`login-tab ${active ? 'login-tab-active' : 'login-tab-inactive'}`}
                   >
                     {tab}
@@ -431,6 +473,26 @@ const Login = () => {
                   <input className="login-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder={isLogin ? 'Tu contraseña' : 'Mínimo 6 caracteres'} minLength={6} />
                 </div>
 
+                {!isLogin && (
+                  <label className={`login-consent${avisarLegal && !aceptaLegal ? ' login-consent-error' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={aceptaLegal}
+                      onChange={(e) => {
+                        setAceptaLegal(e.target.checked);
+                        if (e.target.checked) { setAvisarLegal(false); setError(prev => (prev === MSG_ACEPTAR ? null : prev)); }
+                      }}
+                      required
+                    />
+                    <span>
+                      He leído y acepto la{' '}
+                      <a href="/privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</a>
+                      {' '}y el{' '}
+                      <a href="/aviso-legal" target="_blank" rel="noopener noreferrer">Aviso legal</a>.
+                    </span>
+                  </label>
+                )}
+
                 <button type="submit" disabled={loading} className="login-submit">
                   {loading ? (
                     <><svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>Cargando...</>
@@ -490,7 +552,7 @@ const Login = () => {
                   <hr /><span>o</span><hr />
                 </div>
 
-                <button onClick={loginWithGoogle} disabled={loading} className="login-google">
+                <button type="button" onClick={handleGoogle} disabled={loading} className="login-google">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
                     <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -499,12 +561,22 @@ const Login = () => {
                   </svg>
                   Continuar con Google
                 </button>
+                {isLogin && (
+                  <p className="login-legal-hint">
+                    Si aún no tienes cuenta, al continuar con Google se creará una y aceptas la{' '}
+                    <a href="/privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</a>
+                    {' '}y el{' '}
+                    <a href="/aviso-legal" target="_blank" rel="noopener noreferrer">Aviso legal</a>.
+                  </p>
+                )}
               </>
             )}
 
           </div>
         </div>
         <p style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.75rem', color: '#94A3B8' }}>
+          <Link to="/aviso-legal" style={{ color: '#94A3B8', textDecoration: 'underline' }}>Aviso legal</Link>
+          {' '}·{' '}
           <Link to="/privacidad" style={{ color: '#94A3B8', textDecoration: 'underline' }}>Política de Privacidad</Link>
           {' '}· Diseñada por{' '}
           <a href="https://astoraweb.es" target="_blank" rel="noopener noreferrer" style={{ color: '#1B3A6E', fontWeight: 700, textDecoration: 'none' }}>Astora</a>

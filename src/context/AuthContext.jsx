@@ -117,12 +117,21 @@ export function AuthProvider({ children }) {
   };
 
   // Registro: crea el usuario y envía email de verificación con código OTP
-  const signupWithEmail = async (email, password, name, phone) => {
+  // consentimiento = { aceptadoAt, version }: prueba de que aceptó la Política
+  // de Privacidad y el Aviso legal al registrarse (queda en raw_user_meta_data)
+  const signupWithEmail = async (email, password, name, phone, consentimiento) => {
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { name: name || '', phone: phone || '' },
+        data: {
+          name: name || '',
+          phone: phone || '',
+          ...(consentimiento?.aceptadoAt ? {
+            legal_aceptado_at: consentimiento.aceptadoAt,
+            legal_version: consentimiento.version,
+          } : {}),
+        },
         emailRedirectTo: window.location.origin,
       },
     });

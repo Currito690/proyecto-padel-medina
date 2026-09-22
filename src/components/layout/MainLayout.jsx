@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router-dom';
+import { Link, Outlet } from 'react-router-dom';
 import BottomNav from './BottomNav';
 
 const MainLayout = () => {
@@ -71,7 +71,11 @@ const MainLayout = () => {
         <main className="main-content">
           <Outlet />
           <footer style={{ textAlign: 'center', padding: '1rem 1rem 0.5rem', color: 'var(--color-text-muted)', fontSize: '0.7rem', fontWeight: 500 }}>
-            © {new Date().getFullYear()} Padel Medina · Diseñada por{' '}
+            © {new Date().getFullYear()} Padel Medina ·{' '}
+            <Link to="/aviso-legal" style={{ color: 'inherit', textDecoration: 'underline' }}>Aviso legal</Link>
+            {' '}·{' '}
+            <Link to="/privacidad" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacidad</Link>
+            {' '}· Diseñada por{' '}
             <a href="https://astoraweb.es" target="_blank" rel="noopener noreferrer"
               style={{ color: 'var(--color-accent)', fontWeight: 700, textDecoration: 'none' }}>
               Astora

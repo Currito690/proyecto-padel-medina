@@ -778,6 +778,8 @@ export default function TournamentRegistration() {
           <p style={{ textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8', margin: '0.5rem 0 0' }}>
             Al inscribirte aceptas nuestra{' '}
             <Link to="/privacidad" style={{ color: '#64748B', textDecoration: 'underline' }}>Política de Privacidad</Link>
+            {' '}y el{' '}
+            <Link to="/aviso-legal" style={{ color: '#64748B', textDecoration: 'underline' }}>Aviso legal</Link>
           </p>
         </form>
       </main>
