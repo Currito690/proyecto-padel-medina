@@ -1,4 +1,4 @@
-// Version 2026-09-14c (corte al Plesk): las apps abiertas se recargan solas al detectar esta version
+// Version 2026-09-22a (aviso legal y casilla de privacidad en el registro): las apps abiertas se recargan solas al detectar esta version
 // Service Worker — Padel Medina PWA
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
