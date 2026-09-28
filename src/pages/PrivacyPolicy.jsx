@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import LegalPage, { Section, Table } from '../components/legal/LegalPage';
 import { TITULAR, filasTitular } from '../utils/legal';
 
@@ -88,6 +89,7 @@ export default function PrivacyPolicy() {
           <li><strong>Portabilidad:</strong> recibir sus datos en formato estructurado y de uso común.</li>
           <li><strong>Retirada del consentimiento:</strong> en los tratamientos basados en su consentimiento, en cualquier momento y sin que afecte a la licitud del tratamiento previo.</li>
         </ul>
+        <p>Puede <strong>eliminar su cuenta y sus datos personales</strong> usted mismo, desde <em>Perfil → Eliminar mi cuenta</em> en la aplicación, o solicitarlo por correo. Las instrucciones y el detalle de qué se borra y qué se conserva están en <Link to="/eliminar-cuenta">cómo eliminar su cuenta</Link>.</p>
         <p>Si considera que el tratamiento de sus datos no es conforme a la normativa, puede presentar una reclamación ante la <strong>Agencia Española de Protección de Datos (AEPD)</strong> en <a href="https://www.aepd.es" target="_blank" rel="noopener noreferrer">www.aepd.es</a>.</p>
       </Section>
 

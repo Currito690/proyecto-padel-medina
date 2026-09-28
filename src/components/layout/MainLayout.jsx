@@ -75,6 +75,8 @@ const MainLayout = () => {
             <Link to="/aviso-legal" style={{ color: 'inherit', textDecoration: 'underline' }}>Aviso legal</Link>
             {' '}·{' '}
             <Link to="/privacidad" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacidad</Link>
+            {' '}·{' '}
+            <Link to="/eliminar-cuenta" style={{ color: 'inherit', textDecoration: 'underline' }}>Eliminar cuenta</Link>
             {' '}· Diseñada por{' '}
             <a href="https://astoraweb.es" target="_blank" rel="noopener noreferrer"
               style={{ color: 'var(--color-accent)', fontWeight: 700, textDecoration: 'none' }}>

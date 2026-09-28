@@ -1,4 +1,4 @@
-// Version 2026-09-22a (aviso legal y casilla de privacidad en el registro): las apps abiertas se recargan solas al detectar esta version
+// Version 2026-09-28a (iconos de aviso adaptados a Android): las apps abiertas se recargan solas al detectar esta version
 // Service Worker — Padel Medina PWA
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
@@ -8,8 +8,8 @@ self.addEventListener('push', function (event) {
     const title = data.title || 'Padel Medina';
     const options = {
         body: data.body || 'Nueva notificación',
-        icon: '/logo.png',
-        badge: '/logo.png',
+        icon: '/icon-192.png',
+        badge: '/badge-96.png',
         vibrate: [200, 100, 200],
         requireInteraction: true,
         data: {

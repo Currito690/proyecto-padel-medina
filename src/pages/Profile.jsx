@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
+import { toast, confirmDialog } from '../utils/notify';
 
 const ChevronRight = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -15,6 +16,7 @@ const Profile = () => {
   const initial = user?.name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || 'U';
   const isAdmin = user?.role === 'admin';
 
+  const [borrando, setBorrando] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -44,6 +46,42 @@ const Profile = () => {
       setEvents(list);
     }
     setEventsLoading(false);
+  };
+
+  // Eliminar la cuenta (obligatorio para publicar la app en Google Play).
+  // El servidor reasigna las reservas a una cuenta anónima para no destruir la
+  // contabilidad del club, cancela las futuras y borra los datos personales.
+  const eliminarCuenta = async () => {
+    const ok = await confirmDialog(
+      'Se borrarán tu cuenta y tus datos personales: nombre, correo, teléfono y tus avisos. ' +
+      'Tus reservas futuras se cancelarán y no se devuelve el importe de las que ya hayas pagado. ' +
+      'El club conserva el histórico de cobros sin tus datos, porque la ley le obliga a guardar la contabilidad. ' +
+      'Esto no se puede deshacer.',
+      { title: '¿Eliminar tu cuenta?', okText: 'Sí, eliminar mi cuenta', cancelText: 'No, volver', danger: true }
+    );
+    if (!ok) return;
+
+    const seguro = await confirmDialog(
+      'Última confirmación: al aceptar, tu cuenta se elimina de inmediato y se cierra la sesión.',
+      { title: 'Confirmar para siempre', okText: 'Eliminar', cancelText: 'Cancelar', danger: true }
+    );
+    if (!seguro) return;
+
+    setBorrando(true);
+    try {
+      const { error } = await supabase.rpc('eliminar_mi_cuenta');
+      if (error) throw error;
+      toast('Tu cuenta ha sido eliminada.', 'success');
+      // La sesión ya no existe en el servidor: cerramos sesión sin depender de
+      // que la llamada funcione y volvemos al login con una carga limpia.
+      setTimeout(async () => {
+        try { await logout(); } catch { /* el token ya no vale, da igual */ }
+        window.location.replace('/login');
+      }, 1200);
+    } catch (e) {
+      setBorrando(false);
+      toast(e?.message || 'No se ha podido eliminar la cuenta. Inténtalo de nuevo o escribe al club.', 'error');
+    }
   };
 
   const menuItems = [
@@ -324,6 +362,34 @@ const Profile = () => {
         </svg>
         Cerrar Sesión
       </button>
+
+      {/* Eliminar cuenta */}
+      <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--color-border)' }}>
+        <p style={{ margin: '0 0 0.75rem', fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+          ¿No quieres seguir en Padel Medina? Puedes eliminar tu cuenta y tus datos personales.
+          Más información en{' '}
+          <Link to="/eliminar-cuenta" style={{ color: 'var(--color-text-secondary)', textDecoration: 'underline' }}>
+            cómo eliminar tu cuenta
+          </Link>.
+        </p>
+        <button
+          onClick={eliminarCuenta}
+          disabled={borrando}
+          style={{
+            width: '100%', padding: '0.875rem',
+            backgroundColor: 'transparent',
+            color: 'var(--color-danger)',
+            border: '1.5px solid #FECACA',
+            borderRadius: '1rem',
+            fontWeight: 700, fontSize: '0.9rem',
+            cursor: borrando ? 'wait' : 'pointer',
+            opacity: borrando ? 0.6 : 1,
+            fontFamily: 'inherit',
+          }}
+        >
+          {borrando ? 'Eliminando…' : 'Eliminar mi cuenta'}
+        </button>
+      </div>
 
     </div>
   );
