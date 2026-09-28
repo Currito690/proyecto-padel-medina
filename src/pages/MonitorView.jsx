@@ -76,6 +76,8 @@ const METODO = {
   manual: '✍️ Manual',
 };
 
+const AVISO_GPS_KEY = 'monitor_aviso_gps';
+
 export default function MonitorView() {
   const { user, logout } = useAuth();
   const [date, setDate] = useState(() => toYMD(new Date()));
@@ -197,26 +199,53 @@ export default function MonitorView() {
   // permiso del navegador sale en un momento tranquilo (no en mitad de la
   // firma) y el sistema deja caché de posición caliente para el fichaje.
   const [gpsPermiso, setGpsPermiso] = useState(null); // 'granted'|'denied'|'prompt'|null
+  // Aviso previo obligatorio: Google Play exige explicar qué se recoge y para
+  // qué ANTES de pedir el permiso de ubicación, y no vale con decirlo solo en
+  // la política de privacidad. Por eso el permiso ya no se pide a bocajarro.
+  const [avisoGps, setAvisoGps] = useState(false);
   useEffect(() => {
     let st = null, cancelado = false;
-    if (navigator.permissions?.query) {
-      navigator.permissions.query({ name: 'geolocation' })
-        .then((s) => {
-          if (cancelado) return;
-          st = s;
-          setGpsPermiso(s.state);
-          s.onchange = () => setGpsPermiso(s.state);
-        })
-        .catch(() => {});
-    }
-    if (navigator.geolocation) {
+    const yaAvisado = (() => {
+      try { return localStorage.getItem(AVISO_GPS_KEY) === '1'; } catch { return false; }
+    })();
+    const calentarGps = () => {
+      if (!navigator.geolocation) return;
       try {
         navigator.geolocation.getCurrentPosition(() => {}, () => {},
           { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 });
       } catch { /* sin geolocalización */ }
+    };
+    const decidir = (estado) => {
+      if (estado === 'granted') calentarGps();
+      else if (estado === 'denied') { /* ya hay un aviso en pantalla */ }
+      else if (yaAvisado) calentarGps();
+      else setAvisoGps(true);
+    };
+    if (navigator.permissions?.query) {
+      navigator.permissions.query({ name: 'geolocation' })
+        .then((sp) => {
+          if (cancelado) return;
+          st = sp;
+          setGpsPermiso(sp.state);
+          sp.onchange = () => setGpsPermiso(sp.state);
+          decidir(sp.state);
+        })
+        .catch(() => { if (!cancelado) decidir('prompt'); });
+    } else {
+      decidir('prompt');
     }
     return () => { cancelado = true; if (st) st.onchange = null; };
   }, []);
+
+  const cerrarAvisoGps = (activar) => {
+    try { localStorage.setItem(AVISO_GPS_KEY, '1'); } catch { /* modo privado */ }
+    setAvisoGps(false);
+    if (!activar || !navigator.geolocation) return;
+    try {
+      navigator.geolocation.getCurrentPosition(() => {}, () => {},
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+    } catch { /* sin geolocalización */ }
+  };
 
   // Con el móvil QUIETO en interior, el navegador a veces no contesta a la
   // petición de GPS (ni éxito ni error, ignorando su propio timeout): el chip
@@ -837,6 +866,33 @@ export default function MonitorView() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#EEF2F7 0%,#F8FAFC 240px)', display: 'flex', flexDirection: 'column' }}>
+
+      {/* Aviso de ubicación antes de pedir el permiso (requisito de Google Play) */}
+      {avisoGps && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.25rem' }}>
+          <div style={{ background: '#fff', borderRadius: '1.1rem', maxWidth: 440, width: '100%', padding: '1.4rem', boxShadow: '0 20px 50px rgba(15,23,42,0.35)' }}>
+            <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#0F172A', marginBottom: '0.6rem' }}>📍 Ubicación al fichar</div>
+            <p style={{ margin: '0 0 0.7rem', fontSize: '0.88rem', color: '#334155', lineHeight: 1.55 }}>
+              Cuando firmes la entrada o la salida, la app guarda <strong>la ubicación exacta del móvil en ese momento</strong>
+              {' '}y se la muestra al club junto a la hora, como registro de tu jornada laboral.
+            </p>
+            <ul style={{ margin: '0 0 1rem', paddingLeft: '1.1rem', fontSize: '0.83rem', color: '#475569', lineHeight: 1.6 }}>
+              <li>Solo se toma en el momento de fichar. Nunca en segundo plano.</li>
+              <li>No se comparte con nadie más que el club.</li>
+              <li>Es opcional: si no la activas, puedes fichar igual y el fichaje queda «sin ubicación».</li>
+            </ul>
+            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <button onClick={() => cerrarAvisoGps(true)} style={{ flex: 1, minWidth: 150, padding: '0.8rem', borderRadius: '0.7rem', border: 'none', background: '#16A34A', color: '#fff', fontWeight: 800, fontSize: '0.9rem', fontFamily: 'inherit', cursor: 'pointer' }}>
+                Activar ubicación
+              </button>
+              <button onClick={() => cerrarAvisoGps(false)} style={{ flex: 1, minWidth: 110, padding: '0.8rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: '#fff', color: '#475569', fontWeight: 700, fontSize: '0.9rem', fontFamily: 'inherit', cursor: 'pointer' }}>
+                Ahora no
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .agenda-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
         @media (min-width: 760px) { .agenda-grid { grid-template-columns: repeat(3, 1fr); } }
