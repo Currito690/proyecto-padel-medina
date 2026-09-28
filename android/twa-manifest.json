@@ -1,0 +1,45 @@
+{
+  "packageId": "com.padelmedina.app",
+  "host": "padelmedina.com",
+  "name": "Padel Medina",
+  "launcherName": "Padel Medina",
+  "display": "standalone",
+  "orientation": "portrait",
+  "themeColor": "#16A34A",
+  "themeColorDark": "#0F172A",
+  "navigationColor": "#FFFFFF",
+  "navigationColorDark": "#0F172A",
+  "navigationDividerColor": "#E2E8F0",
+  "navigationDividerColorDark": "#1E293B",
+  "backgroundColor": "#F8FAFC",
+  "enableNotifications": true,
+  "startUrl": "/?source=pwa",
+  "iconUrl": "https://padelmedina.com/icon-512.png",
+  "maskableIconUrl": "https://padelmedina.com/icon-512-maskable.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "C:/Users/curri/AndroidBuild/claves/padelmedina-upload.jks",
+    "alias": "padelmedina"
+  },
+  "appVersion": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://padelmedina.com/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {
+    "locationDelegation": {
+      "enabled": true
+    }
+  },
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://padelmedina.com/",
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "appVersionName": "1.0.0"
+}

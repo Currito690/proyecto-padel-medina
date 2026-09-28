@@ -37,3 +37,13 @@ dist-ssr
 # Capturas de Playwright (auditoria visual)
 .playwright-mcp/
 *.jpeg
+
+# App Android (TWA): compilados, claves y ficheros locales de Gradle
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+*.aab
+*.apk
+*.jks
+*.keystore
