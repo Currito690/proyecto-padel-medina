@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.padelmedina.app",
+      "sha256_cert_fingerprints": [
+        "3D:EC:4A:59:55:DD:F2:3A:78:15:B2:8E:EB:F3:DB:1E:68:E1:04:56:5D:63:5E:E0:F9:48:B8:92:7F:A1:7C:9A"
+      ]
+    }
+  }
+]
