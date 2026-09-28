@@ -14,7 +14,31 @@
 </head>
 <body>
 <h1>Prueba de ubicación (temporal)</h1>
+<button id="btn" style="margin:12px 0;padding:12px 16px;font-size:15px;border:0;border-radius:8px;background:#16A34A;color:#fff;font-weight:700">Pedir permiso de notificaciones</button>
 <div id="log"></div>
+<script>
+  document.addEventListener('click', async (e) => {
+    if (e.target.id !== 'btn') return;
+    try {
+      const r = await Notification.requestPermission();
+      const d = document.createElement('div');
+      d.className = 'l ' + (r === 'granted' ? 'ok' : 'err');
+      d.textContent = 'Notification.requestPermission() -> ' + r;
+      document.getElementById('log').appendChild(d);
+      if (r === 'granted') {
+        const reg = await navigator.serviceWorker.ready;
+        await reg.showNotification('Padel Medina', { body: 'Aviso de prueba desde la app', icon: '/icon-192.png', badge: '/badge-96.png' });
+        const d2 = document.createElement('div'); d2.className = 'l ok'; d2.textContent = 'Notificacion mostrada';
+        document.getElementById('log').appendChild(d2);
+      }
+    } catch (err) {
+      const d = document.createElement('div'); d.className = 'l err'; d.textContent = 'ERROR: ' + err.message;
+      document.getElementById('log').appendChild(d);
+    }
+  });
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+</script>
+
 <script>
   const log = (txt, cls) => {
     const d = document.createElement('div');
