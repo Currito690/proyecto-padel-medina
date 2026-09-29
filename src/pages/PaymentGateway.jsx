@@ -9,12 +9,21 @@ import { toast, confirmDialog } from '../utils/notify';
 // Cambiar a true para reactivarlo cuando esté probado.
 const SPLIT_PAYMENT_ENABLED = false;
 
+// Métodos de pago en orden de preferencia: el primero que esté disponible es el
+// que se elige solo. El club va delante porque es lo que el club quiere ofrecer.
+const METODOS = ['club', 'redsys', 'bizum'];
+
 const PaymentGateway = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { items, total, clearCart } = useCart();
+  const isMulti = items.length > 1;
+  const isFree = total === 0;
 
-  const [paymentMethod, setPaymentMethod] = useState('redsys');
+  // El club prefiere que el pago en mostrador sea la primera opción que ve el
+  // jugador. Si el club está cerrado o las reglas de la franja no lo permiten,
+  // los efectos de más abajo cambian solos al primer método disponible.
+  const [paymentMethod, setPaymentMethod] = useState('club');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingClub, setProcessingClub] = useState(false);
@@ -22,6 +31,7 @@ const PaymentGateway = () => {
   // bookings por un click duplicado supondría un cargo doble en Redsys.
   const payLockRef = useRef(false);
   const [clubHours, setClubHours] = useState(null);
+  const [ajustesListos, setAjustesListos] = useState(false);
   // allowedByRules: métodos permitidos por reglas admin (pista+franja).
   // null mientras carga; luego string[] (intersección de todos los items del carrito).
   const [allowedByRules, setAllowedByRules] = useState(null);
@@ -52,13 +62,15 @@ const PaymentGateway = () => {
   // Cargar club_hours de site_settings
   useEffect(() => {
     supabase.from('site_settings').select('club_hours').single()
-      .then(({ data }) => { if (data?.club_hours) setClubHours(data.club_hours); });
+      .then(({ data }) => { if (data?.club_hours) setClubHours(data.club_hours); })
+      .catch(() => { /* sin horario: se asume abierto */ })
+      .finally(() => setAjustesListos(true));
   }, []);
 
   // Cargar reglas de métodos de pago por pista+franja+día y calcular intersección
   useEffect(() => {
     if (items.length === 0) { setAllowedByRules(null); return; }
-    const ALL = ['redsys', 'bizum', 'club'];
+    const ALL = METODOS;
     const courtIds = [...new Set(items.map(i => i.courtId))];
     supabase.from('court_payment_rules')
       .select('court_id, time_slot, day_of_week, methods')
@@ -86,30 +98,30 @@ const PaymentGateway = () => {
       });
   }, [items]);
 
-  // Si el club no está abierto y el método es 'club', cambiar a 'redsys'
-  useEffect(() => {
-    if (!isClubOpen && paymentMethod === 'club') setPaymentMethod('redsys');
-  }, [isClubOpen, paymentMethod]);
+  // ── Métodos realmente usables AHORA ──────────────────────────────────────
+  // Una sola lista con las tres restricciones a la vez: el horario del club, las
+  // reglas que haya puesto el admin para esa franja, y el carrito (la pasarela
+  // del banco sólo admite una reserva por pago). Antes esto eran tres efectos
+  // que se corregían entre ellos y podían entrar en bucle.
+  const datosListos = ajustesListos && allowedByRules !== null;
+  const disponibles = (allowedByRules ?? METODOS).filter(m =>
+    (m !== 'club' || isClubOpen) && (!isMulti || m === 'club')
+  );
+  const clave = disponibles.join(',');
 
-  // Redsys sólo soporta pago de un item a la vez con la integración actual
-  useEffect(() => {
-    if (items.length > 1 && paymentMethod === 'redsys') {
-      setPaymentMethod('club');
-    }
-  }, [items.length, paymentMethod]);
+  // 'compartido' no está en la lista: se permite si se permite pagar con tarjeta
+  // y hay una sola reserva (el creador paga su parte con tarjeta).
+  const permiteCompartido = SPLIT_PAYMENT_ENABLED && !isMulti && disponibles.includes('redsys');
 
-  // Si el método actual no está permitido por las reglas admin, cambiar al primero disponible.
-  // 'compartido' se considera permitido si lo está 'redsys' (el creador paga su parte con tarjeta).
   useEffect(() => {
-    if (!allowedByRules) return;
-    if (allowedByRules.length === 0) return;
+    if (!datosListos || disponibles.length === 0) return;
     const ok = paymentMethod === 'compartido'
-      ? allowedByRules.includes('redsys')
-      : allowedByRules.includes(paymentMethod);
-    if (!ok) {
-      setPaymentMethod(allowedByRules[0]);
-    }
-  }, [allowedByRules, paymentMethod]);
+      ? permiteCompartido
+      : disponibles.includes(paymentMethod);
+    if (!ok) setPaymentMethod(disponibles[0]);
+    // clave resume la lista; usarla evita repetir el efecto en cada render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datosListos, clave, paymentMethod, permiteCompartido]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
@@ -428,9 +440,6 @@ const PaymentGateway = () => {
 
   if (items.length === 0) return null;
 
-  const isMulti = items.length > 1;
-  const isFree = total === 0;
-
   return (
     <div style={{ backgroundColor: 'var(--color-bg-secondary)', minHeight: '100vh', padding: '1.5rem 1rem' }}>
       <style>{`
@@ -454,35 +463,26 @@ const PaymentGateway = () => {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
           {/* ── Panel de pago ── */}
           <div>
-            {/* Selector método — oculto si es gratis */}
-            {!isFree && (
+            {/* Selector método — oculto si es gratis o si aún no sabemos qué se puede usar */}
+            {!isFree && !datosListos && (
               <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
-                {(!allowedByRules || allowedByRules.includes('redsys')) && (
+                <div style={{ flex: 1, padding: '0.75rem', textAlign: 'center', fontSize: '0.85rem', color: '#64748B', fontWeight: 600 }}>
+                  Cargando formas de pago…
+                </div>
+              </div>
+            )}
+            {!isFree && datosListos && disponibles.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1rem', backgroundColor: '#F1F5F9', padding: '0.25rem', borderRadius: '0.875rem' }}>
+                {disponibles.map(m => (
                   <button
-                    onClick={() => !isMulti && setPaymentMethod('redsys')}
-                    disabled={isMulti}
-                    className={`pay-tab ${paymentMethod === 'redsys' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
-                    title={isMulti ? 'Sólo disponible con una reserva' : ''}
+                    key={m}
+                    onClick={() => setPaymentMethod(m)}
+                    className={`pay-tab ${paymentMethod === m ? 'pay-tab-active' : 'pay-tab-inactive'}`}
                   >
-                    💳 Tarjeta
+                    {m === 'club' ? '🏪 Club' : m === 'redsys' ? '💳 Tarjeta' : '📱 Bizum'}
                   </button>
-                )}
-                {(!allowedByRules || allowedByRules.includes('bizum')) && (
-                  <button
-                    onClick={() => !isMulti && setPaymentMethod('bizum')}
-                    disabled={isMulti}
-                    className={`pay-tab ${paymentMethod === 'bizum' ? 'pay-tab-active' : 'pay-tab-inactive'} ${isMulti ? 'pay-tab-disabled' : ''}`}
-                    title={isMulti ? 'Sólo disponible con una reserva' : ''}
-                  >
-                    📱 Bizum
-                  </button>
-                )}
-                {isClubOpen && (!allowedByRules || allowedByRules.includes('club')) && (
-                  <button onClick={() => setPaymentMethod('club')} className={`pay-tab ${paymentMethod === 'club' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
-                    🏪 Club
-                  </button>
-                )}
-                {SPLIT_PAYMENT_ENABLED && !isMulti && (!allowedByRules || allowedByRules.includes('redsys')) && (
+                ))}
+                {permiteCompartido && (
                   <button onClick={() => setPaymentMethod('compartido')} className={`pay-tab ${paymentMethod === 'compartido' ? 'pay-tab-active' : 'pay-tab-inactive'}`}>
                     👥 Compartido
                   </button>
@@ -490,32 +490,32 @@ const PaymentGateway = () => {
               </div>
             )}
 
-            {allowedByRules && allowedByRules.length === 0 && !isFree && (
+            {datosListos && disponibles.length === 0 && !isFree && (
               <div style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '0.75rem', padding: '1rem 1.125rem', marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
                 <div>
                   <p style={{ margin: 0, fontWeight: 800, color: '#991B1B', fontSize: '0.88rem' }}>No hay métodos de pago disponibles</p>
-                  <p style={{ margin: '0.15rem 0 0', fontSize: '0.8rem', color: '#B91C1C', lineHeight: 1.5 }}>El administrador ha bloqueado el pago en esta franja. Elige otra pista u hora, o contacta con el club.</p>
+                  <p style={{ margin: '0.15rem 0 0', fontSize: '0.8rem', color: '#B91C1C', lineHeight: 1.5 }}>{isMulti ? 'Con varias pistas sólo se puede pagar en el club, y ahora mismo está cerrado. Quita pistas del carrito o vuelve cuando abra.' : 'No hay ninguna forma de pago disponible para esta franja. Elige otra pista u hora, o contacta con el club.'}</p>
                 </div>
               </div>
             )}
 
-            {!isClubOpen && clubOpenTime !== '00:00' && (
+            {datosListos && !isClubOpen && clubOpenTime && disponibles.length > 0 && (
               <div style={{ backgroundColor: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#9A3412', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span>🕐</span>
-                <span>El pago en el club estará disponible a partir de las <strong>{clubOpenTime}</strong>. Hasta entonces puedes pagar con tarjeta o Bizum.</span>
+                <span>El pago en el club estará disponible a partir de las <strong>{clubOpenTime}</strong>. Hasta entonces puedes pagar {disponibles.includes('redsys') && disponibles.includes('bizum') ? 'con tarjeta o Bizum' : disponibles.includes('redsys') ? 'con tarjeta' : 'con Bizum'}.</span>
               </div>
             )}
 
-            {isMulti && (
+            {isMulti && !isFree && datosListos && disponibles.length > 0 && (
               <div style={{ backgroundColor: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#9A3412' }}>
-                El pago con tarjeta sólo admite una reserva. Para pagar varias a la vez, usa "Pago en el Club".
+                El pago con tarjeta y Bizum sólo admite una reserva. Con varias pistas, el pago se hace en el club.
               </div>
             )}
 
-            {!(allowedByRules && allowedByRules.length === 0 && !isFree) && (
+            {(isFree || (datosListos && disponibles.length > 0)) && (
             <div style={{ backgroundColor: 'white', borderRadius: '1.5rem', overflow: 'hidden', boxShadow: 'var(--shadow-md)', border: '1px solid var(--color-border)' }}>
               {isFree ? (
                 <div style={{ padding: '2rem 1.5rem', textAlign: 'center' }}>
@@ -675,7 +675,7 @@ const PaymentGateway = () => {
                     </p>
                   </div>
                   <button onClick={handleClubPayment} disabled={processingClub} style={{ width: '100%', padding: '1rem', fontSize: '1rem', background: '#16A34A', color: 'white', border: 'none', borderRadius: '0.75rem', fontFamily: 'inherit', fontWeight: 700, cursor: processingClub ? 'not-allowed' : 'pointer' }}>
-                    {processingClub ? 'Confirmando...' : `Confirmar ${isMulti ? 'Reservas' : 'Reserva'} (${total.toFixed(2).replace('.', ',')} €)`}
+                    {processingClub ? 'Confirmando...' : `Reservar y pagar en el club · ${total.toFixed(2).replace('.', ',')} €`}
                   </button>
                 </div>
               )}

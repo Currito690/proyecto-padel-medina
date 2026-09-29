@@ -126,9 +126,9 @@ const MyBookings = () => {
         let data = await loadBookings();
 
         if (!raw) {
-          // Pago en club: enviar email para reservas creadas en los últimos 5 min
-          const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-          data.filter(b => b.created_at >= cutoff).forEach(sendConfirmationEmail);
+          // Pago en el club y reservas gratuitas: el correo de confirmación ya lo
+          // manda la pasarela al crear la reserva. Antes se enviaba aquí otro por
+          // cada reserva de los últimos 5 minutos, así que llegaba duplicado.
           return;
         }
 
