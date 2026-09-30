@@ -5,6 +5,8 @@
       "namespace": "android_app",
       "package_name": "com.padelmedina.app",
       "sha256_cert_fingerprints": [
+        "DC:9F:7C:B7:9F:87:F3:97:9B:4D:DD:B2:A2:1E:04:4A:76:10:95:F5:00:41:98:C4:90:8B:F6:31:EF:DD:25:63",
+        "9A:B1:2A:99:4E:5C:96:63:65:6F:E6:7D:DD:21:D8:BC:61:C9:6E:A4:5A:6D:A0:F4:89:50:D7:7D:E9:DB:B6:B1",
         "3D:EC:4A:59:55:DD:F2:3A:78:15:B2:8E:EB:F3:DB:1E:68:E1:04:56:5D:63:5E:E0:F9:48:B8:92:7F:A1:7C:9A"
       ]
     }
