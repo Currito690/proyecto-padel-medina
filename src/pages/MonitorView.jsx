@@ -229,6 +229,22 @@ export default function MonitorView() {
     if (err?.code === 1) setGpsPermiso('denied');
   }, []);
 
+  // TEMPORAL (diagnóstico): resume por qué no hubo ubicación, para leerlo
+  // desde la base de datos. Se quitará cuando esté resuelto.
+  const motivoSinUbicacion = () => {
+    const err = errGpsRef.current;
+    const causa = err === 1 ? 'permiso denegado' : err === 2 ? 'posicion no disponible' : err === 3 ? 'tiempo agotado' : 'sin respuesta del navegador';
+    const ua = navigator.userAgent || '';
+    const trozo = (marca) => {
+      const i = ua.indexOf(marca);
+      if (i < 0) return '';
+      const fin = ua.indexOf(' ', i);
+      return fin < 0 ? ua.slice(i) : ua.slice(i, fin);
+    };
+    const nav = trozo('SamsungBrowser') || trozo('Chrome') || ua.slice(0, 40);
+    return `[diag] sin ubicacion: ${causa} | permiso=${gpsPermiso || 'desconocido'} | err=${err ?? '-'} | app=${enApp ? 'si' : 'no'} | ${nav}`;
+  };
+
   const calentarGps = useCallback(() => {
     if (!navigator.geolocation) return;
     try {
@@ -325,20 +341,35 @@ export default function MonitorView() {
     return parar;
   }, [firmando, guardarPos, anotarErrorGps]);
 
+  // Por debajo de esto se considera una lectura buena y se deja de insistir.
+  // Por encima, es ubicación de antenas o wifi (llega a kilómetros de error) y
+  // se sigue intentando mientras quede tiempo.
+  const PRECISION_BUENA_M = 200;
+  const ANTIGUEDAD_MAX_MS = 2 * 60 * 1000;
+
   const getPosicion = () => new Promise((resolve) => {
-    if (posRef.current) { resolve(posRef.current); return; } // captada mientras firmaba
-    if (!navigator.geolocation) { resolve(null); return; }
+    // La última posición conocida solo vale si es reciente: si no, se estaría
+    // sellando el fichaje con el sitio donde estuvo el móvil hace un rato.
+    const reciente = () => {
+      const u = ultimaPosRef.current;
+      return u && (Date.now() - (u.captada || 0)) < ANTIGUEDAD_MAX_MS ? u : null;
+    };
+    const candidatos = [];
+    const mejor = () => [...candidatos, posRef.current, reciente()]
+      .filter(Boolean)
+      .sort((a, b) => (a.precision_m ?? 9999) - (b.precision_m ?? 9999))[0] || null;
+
+    const yaBuena = mejor();
+    if (yaBuena && (yaBuena.precision_m ?? 9999) <= PRECISION_BUENA_M) { resolve(yaBuena); return; }
+    if (!navigator.geolocation) { resolve(mejor()); return; }
+
     let done = false, tope = null;
     const finish = (p) => {
       if (done) return;
       done = true;
       clearTimeout(tope);
-      // De todo lo que haya (lo pedido, lo del watch, lo del precalentamiento)
-      // se queda la lectura más precisa, en vez de la primera que aparezca.
-      const mejor = [p, posRef.current, ultimaPosRef.current]
-        .filter(Boolean)
-        .sort((a, b) => (a.precision_m ?? 9999) - (b.precision_m ?? 9999))[0] || null;
-      resolve(mejor);
+      if (p) candidatos.push(p);
+      resolve(mejor());
     };
     // Tope DURO fuera del API: si el navegador no responde, a los 12s se sigue
     tope = setTimeout(() => finish(null), 12000);
@@ -346,15 +377,24 @@ export default function MonitorView() {
     // se acepta caché de unos minutos (el club no se mueve y es lo que evita
     // esperar un fix nuevo imposible con el móvil quieto).
     const opciones = [
-      { enableHighAccuracy: true, timeout: 6000, maximumAge: 120000 },
-      { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 },
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 120000 },
     ];
     const intenta = (i) => {
       // try/catch: en algún WebView getCurrentPosition revienta en síncrono y
       // sin esto la promesa quedaría rechazada pese al tope de 12s
       try {
         navigator.geolocation.getCurrentPosition(
-          (pos) => { guardarPos(pos); finish({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy }); },
+          (pos) => {
+            guardarPos(pos);
+            const p = { lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy };
+            candidatos.push(p);
+            // Lectura buena: se acepta. Mala: se prueba la siguiente opción y,
+            // si no queda ninguna, se usa la mejor de las que haya.
+            if ((p.precision_m ?? 9999) <= PRECISION_BUENA_M) finish(null);
+            else if (i + 1 < opciones.length) intenta(i + 1);
+            else finish(null);
+          },
           (err) => { anotarErrorGps(err); return i + 1 < opciones.length ? intenta(i + 1) : finish(null); },
           opciones[i]
         );
@@ -436,6 +476,7 @@ export default function MonitorView() {
           lat: pos?.lat ?? null,
           lng: pos?.lng ?? null,
           precision_m: pos?.precision_m ?? null,
+          ...(pos ? ((pos.precision_m ?? 0) > PRECISION_BUENA_M ? { nota: `[diag] ubicacion aproximada ±${Math.round(pos.precision_m)} m` } : {}) : { nota: motivoSinUbicacion() }),
         }).abortSignal(s), 20000);
         insErr = error;
       } catch (e) {
@@ -456,13 +497,14 @@ export default function MonitorView() {
         loadFichajes();
       } else {
         const bloqueado = errGpsRef.current === 1;
-        const sinGps = pos ? '' : (bloqueado
-          ? ' (sin ubicación: el permiso está bloqueado)'
-          : ' (sin ubicación: no había señal GPS)');
+        const malaPrecision = pos && (pos.precision_m ?? 0) > PRECISION_BUENA_M;
+        const sinGps = pos
+          ? (malaPrecision ? ` (ubicación aproximada, ±${Math.round(pos.precision_m)} m: activa la ubicación precisa en los permisos)` : '')
+          : (bloqueado ? ' (sin ubicación: el permiso está bloqueado)' : ' (sin ubicación: no había señal GPS)');
         toast(
           tipo === 'entrada' ? `🟢 Entrada fichada${sinGps}. ¡Buen turno!` : `🔴 Salida fichada${sinGps}. ¡Hasta la próxima!`,
-          pos ? 'success' : 'warning',
-          pos ? undefined : 7000,
+          pos && !malaPrecision ? 'success' : 'warning',
+          pos && !malaPrecision ? undefined : 8000,
         );
         setFirmando(false);
         loadFichajes();
@@ -982,6 +1024,11 @@ export default function MonitorView() {
               <div style={{ fontSize: '0.78rem', color: trabajando ? '#15803D' : '#64748B', fontWeight: 700, marginTop: 2 }}>
                 {trabajando ? `Trabajando desde las ${horaDe(ultimoFichaje.fichado_at)}` : 'Turno sin iniciar'}
                 {enClaseAhora && <span style={{ color: '#7E22CE' }}> · 🎾 ahora en clase</span>}
+              </div>
+              <div style={{ marginTop: '0.4rem' }}>
+                <a href="/prueba-gps.html" style={{ fontSize: '0.68rem', color: '#94A3B8', textDecoration: 'underline' }}>
+                  🔧 Diagnóstico de ubicación
+                </a>
               </div>
               {gpsPermiso && gpsPermiso !== 'granted' && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', fontWeight: 700, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.6rem', padding: '0.5rem 0.65rem', maxWidth: 440 }}>

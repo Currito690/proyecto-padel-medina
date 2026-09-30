@@ -16,9 +16,13 @@
 package com.padelmedina.app;
 
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+
+import com.google.androidbrowserhelper.trusted.TwaLauncher;
 
 
 
@@ -39,6 +43,32 @@ public class LauncherActivity
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT);
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        }
+    }
+
+    // Navegador que ejecuta la app por dentro.
+    //
+    // Por defecto, Android elige el navegador PREDETERMINADO del movil siempre
+    // que soporte estas apps. En muchos Samsung ese predeterminado es Samsung
+    // Internet, y ahi la ubicacion del fichaje no funciona: la delegacion de
+    // ubicacion es una funcion privada de Chrome, asi que nadie contesta a la
+    // peticion de posicion y acaba agotando el tiempo.
+    //
+    // Por eso se fija Chrome cuando esta instalado y activado. Si no lo esta,
+    // se devuelve null y decide el sistema, como antes.
+    private static final String CHROME = "com.android.chrome";
+
+    @Override
+    protected TwaLauncher createTwaLauncher() {
+        return new TwaLauncher(this, hayChrome() ? CHROME : null);
+    }
+
+    private boolean hayChrome() {
+        try {
+            ApplicationInfo info = getPackageManager().getApplicationInfo(CHROME, 0);
+            return info.enabled;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
         }
     }
 
