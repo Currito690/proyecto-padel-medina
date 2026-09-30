@@ -78,6 +78,11 @@ const METODO = {
 
 const AVISO_GPS_KEY = 'monitor_aviso_gps';
 
+// Dentro de la app de Android (o de la PWA instalada) no hay barra de
+// direcciones ni ajustes de navegador a los que mandar al trabajador.
+const enApp = typeof window !== 'undefined'
+  && (window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true);
+
 export default function MonitorView() {
   const { user, logout } = useAuth();
   const [date, setDate] = useState(() => toYMD(new Date()));
@@ -203,23 +208,49 @@ export default function MonitorView() {
   // qué ANTES de pedir el permiso de ubicación, y no vale con decirlo solo en
   // la política de privacidad. Por eso el permiso ya no se pide a bocajarro.
   const [avisoGps, setAvisoGps] = useState(false);
+
+  // Toda posición que llegue, venga de donde venga, se guarda: el
+  // precalentamiento ya no tira a la basura lo que consigue.
+  const guardarPos = useCallback((pos) => {
+    errGpsRef.current = null;
+    ultimaPosRef.current = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      precision_m: pos.coords.accuracy,
+      captada: Date.now(),
+    };
+  }, []);
+
+  // El estado del permiso no se puede deducir solo de la Permissions API: esa
+  // mira el permiso del SITIO, y dentro de la app Android hay además el permiso
+  // de la propia aplicación. Si una petición falla por permiso, mandamos eso.
+  const anotarErrorGps = useCallback((err) => {
+    errGpsRef.current = err?.code ?? null;
+    if (err?.code === 1) setGpsPermiso('denied');
+  }, []);
+
+  const calentarGps = useCallback(() => {
+    if (!navigator.geolocation) return;
+    try {
+      navigator.geolocation.getCurrentPosition(guardarPos, anotarErrorGps,
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 });
+    } catch { /* sin geolocalización */ }
+  }, [guardarPos, anotarErrorGps]);
+
   useEffect(() => {
     let st = null, cancelado = false;
-    const yaAvisado = (() => {
-      try { return localStorage.getItem(AVISO_GPS_KEY) === '1'; } catch { return false; }
+    const respuesta = (() => {
+      try { return localStorage.getItem(AVISO_GPS_KEY); } catch { return null; }
     })();
-    const calentarGps = () => {
-      if (!navigator.geolocation) return;
-      try {
-        navigator.geolocation.getCurrentPosition(() => {}, () => {},
-          { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 });
-      } catch { /* sin geolocalización */ }
-    };
     const decidir = (estado) => {
       if (estado === 'granted') calentarGps();
-      else if (estado === 'denied') { /* ya hay un aviso en pantalla */ }
-      else if (yaAvisado) calentarGps();
-      else setAvisoGps(true);
+      // 'denied': el aviso de la tarjeta ya ofrece reintentar
+      else if (estado === 'denied') { /* nada que pedir */ }
+      // Permiso sin decidir: solo se pide si el trabajador ya dijo que sí al
+      // aviso. Si dijo "Ahora no", no se le vuelve a saltar el diálogo de
+      // Android sin venir a cuento: lo pedirá él desde el botón de la tarjeta.
+      else if (respuesta === 'si') calentarGps();
+      else if (!respuesta) setAvisoGps(true);
     };
     if (navigator.permissions?.query) {
       navigator.permissions.query({ name: 'geolocation' })
@@ -235,14 +266,22 @@ export default function MonitorView() {
       decidir('prompt');
     }
     return () => { cancelado = true; if (st) st.onchange = null; };
-  }, []);
+  }, [calentarGps]);
 
   const cerrarAvisoGps = (activar) => {
-    try { localStorage.setItem(AVISO_GPS_KEY, '1'); } catch { /* modo privado */ }
+    // Se guarda QUÉ contestó, no solo que lo vio: "Ahora no" no puede dejarle
+    // sin ubicación para siempre y sin manera de volver atrás.
+    try { localStorage.setItem(AVISO_GPS_KEY, activar ? 'si' : 'no'); } catch { /* modo privado */ }
     setAvisoGps(false);
-    if (!activar || !navigator.geolocation) return;
+    if (activar) pedirUbicacion();
+  };
+
+  // Pide la ubicación de verdad. Es lo que dispara el diálogo de Android dentro
+  // de la app, así que siempre se llama a partir de un gesto del trabajador.
+  const pedirUbicacion = () => {
+    if (!navigator.geolocation) return;
     try {
-      navigator.geolocation.getCurrentPosition(() => {}, () => {},
+      navigator.geolocation.getCurrentPosition(guardarPos, anotarErrorGps,
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
     } catch { /* sin geolocalización */ }
   };
@@ -259,6 +298,8 @@ export default function MonitorView() {
   //     sin ubicación). El botón nunca se queda colgado en «Fichando…».
   const posRef = useRef(null);     // mejor posición captada mientras firma
   const watchIdRef = useRef(null);
+  const ultimaPosRef = useRef(null); // última posición conocida (también del precalentamiento)
+  const errGpsRef = useRef(null);    // código del último error de geolocalización
 
   useEffect(() => {
     const parar = () => {
@@ -272,16 +313,17 @@ export default function MonitorView() {
     try {
       watchIdRef.current = navigator.geolocation.watchPosition(
         (pos) => {
+          guardarPos(pos);
           const p = { lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy };
           // Quedarse con la lectura más precisa recibida
           if (!posRef.current || (p.precision_m ?? 9999) <= (posRef.current.precision_m ?? 9999)) posRef.current = p;
         },
-        () => {},
+        anotarErrorGps,
         { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
       );
     } catch { /* sin geolocalización: se ofrecerá fichar sin 📍 */ }
     return parar;
-  }, [firmando]);
+  }, [firmando, guardarPos, anotarErrorGps]);
 
   const getPosicion = () => new Promise((resolve) => {
     if (posRef.current) { resolve(posRef.current); return; } // captada mientras firmaba
@@ -291,7 +333,12 @@ export default function MonitorView() {
       if (done) return;
       done = true;
       clearTimeout(tope);
-      resolve(p || posRef.current); // lo pedido o, si no, lo que cayera del watch
+      // De todo lo que haya (lo pedido, lo del watch, lo del precalentamiento)
+      // se queda la lectura más precisa, en vez de la primera que aparezca.
+      const mejor = [p, posRef.current, ultimaPosRef.current]
+        .filter(Boolean)
+        .sort((a, b) => (a.precision_m ?? 9999) - (b.precision_m ?? 9999))[0] || null;
+      resolve(mejor);
     };
     // Tope DURO fuera del API: si el navegador no responde, a los 12s se sigue
     tope = setTimeout(() => finish(null), 12000);
@@ -307,8 +354,8 @@ export default function MonitorView() {
       // sin esto la promesa quedaría rechazada pese al tope de 12s
       try {
         navigator.geolocation.getCurrentPosition(
-          (pos) => finish({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy }),
-          () => (i + 1 < opciones.length ? intenta(i + 1) : finish(null)),
+          (pos) => { guardarPos(pos); finish({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision_m: pos.coords.accuracy }); },
+          (err) => { anotarErrorGps(err); return i + 1 < opciones.length ? intenta(i + 1) : finish(null); },
           opciones[i]
         );
       } catch { finish(null); }
@@ -408,8 +455,15 @@ export default function MonitorView() {
         }
         loadFichajes();
       } else {
-        const sinGps = pos ? '' : ' (sin ubicación: no había señal GPS)';
-        toast(tipo === 'entrada' ? `🟢 Entrada fichada${sinGps}. ¡Buen turno!` : `🔴 Salida fichada${sinGps}. ¡Hasta la próxima!`, 'success');
+        const bloqueado = errGpsRef.current === 1;
+        const sinGps = pos ? '' : (bloqueado
+          ? ' (sin ubicación: el permiso está bloqueado)'
+          : ' (sin ubicación: no había señal GPS)');
+        toast(
+          tipo === 'entrada' ? `🟢 Entrada fichada${sinGps}. ¡Buen turno!` : `🔴 Salida fichada${sinGps}. ¡Hasta la próxima!`,
+          pos ? 'success' : 'warning',
+          pos ? undefined : 7000,
+        );
         setFirmando(false);
         loadFichajes();
       }
@@ -929,11 +983,29 @@ export default function MonitorView() {
                 {trabajando ? `Trabajando desde las ${horaDe(ultimoFichaje.fichado_at)}` : 'Turno sin iniciar'}
                 {enClaseAhora && <span style={{ color: '#7E22CE' }}> · 🎾 ahora en clase</span>}
               </div>
-              {gpsPermiso === 'denied' && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', fontWeight: 700, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.6rem', padding: '0.45rem 0.65rem', maxWidth: 420 }}>
-                  ⚠️ El navegador tiene <strong>bloqueada la ubicación</strong> para esta web: tus fichajes
-                  salen sin 📍. Actívala en los ajustes del navegador (Permisos → Ubicación) y ten la
-                  ubicación del móvil encendida. Aun así puedes fichar con normalidad.
+              {gpsPermiso && gpsPermiso !== 'granted' && (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', fontWeight: 700, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.6rem', padding: '0.5rem 0.65rem', maxWidth: 440 }}>
+                  {gpsPermiso === 'denied' ? (
+                    <>
+                      ⚠️ La <strong>ubicación está bloqueada</strong>: tus fichajes salen sin 📍.
+                      {enApp ? (
+                        <> Para activarla: <strong>Ajustes del móvil → Aplicaciones → Padel Medina → Permisos → Ubicación → Permitir solo mientras se usa</strong>. También sirve dejar pulsado el icono de la app y entrar en «Configuración del sitio».</>
+                      ) : (
+                        <> Actívala en los ajustes del navegador, en Permisos → Ubicación.</>
+                      )}
+                      {' '}Y ten encendida la ubicación del móvil. Aun así puedes fichar con normalidad.
+                    </>
+                  ) : (
+                    <>📍 Tus fichajes se están guardando <strong>sin ubicación</strong>. Actívala para dejar constancia del lugar.</>
+                  )}
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <button
+                      onClick={() => (gpsPermiso === 'denied' ? pedirUbicacion() : setAvisoGps(true))}
+                      style={{ padding: '0.4rem 0.8rem', borderRadius: '0.5rem', border: '1px solid #F59E0B', background: '#F59E0B', color: '#fff', fontWeight: 800, fontSize: '0.72rem', fontFamily: 'inherit', cursor: 'pointer' }}
+                    >
+                      📍 Activar ubicación
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
