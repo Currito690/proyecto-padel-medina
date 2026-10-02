@@ -36,6 +36,12 @@
   <FilesMatch "manifest\.json$">
     Header set Cache-Control "public, max-age=3600"
   </FilesMatch>
+  # assetlinks.json verifica la app Android: NO cachear largo, para que Chrome
+  # coja los cambios de huellas de firma pronto (si no, la regla .json de arriba
+  # lo dejaría inmutable 1 año y la app seguiría saliendo con barra).
+  <FilesMatch "assetlinks\.json$">
+    Header set Cache-Control "public, max-age=300, must-revalidate"
+  </FilesMatch>
 
   # Cabeceras de seguridad (equivalente a las de vercel.json)
   Header always set X-Content-Type-Options "nosniff"
