@@ -24,14 +24,15 @@ Consecuencias, y son las dos caras de la misma moneda:
 |---|---|
 | Proyecto Android generado | `android/`, paquete `com.padelmedina.app`, API objetivo 36 (la que Play exige desde el 31 de agosto de 2026) |
 | Clave de firma creada | `C:/Users/curri/AndroidBuild/claves/padelmedina-upload.jks`, con su contraseña al lado. **Hay que copiarla fuera del ordenador** |
-| Paquete firmado para Play | `C:/Users/curri/AndroidBuild/padelmedina-1.0.0.aab` |
-| Instalable de prueba | `C:/Users/curri/AndroidBuild/padelmedina-1.0.0.apk` |
+| Paquete firmado para Play | `C:/Users/curri/AndroidBuild/padelmedina-1.0.4.aab` (versión 1.0.4, código 6), ya subido a la prueba interna |
+| Instalable de prueba | `C:/Users/curri/AndroidBuild/padelmedina-1.0.4.apk` |
 | Verificación del dominio | `public/.well-known/assetlinks.json` publicado y servido como JSON. Falta añadir la huella de Google tras la primera subida |
 | Iconos | 512 normal y maskable, generados del emblema del logotipo, y el icono de la ficha |
 | Gráfico de la ficha | `android/play-assets/grafico-funciones-1024x500.png` |
 | Textos de la ficha | `android/play-assets/ficha-play.md` |
 | Borrado de cuenta | Dentro de la app (Perfil) y página pública `/eliminar-cuenta`. Lo exige Google |
 | Aviso de ubicación | Explicación previa al permiso de GPS en la vista del monitor. Lo exige Google |
+| Ubicación nativa | Desde la versión 1.0.4 la app coge la posición del fichaje con su propia pantalla (`UbicacionActivity`), porque Chrome dentro de la app no daba ubicación precisa en algunos móviles. Ver `android/COMO-COMPILAR.md` |
 | Probado en Android 16 | Ver el apartado de pruebas más abajo |
 
 ## Lo que tiene que decidir el club, antes de nada
@@ -168,7 +169,7 @@ nueva suele ser la más lenta.
 | La app abre sin barra de navegador | Correcto: la verificación del dominio funciona |
 | Navegación interna y botón atrás de Android | Correcto |
 | Permiso de ubicación | Android lo pide a nombre de «Padel Medina», no de Chrome |
-| Ubicación para el fichaje | Posición en 522 ms y seguimiento continuo correcto |
+| Ubicación para el fichaje | La coge una pantalla nativa de la app, no Chrome: 5 m de precisión en la prueba y confirmada en un Samsung real |
 | Permiso de notificaciones | Android lo pide a nombre de «Padel Medina» |
 | Aviso mostrado | Sale con el nombre y el icono del club, no los de Chrome |
 | Sin cobertura | La app abre igualmente con lo que Chrome tiene en caché |
