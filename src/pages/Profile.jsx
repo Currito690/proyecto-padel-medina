@@ -239,7 +239,11 @@ const Profile = () => {
         {menuItems.map(({ label, icon, iconBg, iconColor }, idx) => (
           <button
             key={label}
-            onClick={label === 'Notificaciones' ? openNotifications : undefined}
+            onClick={
+              label === 'Notificaciones' ? openNotifications
+              : label === 'Métodos de pago' ? () => toast('El pago se hace al reservar: con tarjeta, Bizum o en el club.', 'info')
+              : undefined
+            }
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '1rem 1.25rem',

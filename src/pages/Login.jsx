@@ -6,8 +6,21 @@ import { VERSION_TEXTOS_LEGALES } from '../utils/legal';
 
 const MSG_ACEPTAR = 'Para registrarte tienes que aceptar la Política de Privacidad y el Aviso legal.';
 
+// Los errores de Supabase llegan en inglés. Los traducimos a algo claro.
+const traduceError = (err) => {
+  const code = err?.code || '';
+  const msg = (err?.message || '').toLowerCase();
+  if (code === 'invalid_credentials' || msg.includes('invalid login')) return 'Correo o contraseña incorrectos.';
+  if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) return 'Tu correo aún no está confirmado. Revisa tu bandeja o reenvía el código más abajo.';
+  if (code === 'user_already_exists' || msg.includes('already registered')) return 'Este correo ya está registrado. Entra con tu contraseña o recupérala.';
+  if (code === 'over_email_send_rate_limit' || msg.includes('rate limit') || msg.includes('for security purposes')) return 'Demasiados intentos. Espera un minuto y vuelve a probar.';
+  if (code === 'weak_password' || msg.includes('password should be')) return 'La contraseña es demasiado débil: usa al menos 6 caracteres.';
+  if (msg.includes('network') || msg.includes('failed to fetch')) return 'Sin conexión. Comprueba tu internet e inténtalo de nuevo.';
+  return err?.message || 'Ha ocurrido un error. Inténtalo de nuevo.';
+};
+
 const Login = () => {
-  const { loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resetPassword } = useAuth();
+  const { loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resendSignupCode, resetPassword } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [step, setStep] = useState(1); // 1 = formulario, 2 = código OTP (solo registro)
   const [forgotMode, setForgotMode] = useState(false); // recuperar contraseña
@@ -22,6 +35,7 @@ const Login = () => {
   // Aceptación de la Política de Privacidad y el Aviso legal (obligatoria para registrarse)
   const [aceptaLegal, setAceptaLegal] = useState(false);
   const [avisarLegal, setAvisarLegal] = useState(false);
+  const [puedeReenviar, setPuedeReenviar] = useState(false); // mostrar "reenviar código" tras un login con correo sin confirmar
 
   // Enviar formulario de login o registro
   const handleSubmit = async (e) => {
@@ -51,7 +65,29 @@ const Login = () => {
         setStep(2);
       }
     } catch (err) {
-      setError(err.message || 'Error al procesar la solicitud');
+      setError(traduceError(err));
+      // Si el correo no está confirmado, dejamos reenviar el código al instante.
+      if (err?.code === 'email_not_confirmed' || (err?.message || '').toLowerCase().includes('email not confirmed')) {
+        setPuedeReenviar(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Reenviar el código de verificación de registro (al correo escrito).
+  const handleResend = async () => {
+    if (!email) { setError('Escribe tu correo para reenviar el código.'); return; }
+    setLoading(true);
+    setError(null);
+    setSuccessMsg('');
+    try {
+      await resendSignupCode(sanitizeInput(email));
+      setSuccessMsg(`Te hemos reenviado un código a ${email}.`);
+      setPuedeReenviar(false);
+      setStep(2);
+    } catch (err) {
+      setError(traduceError(err));
     } finally {
       setLoading(false);
     }
@@ -67,7 +103,7 @@ const Login = () => {
       await resetPassword(sanitizeInput(email));
       setSuccessMsg(`Si existe una cuenta con ${email}, te hemos enviado un email con un enlace para restablecer tu contraseña.`);
     } catch (err) {
-      setError(err.message || 'No se pudo enviar el email de recuperación');
+      setError(traduceError(err));
     } finally {
       setLoading(false);
     }
@@ -418,6 +454,14 @@ const Login = () => {
               </div>
             )}
 
+            {puedeReenviar && (
+              <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+                <button type="button" disabled={loading} onClick={handleResend} style={{ background: 'transparent', border: 'none', color: '#1B3A6E', fontSize: '0.85rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', textDecoration: 'underline' }}>
+                  Reenviar código de confirmación a mi correo
+                </button>
+              </div>
+            )}
+
             {successMsg && (
               <div style={{ background: '#F0FDF4', color: '#15803D', padding: '0.875rem 1rem', borderRadius: '0.625rem', marginBottom: '1rem', fontSize: '0.875rem', fontWeight: 500, border: '1px solid #BBF7D0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -538,7 +582,10 @@ const Login = () => {
                 <button type="submit" disabled={loading} className="login-submit">
                   {loading ? 'Verificando...' : '✓ Verificar y crear cuenta'}
                 </button>
-                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <button type="button" disabled={loading} onClick={handleResend} style={{ background: 'transparent', border: 'none', color: '#1B3A6E', fontSize: '0.85rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', textDecoration: 'underline' }}>
+                    ¿No te llega? Reenviar código
+                  </button>
                   <button type="button" onClick={() => { setStep(1); setError(null); setSuccessMsg(''); setOtpCode(''); }} style={{ background: 'transparent', border: 'none', color: '#64748B', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline' }}>
                     ← Volver
                   </button>

@@ -16,6 +16,55 @@ const HOURS = [
 const fmtDateLabel = (d) =>
   `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
 
+// Clasificación de liguilla con desempates. Orden: puntos → enfrentamiento
+// directo → diferencia de sets → diferencia de juegos → partidos ganados.
+// Lee los juegos de match.score ("6-4 7-6(5)" = p1 6/7, p2 4/6). MISMA lógica
+// en el panel del admin y en la página pública del cuadro.
+const computeLiguillaStandings = (catRounds) => {
+  const setToken = (raw) => {
+    const s = String(raw).replace(/\(.*?\)/g, '').replace(/[[\]]/g, '');
+    const m = s.match(/^(\d+)-(\d+)$/);
+    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+  };
+  const map = {};
+  const h2h = {}; // h2h[ganadorId][perdedorId] = true
+  (catRounds || []).forEach(round => (round || []).forEach(m => {
+    [m.p1, m.p2].forEach(p => {
+      if (p && !p.isBye && !map[p.id]) {
+        map[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0, sf: 0, sa: 0, gf: 0, ga: 0 };
+      }
+    });
+    if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye && map[m.p1.id] && map[m.p2.id]) {
+      const a = map[m.p1.id], b = map[m.p2.id];
+      a.pj++; b.pj++;
+      if (m.winner.id === m.p1.id) { a.pg++; a.pts += 2; b.pp++; }
+      else { b.pg++; b.pts += 2; a.pp++; }
+      let w1 = 0, w2 = 0;
+      String(m.score || '').trim().split(/\s+/).forEach(raw => {
+        const set = setToken(raw);
+        if (!set) return;
+        a.gf += set[0]; a.ga += set[1];
+        b.gf += set[1]; b.ga += set[0];
+        if (set[0] > set[1]) w1++; else if (set[1] > set[0]) w2++;
+      });
+      a.sf += w1; a.sa += w2;
+      b.sf += w2; b.sa += w1;
+      const win = m.winner.id, lose = m.winner.id === m.p1.id ? m.p2.id : m.p1.id;
+      (h2h[win] = h2h[win] || {})[lose] = true;
+    }
+  }));
+  return Object.values(map).sort((x, y) => {
+    if (y.pts !== x.pts) return y.pts - x.pts;
+    if (h2h[x.pair.id]?.[y.pair.id]) return -1;
+    if (h2h[y.pair.id]?.[x.pair.id]) return 1;
+    const xs = x.sf - x.sa, ys = y.sf - y.sa;
+    if (ys !== xs) return ys - xs;
+    const xg = x.gf - x.ga, yg = y.gf - y.ga;
+    if (yg !== xg) return yg - xg;
+    return y.pg - x.pg;
+  });
+};
+
 // Categoría de una pareja → lista de categorías (doble inscripción "A y B",
 // también el separador antiguo "A + B").
 const SPLIT_CAT_RE = /\s+y\s+|\s+\+\s+/;
@@ -554,8 +603,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   }, [publishedId, showAvailability]);
 
   const handleResetTournament = async () => {
+    // Avisar de las inscripciones con pago registrado que se van a perder.
+    const { count: paidCount } = await supabase
+      .from('tournament_registrations')
+      .select('id', { count: 'exact', head: true })
+      .eq('tournament_id', tournamentKey)
+      .eq('payment_status', 'paid');
+    const paidWarning = paidCount > 0
+      ? `\n\n⚠️ Hay ${paidCount} inscripción(es) con pago registrado que se borrarán.`
+      : '';
     const ok = await confirmDialog(
-      '¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas, las inscripciones online y el cuadro generado, y el torneo dejará de estar publicado.',
+      '¿Estás seguro de que quieres borrar este torneo y empezar uno nuevo? Se perderán todas las parejas, las inscripciones online y el cuadro generado, y el torneo dejará de estar publicado.' + paidWarning,
       { title: 'Reiniciar torneo', okText: 'Borrar y empezar', danger: true }
     );
     if (!ok) return;
@@ -682,8 +740,32 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
-  const markRegistrationPaid = async (regId, currentStatus) => {
+  // Etiqueta legible del método de pago para la columna y el CSV.
+  const paymentMethodLabel = (m) => ({
+    redsys: '💳 Tarjeta (TPV)',
+    manual: '🏪 En el club',
+    card: '💳 Tarjeta',
+    club: '🏪 En el club',
+  }[m] || '');
+
+  const markRegistrationPaid = async (reg) => {
+    const currentStatus = reg.payment_status;
     const newStatus = currentStatus === 'paid' ? 'pending' : 'paid';
+    // Desmarcar un pago (paid → pending): pedir confirmación y proteger los
+    // cobros por tarjeta. Un pago por TPV (payment_method 'redsys') NO se puede
+    // desmarcar aquí: la fila la fijó la pasarela y borrarla a mano dejaría el
+    // cobro real sin reflejo. Para devolverlo se usa el panel de Redsys.
+    if (newStatus === 'pending') {
+      if (reg.payment_method === 'redsys') {
+        toast('Este pago se cobró por tarjeta (TPV) y no se puede marcar como pendiente desde aquí. Si hay que devolverlo, hazlo desde el panel de Redsys.', 'error');
+        return;
+      }
+      const ok = await confirmDialog(
+        `¿Marcar como PENDIENTE el pago de "${reg.player1_name} y ${reg.player2_name}" (${reg.category})?\n\nSe borrarán el importe y la fecha de cobro guardados.`,
+        { title: 'Marcar pago pendiente', okText: 'Marcar pendiente', danger: true }
+      );
+      if (!ok) return;
+    }
     const updates = { payment_status: newStatus };
     if (newStatus === 'paid') {
       updates.paid_at = new Date().toISOString();
@@ -700,9 +782,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const { error } = await supabase
       .from('tournament_registrations')
       .update(updates)
-      .eq('id', regId);
+      .eq('id', reg.id);
     if (error) { toast('Error: ' + error.message); return; }
-    setRegsList(prev => prev.map(r => r.id === regId ? { ...r, ...updates } : r));
+    setRegsList(prev => prev.map(r => r.id === reg.id ? { ...r, ...updates } : r));
   };
 
   const csvEscape = (v) => {
@@ -717,13 +799,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const downloadRegistrationsCsv = () => {
     const manualOnly = participants.filter(p => !regsList.some(r => r.id === p.id));
     if (regsList.length === 0 && manualOnly.length === 0) { toast('No hay inscripciones que exportar.', 'error'); return; }
-    const headers = ['Origen','Categoría','Jugador 1','Email 1','Tel 1','Talla 1','Jugador 2','Email 2','Tel 2','Talla 2','Estado pago','Importe','Pagado en','Fecha inscripción'];
+    const headers = ['Origen','Categoría','Jugador 1','Email 1','Tel 1','Talla 1','Jugador 2','Email 2','Tel 2','Talla 2','Estado pago','Método pago','Importe','Pagado en','Fecha inscripción'];
     const onlineRows = regsList.map(r => [
       'Online',
       r.category,
       r.player1_name, r.player1_email, r.player1_phone, r.player1_shirt_size || r.shirt_size || '',
       r.player2_name, r.player2_email, r.player2_phone, r.player2_shirt_size || '',
       r.payment_status,
+      paymentMethodLabel(r.payment_method),
       r.amount_paid != null ? Number(r.amount_paid).toFixed(2) : '',
       r.paid_at ? new Date(r.paid_at).toLocaleString('es-ES') : '',
       r.created_at ? new Date(r.created_at).toLocaleString('es-ES') : '',
@@ -733,7 +816,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       p.category || '',
       p.name, '', '', p.player1_shirt_size || '',
       '', '', '', p.player2_shirt_size || '',
-      '', '', '', '',
+      '', '', '', '', '',
     ]);
     const csv = [headers, ...onlineRows, ...manualRows].map(row => row.map(csvEscape).join(',')).join('\n');
     // BOM para que Excel detecte UTF-8 con tildes
@@ -3016,22 +3099,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const catRounds = rounds[cat];
     if (!catRounds || catRounds.length === 0) return;
 
-    // Construir clasificación a partir de los partidos de liguilla
-    const standings = {};
-    catRounds.forEach(round => round.forEach(m => {
-      [m.p1, m.p2].forEach(p => {
-        if (p && !p.isBye && !standings[p.id]) standings[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0 };
-      });
-      if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye) {
-        standings[m.p1.id].pj++; standings[m.p2.id].pj++;
-        if (m.winner.id === m.p1.id) {
-          standings[m.p1.id].pg++; standings[m.p1.id].pts += 2; standings[m.p2.id].pp++;
-        } else {
-          standings[m.p2.id].pg++; standings[m.p2.id].pts += 2; standings[m.p1.id].pp++;
-        }
-      }
-    }));
-    const ordered = Object.values(standings).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
+    // Clasificación con desempates (misma lógica que el panel y la web pública).
+    const ordered = computeLiguillaStandings(catRounds);
 
     const totalPlayed = catRounds.reduce((acc, r) => acc + r.filter(m => m.winner).length, 0);
     const totalMatches = catRounds.reduce((acc, r) => acc + r.length, 0);
@@ -3629,16 +3698,27 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         element.style.padding = '5rem 3rem 3rem 3rem';
         element.style.backgroundColor = '#FFFFFF';
 
-        // scale=4 para texto extra-nítido en papel (antes 3). PNG sin pérdida.
+        // scale=4 para texto nítido en papel, PERO en móviles/tablets (poca RAM)
+        // o pantallas estrechas bajamos a 2: un canvas enorme reventaba la
+        // captura. Además limitamos el total a ~16 millones de píxeles, el techo
+        // de canvas de varios navegadores móviles, para no obtener un PDF vacío.
+        const MAX_CANVAS_PX = 16000000;
+        const baseW = element.scrollWidth || 1600;
+        const baseH = element.scrollHeight || 1000;
+        const isTouchOrNarrow = (navigator.maxTouchPoints > 0) || (window.innerWidth < 1024);
+        const maxScaleByPx = Math.sqrt(MAX_CANVAS_PX / (baseW * baseH));
+        const pdfScale = Math.max(1, Math.min(isTouchOrNarrow ? 2 : 4, maxScaleByPx));
         const canvas = await html2canvas(element, {
-          scale: 4,
+          scale: pdfScale,
           useCORS: true,
           logging: false,
           backgroundColor: '#FFFFFF',
           imageTimeout: 0,
           letterRendering: true,
         });
-        const imgData = canvas.toDataURL('image/png');
+        // JPEG calidad 0.9 en vez de PNG: pesa mucho menos y evita el bloqueo al
+        // generar el dataURL de un PNG gigante en móvil.
+        const imgData = canvas.toDataURL('image/jpeg', 0.9);
 
         const pdf = new jsPDF({
             orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
@@ -3664,7 +3744,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const x = (pdfWidth - finalWidth) / 2;
         const y = (pdfHeight - finalHeight) / 2;
 
-        pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight, undefined, 'FAST');
+        pdf.addImage(imgData, 'JPEG', x, y, finalWidth, finalHeight, undefined, 'FAST');
 
         // Logo en la esquina SUPERIOR DERECHA. Lee la proporción real de
         // la imagen (no asumir cuadrado) para no aplastarla. El logo de
@@ -4590,11 +4670,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                 not_required: { bg: '#F1F5F9', color: '#64748B', label: 'Sin pago' },
                               };
                               const c = colors[r.payment_status] || colors.pending;
+                              const method = paymentMethodLabel(r.payment_method);
                               return (
-                                <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 800, background: c.bg, color: c.color }}>
-                                  {c.label}
-                                  {r.amount_paid != null && ` · ${Number(r.amount_paid).toFixed(2)}€`}
-                                </span>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start' }}>
+                                  <span style={{ display: 'inline-block', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 800, background: c.bg, color: c.color }}>
+                                    {c.label}
+                                    {r.amount_paid != null && ` · ${Number(r.amount_paid).toFixed(2)}€`}
+                                  </span>
+                                  {method && (
+                                    <span style={{ fontSize: '0.65rem', color: '#64748B', fontWeight: 600 }}>{method}</span>
+                                  )}
+                                </div>
                               );
                             })()}
                           </td>
@@ -4605,7 +4691,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                 antes de activar la cuota): si no, no había
                                 forma de apuntar el cobro en el club. */}
                             {(
-                              <button onClick={() => markRegistrationPaid(r.id, r.payment_status)} style={{ padding: '0.3rem 0.7rem', borderRadius: '0.4rem', border: 'none', background: r.payment_status === 'paid' ? '#FEF2F2' : '#16A34A', color: r.payment_status === 'paid' ? '#DC2626' : 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
+                              <button onClick={() => markRegistrationPaid(r)} style={{ padding: '0.3rem 0.7rem', borderRadius: '0.4rem', border: 'none', background: r.payment_status === 'paid' ? '#FEF2F2' : '#16A34A', color: r.payment_status === 'paid' ? '#DC2626' : 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
                                 {r.payment_status === 'paid' ? 'Marcar pendiente' : 'Marcar pagado'}
                               </button>
                             )}
@@ -6762,17 +6848,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          const isLiguilla = tConfig.formatByCategory?.[cat] === 'liguilla' || catRounds[0]?.[0]?.isRR;
 
          if (isLiguilla) {
-           // Compute standings
-           const standingsMap = {};
-           catRounds.forEach(round => round.forEach(m => {
-             [m.p1, m.p2].forEach(p => { if (p && !standingsMap[p.id]) standingsMap[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0 }; });
-             if (m.winner) {
-               standingsMap[m.p1.id].pj++; standingsMap[m.p2.id].pj++;
-               if (m.winner.id === m.p1.id) { standingsMap[m.p1.id].pg++; standingsMap[m.p1.id].pts += 2; standingsMap[m.p2.id].pp++; }
-               else { standingsMap[m.p2.id].pg++; standingsMap[m.p2.id].pts += 2; standingsMap[m.p1.id].pp++; }
-             }
-           }));
-           const standings = Object.values(standingsMap).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
+           // Clasificación con desempates (misma lógica que la web pública).
+           const standings = computeLiguillaStandings(catRounds);
            const liguillaExportId = `export-liguilla-${cat.replace(/\s+/g, '_')}`;
            const liguillaTitle = `${tConfig.formatByCategory?.[cat] === 'liguilla_ko' ? 'Liguilla + KO' : 'Liguilla'} · ${cat}`;
            return (
@@ -7477,8 +7554,17 @@ const TournamentManager = () => {
   };
 
   const deleteTournament = async (id) => {
+    // Avisar de las inscripciones con pago registrado que se van a perder.
+    const { count: paidCount } = await supabase
+      .from('tournament_registrations')
+      .select('id', { count: 'exact', head: true })
+      .eq('tournament_id', id)
+      .eq('payment_status', 'paid');
+    const paidWarning = paidCount > 0
+      ? `\n\n⚠️ Hay ${paidCount} inscripción(es) con pago registrado que se borrarán.`
+      : '';
     const ok = await confirmDialog(
-      '¿Estás seguro de que quieres eliminar este torneo permanentemente?\n\nTambién se borrarán todas las inscripciones asociadas.',
+      '¿Estás seguro de que quieres eliminar este torneo permanentemente?\n\nTambién se borrarán todas las inscripciones asociadas.' + paidWarning,
       { title: 'Eliminar torneo', okText: 'Eliminar permanentemente', danger: true }
     );
     if (!ok) return;

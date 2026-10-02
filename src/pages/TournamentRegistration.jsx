@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
 import { toTitleCase } from '../utils/names';
@@ -59,10 +59,53 @@ const deadlineMs = (dateStr, timeStr) => {
 };
 
 // Datos guardados antes de ir al TPV para poder "Reintentar pago" si vuelve
-// con ?inscripcion=fallo sin crear una segunda inscripción.
+// con ?inscripcion=fallo sin crear una segunda inscripción. Se guardan también
+// en localStorage (con caducidad) para que sobrevivan a una recarga o a que el
+// navegador descarte la pestaña mientras el jugador está en Redsys: antes solo
+// estaban en sessionStorage y el botón "Reintentar pago" desaparecía.
 const retryKey = (id) => `treg:${id}`;
+const RETRY_TTL_MS = 2 * 60 * 60 * 1000; // 2 h de validez para reintentar
 const readStoredRetry = (id) => {
-  try { return JSON.parse(sessionStorage.getItem(retryKey(id)) || 'null'); } catch { return null; }
+  const read = (store) => {
+    try { return JSON.parse(store.getItem(retryKey(id)) || 'null'); } catch { return null; }
+  };
+  let v = read(sessionStorage);
+  if (!v) {
+    v = read(localStorage);
+    if (v && v.ts && Date.now() - v.ts > RETRY_TTL_MS) {
+      try { localStorage.removeItem(retryKey(id)); } catch { /* ignore */ }
+      v = null;
+    }
+  }
+  return v;
+};
+const writeStoredRetry = (id, data) => {
+  const payload = JSON.stringify({ ...data, ts: Date.now() });
+  try { sessionStorage.setItem(retryKey(id), payload); } catch { /* ignore */ }
+  try { localStorage.setItem(retryKey(id), payload); } catch { /* ignore */ }
+};
+const clearStoredRetry = (id) => {
+  try { sessionStorage.removeItem(retryKey(id)); } catch { /* ignore */ }
+  try { localStorage.removeItem(retryKey(id)); } catch { /* ignore */ }
+};
+
+// Marca de "Pago recibido" en localStorage: así, si el jugador recarga la
+// página de confirmación (la vuelta del TPV trae ?inscripcion=ok una sola vez),
+// le volvemos a enseñar el acuse en vez del formulario vacío.
+const okKey = (id) => `treg_ok:${id}`;
+const OK_TTL_MS = 24 * 60 * 60 * 1000; // re-mostramos el acuse durante 24 h
+const writeStoredOk = (id) => {
+  try { localStorage.setItem(okKey(id), JSON.stringify({ ts: Date.now() })); } catch { /* ignore */ }
+};
+const readStoredOk = (id) => {
+  try {
+    const v = JSON.parse(localStorage.getItem(okKey(id)) || 'null');
+    if (v && v.ts && Date.now() - v.ts > OK_TTL_MS) {
+      try { localStorage.removeItem(okKey(id)); } catch { /* ignore */ }
+      return null;
+    }
+    return v;
+  } catch { return null; }
 };
 
 export default function TournamentRegistration() {
@@ -120,9 +163,37 @@ export default function TournamentRegistration() {
         if (data) setTournament(data);
         setPayScreen(payResult);
         if (payResult === 'ok') {
-          try { sessionStorage.removeItem(retryKey(id)); } catch { /* ignore */ }
+          clearStoredRetry(id);
+          writeStoredOk(id);
+        } else if (payResult === 'fallo') {
+          // Si el storage se perdió (recarga, pestaña descartada) pero el TPV
+          // nos devuelve el id (y el importe) en la URL, reconstruimos el dato
+          // de reintento para que "Reintentar pago" siga disponible.
+          const regFromUrl = searchParams.get('reg');
+          const impFromUrl = parseFloat(searchParams.get('imp') || '');
+          if (regFromUrl && impFromUrl > 0 && !readStoredRetry(id)) {
+            writeStoredRetry(id, { registrationId: regFromUrl, totalFee: impFromUrl });
+          }
         }
         setSearchParams({}, { replace: true });
+        setLoading(false);
+        return;
+      }
+      // Sin parámetro del TPV pero con acuse de pago guardado: re-mostramos
+      // "Pago recibido" tras una recarga en vez del formulario.
+      if (readStoredOk(id)) {
+        if (data) setTournament(data);
+        setPayScreen('ok');
+        setLoading(false);
+        return;
+      }
+      // Pago a medias (fuimos al TPV y no se completó): re-mostramos "Pago no
+      // completado" con "Reintentar pago" aunque se haya recargado la página,
+      // sin depender solo de sessionStorage. Así no vuelve al formulario vacío
+      // ni se inscribe (ni paga) por segunda vez.
+      if (readStoredRetry(id)?.registrationId) {
+        if (data) setTournament(data);
+        setPayScreen('fallo');
         setLoading(false);
         return;
       }
@@ -151,6 +222,21 @@ export default function TournamentRegistration() {
     };
     fetchTournament();
   }, [id]);
+
+  // Al volver del TPV con "atrás", el navegador puede restaurar la página desde
+  // la bfcache con los botones aún en "Procesando...". pageshow con persisted
+  // significa restauración: soltamos el lock y reactivamos los botones.
+  useEffect(() => {
+    const onPageShow = (e) => {
+      if (e.persisted) {
+        submitLockRef.current = false;
+        setLoading(false);
+        setRetrying(false);
+      }
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
 
   const activeDays = tournament
     ? getActiveDates(tournament.config.startDate, tournament.config.endDate)
@@ -225,6 +311,27 @@ export default function TournamentRegistration() {
       if (gridDragAction === 'block') next.add(key); else next.delete(key);
       return next;
     });
+  };
+
+  // Soporte táctil: en móvil no hay mousedown/mouseenter al arrastrar el dedo.
+  // Con elementFromPoint localizamos la celda bajo el toque y reutilizamos la
+  // misma lógica de ratón. Las celdas válidas llevan touch-action:none para que
+  // el arrastre marque horas en vez de hacer scroll.
+  const cellFromTouch = (touch) => {
+    if (!touch) return null;
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    const cell = el && el.closest ? el.closest('[data-grid-cell="1"]') : null;
+    if (!cell) return null;
+    return { day: cell.getAttribute('data-day'), hour: cell.getAttribute('data-hour') };
+  };
+  const handleGridTouchStart = (e) => {
+    const c = cellFromTouch(e.touches[0]);
+    if (c) handleCellMouseDown(c.day, c.hour);
+  };
+  const handleGridTouchMove = (e) => {
+    if (!gridDragging) return;
+    const c = cellFromTouch(e.touches[0]);
+    if (c) handleCellMouseEnter(c.day, c.hour);
   };
 
   const giftIsShirt = tournament?.config?.gift === 'shirt';
@@ -329,8 +436,18 @@ export default function TournamentRegistration() {
 
     // Generamos el UUID en el cliente para no necesitar SELECT después del
     // INSERT (los clientes no-admin no tienen policy SELECT sobre la tabla).
-    const registrationId = (crypto.randomUUID && crypto.randomUUID())
-      || `r_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    // Si no hay crypto.randomUUID (navegadores/WebView antiguos) generamos un
+    // UUID v4 válido con getRandomValues: un id "r_<ts>_<azar>" no es UUID y
+    // rompía el INSERT en la columna uuid.
+    const genUuidV4 = () => {
+      const b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40; // versión 4
+      b[8] = (b[8] & 0x3f) | 0x80; // variante 10xx
+      const h = [...b].map(x => x.toString(16).padStart(2, '0'));
+      return `${h[0]}${h[1]}${h[2]}${h[3]}-${h[4]}${h[5]}-${h[6]}${h[7]}-${h[8]}${h[9]}-${h[10]}${h[11]}${h[12]}${h[13]}${h[14]}${h[15]}`;
+    };
+    const registrationId = (crypto.randomUUID && crypto.randomUUID()) || genUuidV4();
 
     const { error: insError } = await supabase
       .from('tournament_registrations')
@@ -386,7 +503,7 @@ export default function TournamentRegistration() {
     // queda como 'pending' y será el admin quien marque el pago como recibido.
     if (totalFee > 0 && chosenMethod === 'card') {
       try {
-        try { sessionStorage.setItem(retryKey(id), JSON.stringify({ registrationId, totalFee })); } catch { /* ignore */ }
+        writeStoredRetry(id, { registrationId, totalFee });
         await redirectToRedsys(registrationId, totalFee);
         return; // el navegador navegará al TPV
       } catch (e) {
@@ -405,7 +522,10 @@ export default function TournamentRegistration() {
   const redirectToRedsys = async (registrationId, amount) => {
     const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
     const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/torneos/${id}?inscripcion=ok`)}`;
-    const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/torneos/${id}?inscripcion=fallo`)}`;
+    // Llevamos el id de inscripción y el importe en la URL de vuelta: si el
+    // storage se pierde (recarga, pestaña descartada), "Reintentar pago" se
+    // reconstruye desde aquí al volver del TPV.
+    const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/torneos/${id}?inscripcion=fallo&reg=${registrationId}&imp=${amount}`)}`;
     const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
     const res = await supabase.functions.invoke('redsys-create', {
@@ -484,6 +604,17 @@ export default function TournamentRegistration() {
     );
   }
 
+  // Vuelve al formulario limpio para inscribir a OTRA pareja. Borra los
+  // marcadores (ok/retry van por torneo, no por inscripción), importante en un
+  // móvil o tablet compartidos del club: sin esto, esa pantalla se quedaba 24h.
+  const hacerOtraInscripcion = () => {
+    clearStoredRetry(id);
+    try { localStorage.removeItem(okKey(id)); } catch { /* ignore */ }
+    setPayScreen(null);
+    setSuccess(false);
+    window.location.href = `/torneos/${id}`;
+  };
+
   // Vuelta del TPV con pago fallido/cancelado: la fila ya existe ('failed'),
   // así que NO mostramos el formulario (evita una segunda inscripción).
   if (payScreen === 'fallo') {
@@ -506,6 +637,9 @@ export default function TournamentRegistration() {
               {retrying ? 'Conectando con la pasarela...' : 'Reintentar pago'}
             </button>
           )}
+          <button onClick={hacerOtraInscripcion} style={{ width: '100%', padding: '0.875rem', backgroundColor: 'transparent', color: '#15803D', border: '1.5px solid #BBF7D0', borderRadius: '0.75rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem', marginBottom: '0.75rem' }}>
+            Inscribir a otra pareja
+          </button>
           <button onClick={() => navigate('/')} style={{ width: '100%', padding: '0.875rem', backgroundColor: '#0F172A', color: 'white', border: 'none', borderRadius: '0.75rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem' }}>
             Ir a Padel Medina
           </button>
@@ -530,6 +664,9 @@ export default function TournamentRegistration() {
           <p style={{ color: '#64748B', fontSize: '0.9rem', marginBottom: '2rem', lineHeight: '1.5' }}>
             Recibiréis un correo cuando validemos que la pareja encaja en la categoría seleccionada.
           </p>
+          <button onClick={hacerOtraInscripcion} style={{ width: '100%', padding: '0.875rem', backgroundColor: 'transparent', color: '#15803D', border: '1.5px solid #BBF7D0', borderRadius: '0.75rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem', marginBottom: '0.75rem' }}>
+            Inscribir a otra pareja
+          </button>
           <button onClick={() => navigate('/')} style={{ width: '100%', padding: '0.875rem', backgroundColor: '#0F172A', color: 'white', border: 'none', borderRadius: '0.75rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem' }}>
             Ir a Padel Medina
           </button>
@@ -544,7 +681,7 @@ export default function TournamentRegistration() {
     <div style={{ minHeight: '100vh', backgroundColor: '#F8FAFC', padding: 'clamp(1rem, 4vw, 2rem) 1rem' }} onMouseUp={() => setGridDragging(false)}>
       <style>{`@media (max-width: 480px) { .treg-main { padding: 1.25rem !important; border-radius: 1rem !important; } .treg-title { font-size: 1.5rem !important; } }`}</style>
       <div style={{ maxWidth: '640px', margin: '0 auto 0.75rem' }}>
-        <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', color: '#1B3A6E', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', padding: 0, transition: 'opacity 0.15s' }}
+        <button onClick={() => (window.history.length <= 1 ? navigate('/') : navigate(-1))} style={{ background: 'none', border: 'none', color: '#1B3A6E', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', padding: 0, transition: 'opacity 0.15s' }}
           onMouseOver={e => e.currentTarget.style.opacity = '0.7'}
           onMouseOut={e => e.currentTarget.style.opacity = '1'}
         >
@@ -719,7 +856,13 @@ export default function TournamentRegistration() {
             </div>
 
             {/* Grid */}
-            <div style={{ overflowX: 'auto', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
+            <div
+              style={{ overflowX: 'auto', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}
+              onTouchStart={handleGridTouchStart}
+              onTouchMove={handleGridTouchMove}
+              onTouchEnd={() => setGridDragging(false)}
+              onTouchCancel={() => setGridDragging(false)}
+            >
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
                 <thead>
                   <tr style={{ backgroundColor: '#F8FAFC' }}>
@@ -741,12 +884,16 @@ export default function TournamentRegistration() {
                         return (
                           <td key={day} style={{ padding: '0.15rem 0.3rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
                             <div
+                              data-grid-cell={isValid ? '1' : undefined}
+                              data-day={day}
+                              data-hour={hour}
                               onMouseDown={isValid ? () => handleCellMouseDown(day, hour) : undefined}
                               onMouseEnter={isValid ? () => handleCellMouseEnter(day, hour) : undefined}
                               style={{
                                 height: '24px',
                                 borderRadius: '4px',
                                 cursor: isValid ? 'pointer' : 'default',
+                                touchAction: isValid ? 'none' : undefined,
                                 backgroundColor: !isValid ? '#F1F5F9' : isBlocked ? '#FED7AA' : '#DCFCE7',
                                 border: `1px solid ${!isValid ? '#E2E8F0' : isBlocked ? '#F97316' : '#86EFAC'}`,
                                 transition: 'background-color 0.08s',
@@ -777,9 +924,9 @@ export default function TournamentRegistration() {
           </button>
           <p style={{ textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8', margin: '0.5rem 0 0' }}>
             Al inscribirte aceptas nuestra{' '}
-            <Link to="/privacidad" style={{ color: '#64748B', textDecoration: 'underline' }}>Política de Privacidad</Link>
+            <a href="/privacidad" target="_blank" rel="noopener noreferrer" style={{ color: '#64748B', textDecoration: 'underline' }}>Política de Privacidad</a>
             {' '}y el{' '}
-            <Link to="/aviso-legal" style={{ color: '#64748B', textDecoration: 'underline' }}>Aviso legal</Link>
+            <a href="/aviso-legal" target="_blank" rel="noopener noreferrer" style={{ color: '#64748B', textDecoration: 'underline' }}>Aviso legal</a>
           </p>
         </form>
       </main>

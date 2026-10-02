@@ -158,10 +158,13 @@ export default function EntrenosManager() {
     const csv = '﻿' + lineas.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    a.href = url;
     a.download = `entrenos-${nombreMes}.csv`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Revocar más tarde: en Safari/iPhone y Firefox revocar de inmediato puede
+    // cancelar la descarga.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 
   // ── Exportar PDF ──

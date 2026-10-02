@@ -43,7 +43,22 @@ const BookingDashboard = () => {
       setPagoCancelado(true);
       searchParams.delete('pago');
       setSearchParams(searchParams, { replace: true });
+      // El jugador volvió del banco sin pagar. Borrar el pago a medias (si no, se
+      // tomaría luego por un pago bueno) y liberar SU propio hueco retenido para
+      // que no se quede fuera de él 15 minutos.
+      (async () => {
+        let pend = null;
+        try { pend = JSON.parse(sessionStorage.getItem('pendingBooking') || localStorage.getItem('pendingBooking') || 'null'); } catch { pend = null; }
+        sessionStorage.removeItem('pendingBooking');
+        try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
+        if (pend?.bookingId && user?.id) {
+          await supabase.from('bookings').update({ status: 'cancelled' })
+            .eq('id', pend.bookingId).eq('user_id', user.id).eq('status', 'pendiente_pago')
+            .then(() => {}, () => {});
+        }
+      })();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [selectedDate, setSelectedDate] = useState(serverToday());
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', schedule_config: DEFAULT_SCHEDULE_CONFIG });
@@ -338,6 +353,14 @@ const BookingDashboard = () => {
           });
         }
       } catch { /* sin red: seguimos con el último valor cargado */ }
+      // Refrescar también las pistas: si el admin activa/desactiva una pista o le
+      // cambia el precio propio, se aplica en ≤30s sin tener que recargar.
+      try {
+        const { data: cs } = await supabase.from('courts').select('*').eq('active', true).order('name');
+        if (!cancelled && cs) {
+          setCourts(prev => JSON.stringify(prev) === JSON.stringify(cs) ? prev : cs);
+        }
+      } catch { /* sin red */ }
       if (cancelled) return;
       const now = serverNow();
       const [rH, rM] = (siteSettings.slots_release_time || '00:00').split(':').map(Number);

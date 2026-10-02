@@ -56,12 +56,23 @@ export function AuthProvider({ children }) {
         if (!cancelled) setUser(null);
         return;
       }
-      // 1) Pinta el usuario inmediatamente con rol por fallback.
-      if (!cancelled) setUser(buildUser(sessionUser, null));
+      // 1) Pinta el usuario de inmediato. Si es el MISMO usuario que ya estaba,
+      // conservamos el rol ya resuelto: auth-js emite SIGNED_IN/TOKEN_REFRESHED en
+      // CADA vuelta a la app, y resetear el rol a "cliente" hacía parpadear y
+      // desmontar el panel de un admin/monitor que no sea admin@padelmedina.com.
+      if (!cancelled) {
+        setUser(prev => {
+          if (prev && prev.id === sessionUser.id) {
+            const next = buildUser(sessionUser, prev.role);
+            return (prev.role === next.role && prev.email === next.email && prev.name === next.name) ? prev : next;
+          }
+          return buildUser(sessionUser, null);
+        });
+      }
       // 2) Refina el rol con profiles.role en background.
       fetchRole(sessionUser.id).then(role => {
         if (cancelled || !role) return;
-        setUser(prev => prev && prev.id === sessionUser.id ? buildUser(sessionUser, role) : prev);
+        setUser(prev => prev && prev.id === sessionUser.id && prev.role !== role ? buildUser(sessionUser, role) : prev);
       });
     };
 
@@ -120,7 +131,7 @@ export function AuthProvider({ children }) {
   // consentimiento = { aceptadoAt, version }: prueba de que aceptó la Política
   // de Privacidad y el Aviso legal al registrarse (queda en raw_user_meta_data)
   const signupWithEmail = async (email, password, name, phone, consentimiento) => {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -137,8 +148,20 @@ export function AuthProvider({ children }) {
     });
     if (error) throw error;
 
-    // Guardamos el teléfono en profiles si el usuario ya existe (upsert seguro)
-    // El trigger de Supabase crea el perfil; actualizamos teléfono aquí tras verificación
+    // Con la confirmación de email activada, GoTrue devuelve un usuario "ofuscado"
+    // (identities vacío) cuando el correo YA existe, SIN enviar ningún código. Hay
+    // que detectarlo para no dejar al usuario esperando un código que no llega.
+    if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      const e = new Error('Este correo ya está registrado. Entra con tu contraseña o recupérala.');
+      e.code = 'user_already_exists';
+      throw e;
+    }
+  };
+
+  // Reenviar el código de verificación de registro
+  const resendSignupCode = async (email) => {
+    const { error } = await supabase.auth.resend({ type: 'signup', email });
+    if (error) throw error;
   };
 
   // Verificar código OTP de registro
@@ -165,9 +188,24 @@ export function AuthProvider({ children }) {
     if (error) throw error;
   };
 
-  // Logout
+  // Logout. scope:'local' cierra SOLO esta sesión (antes cerraba también el PC del
+  // club y los demás dispositivos). Si no hay red, signOut falla: limpiamos el
+  // token a mano para no dejar la sesión "pegada". Y damos de baja el push de
+  // este dispositivo para que no siga recibiendo avisos con datos de clientes.
   const logout = async () => {
-    await supabase.auth.signOut();
+    try {
+      const m = await import('../services/pushNotifications');
+      if (m.unsubscribeFromPush) await m.unsubscribeFromPush();
+    } catch { /* noop */ }
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch { /* sin red: limpiamos igual */ }
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) localStorage.removeItem(k);
+      }
+    } catch { /* noop */ }
     setUser(null);
   };
 
@@ -184,7 +222,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resetPassword, updatePassword, logout, loading }}>
+    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resendSignupCode, resetPassword, updatePassword, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

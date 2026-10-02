@@ -429,7 +429,7 @@ export default function TimeClockManager() {
     a.href = URL.createObjectURL(blob);
     a.download = `control-horario-${nombreMes}.csv`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000); // Safari/iPhone y Firefox: revocar de inmediato puede cancelar la descarga
   };
 
   // ── Exportar PDF ──

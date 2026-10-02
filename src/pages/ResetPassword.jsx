@@ -18,10 +18,21 @@ export default function ResetPassword() {
 
   useEffect(() => {
     document.title = 'Restablecer contraseña · Padel Medina';
-    // Si ya hay sesión (el enlace de Supabase la crea) habilitamos el formulario.
-    supabase.auth.getSession().then(({ data: { session } }) => { if (session) setReady(true); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' || session) setReady(true);
+    // El hash lo capturó main.jsx de forma síncrona antes de que supabase lo
+    // borrara. Si el enlace caducó o ya se usó, trae un error.
+    const marca = (typeof window !== 'undefined' && window.__pmAuthHash) || {};
+    if (marca.error) {
+      setError('El enlace de recuperación ha caducado o ya se usó. Pide uno nuevo desde la pantalla de inicio de sesión.');
+      return;
+    }
+    // Solo habilitamos el formulario si VENIMOS de un enlace de recuperación
+    // (marca.recovery) Y supabase ha creado la sesión de recuperación. Así nunca
+    // cambiamos la contraseña de una sesión normal que ya estuviera abierta aquí.
+    if (marca.recovery) {
+      supabase.auth.getSession().then(({ data: { session } }) => { if (session) setReady(true); });
+    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setReady(true);
     });
     return () => subscription.unsubscribe();
   }, []);

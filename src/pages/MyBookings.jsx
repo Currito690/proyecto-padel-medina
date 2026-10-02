@@ -67,24 +67,6 @@ const MyBookings = () => {
   // y se sustituye por la fila real de la BD en cuanto el webhook la crea.
   const [optimistic, setOptimistic] = useState(null);
 
-  const sendConfirmationEmail = (booking) => {
-    if (!user?.email) return;
-    // Va con la sesión del usuario (invoke añade apikey y token): la función
-    // ahora exige un llamador autenticado.
-    supabase.functions.invoke('send-booking-email', {
-      body: {
-        type: 'confirmation',
-        email: user.email,
-        userName: user.name,
-        courtName: booking.courts?.name || 'Pista',
-        date: booking.date,
-        timeSlot: booking.time_slot,
-      },
-    })
-      .then(r => console.log('Email result:', r.data ?? r.error))
-      .catch(e => console.error('Email error:', e));
-  };
-
   useEffect(() => {
     const isPayOk = searchParams.get('pago') === 'ok';
     if (isPayOk) {
@@ -101,39 +83,40 @@ const MyBookings = () => {
           try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
         };
 
+        let pending = null;
+        try { pending = raw ? JSON.parse(raw) : null; } catch { pending = null; }
+
+        // Ignorar un pago a medias viejo: una tarjeta cancelada hace rato NO debe
+        // "resucitar" como pagada al volver de otra reserva (reserva fantasma).
+        if (pending && pending.ts && Date.now() - pending.ts > 30 * 60 * 1000) {
+          clearPending();
+          pending = null;
+        }
+
         // Pintar la reserva INMEDIATAMENTE (optimista) con los datos guardados
-        // antes de ir al banco, mientras llega la fila real del webhook. Así, al
-        // salir de Redsys la reserva ya se ve, sin esperas.
-        if (raw) {
-          const p = JSON.parse(raw);
+        // antes de ir al banco, mientras llega la fila real del webhook.
+        if (pending) {
           setOptimistic({
             id: 'optimista',
             optimistic: true,
-            court_id: p.courtId,
-            date: p.date,
-            time_slot: p.timeSlot,
+            court_id: pending.courtId,
+            date: pending.date,
+            time_slot: pending.timeSlot,
             is_free: false,
-            courts: { name: p.courtName || 'Pista', sport: p.sport || 'Pádel', location: p.location || '', gradient: p.gradient },
-          });
-          // Email de confirmación inmediato con los datos disponibles
-          sendConfirmationEmail({
-            courts: { name: p.courtName || 'Pista' },
-            date: p.date,
-            time_slot: p.timeSlot,
+            courts: { name: pending.courtName || 'Pista', sport: pending.sport || 'Pádel', location: pending.location || '', gradient: pending.gradient },
           });
         }
 
         let data = await loadBookings();
 
-        if (!raw) {
+        if (!pending) {
           // Pago en el club y reservas gratuitas: el correo de confirmación ya lo
-          // manda la pasarela al crear la reserva. Antes se enviaba aquí otro por
-          // cada reserva de los últimos 5 minutos, así que llegaba duplicado.
+          // manda la pasarela al crear la reserva (no se manda otro aquí).
           return;
         }
 
-        // Redsys/Bizum: esperar a que redsys-notify cree la reserva (para UI)
-        const { bookingId, courtId, date, timeSlot, metodo, isSplit } = JSON.parse(raw);
+        // Redsys/Bizum: esperar a que redsys-notify confirme el hold (para la UI).
+        const { bookingId, courtId, date, timeSlot, isSplit } = pending;
         for (let i = 0; i < 6; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
           if (found) { clearPending(); setOptimistic(null); return; }
@@ -146,24 +129,16 @@ const MyBookings = () => {
         // Pago compartido: NO crear fallback (perdería los tokens/teléfonos del split). Solo esperar.
         if (isSplit) { clearPending(); setOptimistic(null); return; }
 
-        // Fallback: redsys-notify no llegó → confirmar el hold pre-creado (flujo
-        // tolerancia cero) o, si el pago venía del flujo antiguo, crear la fila.
+        // Fallback si el aviso de Redsys tardó: confirmar SOLO un hold que siga
+        // 'pendiente_pago' (el .eq evita resucitar una reserva cancelada). Si no
+        // hay bookingId, no creamos nada: la alerta 'COBRO SIN RESERVA' del
+        // servidor cubre el caso raro de un cobro sin hold.
         if (bookingId) {
           const { error } = await supabase.from('bookings')
             .update({ status: 'confirmed' })
             .eq('id', bookingId)
-            .eq('user_id', user.id);
-          if (!error) await fetchBookingsSilent();
-        } else {
-          const { error } = await supabase.from('bookings').insert({
-            court_id: courtId,
-            user_id: user.id,
-            date,
-            time_slot: timeSlot,
-            status: 'confirmed',
-            is_free: false,
-            metodo_pago: metodo || 'tarjeta',
-          });
+            .eq('user_id', user.id)
+            .eq('status', 'pendiente_pago');
           if (!error) await fetchBookingsSilent();
         }
         clearPending();

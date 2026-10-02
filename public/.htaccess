@@ -12,6 +12,9 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+  # Redirección 301 de www al dominio sin www (antes del fallback de la SPA)
+  RewriteCond %{HTTP_HOST} ^www\.padelmedina\.com$ [NC]
+  RewriteRule ^ https://padelmedina.com%{REQUEST_URI} [R=301,L]
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]

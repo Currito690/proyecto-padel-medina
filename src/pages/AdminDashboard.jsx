@@ -479,6 +479,11 @@ const AdminDashboard = () => {
   const [savingSched, setSavingSched] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
+  const [settingsLoadError, setSettingsLoadError] = useState(false); // la carga de site_settings falló → no dejar guardar
+  // Copia de los ajustes tal cual se cargaron: al guardar solo enviamos las
+  // columnas que han cambiado respecto a esto, para no pisar cambios hechos
+  // en otra pestaña/dispositivo mientras tanto.
+  const settingsLoadedRef = useRef(null);
   const [selectedDate, setSelectedDate] = useState(serverToday());
   const [courts, setCourts] = useState([]);
   const [slots, setSlots] = useState({});
@@ -563,6 +568,8 @@ const AdminDashboard = () => {
     return ALL_METHODS;
   };
 
+  const sameMethods = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+
   const togglePaymentMethod = async (courtId, slot, method) => {
     const day = paymentDayFilter;
     const current = getAllowedMethods(courtId, slot, day);
@@ -572,6 +579,36 @@ const AdminDashboard = () => {
 
     const cellKey = `${courtId}-${day}-${slot}-${method}`;
     setSavingPaymentCell(cellKey);
+
+    // Si estamos editando un día concreto y el resultado coincide con lo que se
+    // heredaría de "Todos los días", borramos la fila específica en vez de
+    // duplicar la regla heredada: así la celda vuelve a mostrarse como heredada.
+    const courtRules = paymentRules[courtId];
+    const inherited = courtRules?.[-1]?.[slot] !== undefined ? courtRules[-1][slot] : ALL_METHODS;
+    if (day !== -1 && sameMethods(next, inherited)) {
+      const prevState = paymentRules;
+      // Optimistic: quitar el override del día
+      setPaymentRules(prev => {
+        const c = { ...(prev[courtId] || {}) };
+        const dayRules = { ...(c[day] || {}) };
+        delete dayRules[slot];
+        c[day] = dayRules;
+        return { ...prev, [courtId]: c };
+      });
+      const { error } = await supabase
+        .from('court_payment_rules')
+        .delete()
+        .eq('court_id', courtId)
+        .eq('time_slot', slot)
+        .eq('day_of_week', day);
+      setSavingPaymentCell(null);
+      if (error) {
+        console.error('Error borrando regla de pago:', error);
+        toast('Error al guardar: ' + error.message);
+        setPaymentRules(prevState); // Revert
+      }
+      return;
+    }
 
     // Optimistic update
     setPaymentRules(prev => ({
@@ -604,11 +641,67 @@ const AdminDashboard = () => {
     }
   };
 
+  // "Volver a heredado": borra TODAS las reglas propias de un día para una pista,
+  // de modo que ese día vuelve a regirse por la regla de "Todos los días".
+  const volverAHeredado = async (courtId) => {
+    const day = paymentDayFilter;
+    if (day === -1) return;
+    const dayLabel = DAY_OPTIONS.find(o => o.key === day)?.label || 'ese día';
+    const ok = await confirmDialog(
+      `¿Volver a la regla por defecto (todos los días) para ${dayLabel}? Se borrarán las reglas propias de ese día en esta pista.`,
+      { title: 'Volver a heredado', okText: 'Volver a heredado' }
+    );
+    if (!ok) return;
+    const prevState = paymentRules;
+    setPaymentRules(prev => {
+      const c = { ...(prev[courtId] || {}) };
+      delete c[day];
+      return { ...prev, [courtId]: c };
+    });
+    const { error } = await supabase
+      .from('court_payment_rules')
+      .delete()
+      .eq('court_id', courtId)
+      .eq('day_of_week', day);
+    if (error) {
+      toast('Error al restaurar: ' + error.message, 'error');
+      setPaymentRules(prevState);
+    } else {
+      toast(`${dayLabel} vuelve a usar la regla por defecto`, 'success');
+    }
+  };
+
+  // Releer de BD las reservas vivas (confirmadas + holds de pago aún válidos) de
+  // una pista y día, y decir si alguna SOLAPA con el intervalo [ini, fin] en
+  // minutos. Se usa antes de bloquear/marcar entreno para no pisar una reserva
+  // (la detección es por intervalos, no por igualdad de texto del hueco).
+  const haySolapeConReservas = async (courtId, date, ini, fin) => {
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('time_slot, status, created_at')
+      .eq('court_id', courtId)
+      .eq('date', date)
+      .in('status', ['confirmed', 'pendiente_pago']);
+    if (error) { toast('Error comprobando reservas: ' + error.message, 'error'); return true; }
+    const HOLD_MS = 15 * 60 * 1000;
+    return (data || []).some(b => {
+      if (b.status === 'pendiente_pago' && (Date.now() - new Date(b.created_at).getTime()) >= HOLD_MS) return false;
+      const [a, bb] = parseSlot(b.time_slot);
+      return ini < bb && a < fin;
+    });
+  };
+
   // Marcar el entreno con su duración REAL (puede diferir del hueco de la
   // parrilla; ej.: hueco 19:00-20:30 pero el entreno dura 20:00-21:00).
   const confirmarEntreno = async () => {
     if (!entrenoStart || !entrenoEnd || entrenoEnd <= entrenoStart) { toast('Pon una hora de inicio y una de fin válidas', 'error'); return; }
     const time_slot = `${entrenoStart} - ${entrenoEnd}`;
+    // No pisar una reserva viva de ese día/pista (por solape de intervalos).
+    const [ini, fin] = parseSlot(time_slot);
+    if (await haySolapeConReservas(entrenoModal.courtId, selectedDate, ini, fin)) {
+      toast('Ese horario pisa una reserva de ese día. Muévela o cámbiale la hora al entreno.', 'error');
+      return;
+    }
     const { error } = await supabase.from('blocked_slots').insert({
       court_id: entrenoModal.courtId,
       date: selectedDate,
@@ -677,6 +770,26 @@ const AdminDashboard = () => {
       return;
     }
     const time_slot = `${customStart} - ${customEnd}`;
+    // No pisar nada ocupado (reservas vivas, bloqueos, entrenos) ni otro hueco
+    // personalizado de ese día en esa pista — por solape de intervalos. Se
+    // consulta a BD porque el hueco puede ser para un día distinto al cargado.
+    const [ni, nf] = parseSlot(time_slot);
+    const [resBk, resBl, resCs] = await Promise.all([
+      supabase.from('bookings').select('time_slot, status, created_at').eq('court_id', customModal.courtId).eq('date', customDate).in('status', ['confirmed', 'pendiente_pago']),
+      supabase.from('blocked_slots').select('time_slot').eq('court_id', customModal.courtId).eq('date', customDate),
+      supabase.from('custom_slots').select('time_slot').eq('court_id', customModal.courtId).eq('date', customDate),
+    ]);
+    if (resBk.error || resBl.error || resCs.error) {
+      toast('Error comprobando disponibilidad: ' + (resBk.error || resBl.error || resCs.error).message, 'error');
+      return;
+    }
+    const HOLD_MS = 15 * 60 * 1000;
+    const solapa = (slotStr) => { const [a, b] = parseSlot(slotStr); return ni < b && a < nf; };
+    const pisaOcupado =
+      (resBk.data || []).some(b => (b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS) && solapa(b.time_slot)) ||
+      (resBl.data || []).some(b => solapa(b.time_slot));
+    if (pisaOcupado) { toast('Esa hora pisa una reserva, bloqueo o entreno de ese día', 'error'); return; }
+    if ((resCs.data || []).some(c => solapa(c.time_slot))) { toast('Ya hay un hueco personalizado que se solapa con esa hora ese día', 'error'); return; }
     const { error } = await supabase.from('custom_slots').insert({
       court_id: customModal.courtId, date: customDate, time_slot, created_by: user.id,
     });
@@ -740,7 +853,12 @@ const AdminDashboard = () => {
       if (!ok) return;
     }
     setSavingSched(true);
-    const { error } = await supabase.from('site_settings').update({ schedule_config: clean }).eq('id', 1);
+    const { data: savedRows, error } = await supabase.from('site_settings').update({ schedule_config: clean }).eq('id', 1).select('id');
+    if (!error && (!savedRows || savedRows.length === 0)) {
+      setSavingSched(false);
+      toast('No se guardó el horario: sin permiso o fila inexistente', 'error');
+      return;
+    }
     if (!error && huerfanas.length > 0) {
       const { error: delError } = await supabase.from('court_payment_rules').delete().in('time_slot', huerfanas);
       if (delError) toast('El horario se guardó, pero no se pudieron limpiar las reglas de pago antiguas: ' + delError.message, 'error');
@@ -820,9 +938,15 @@ const AdminDashboard = () => {
       }
     });
     blocked?.forEach(b => {
-      if (newSlots[b.court_id]) {
-        newSlots[b.court_id][b.time_slot] = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
+      if (!newSlots[b.court_id]) return;
+      const existing = newSlots[b.court_id][b.time_slot];
+      // Si ya hay una RESERVA a esa misma hora, no la pisamos con el bloqueo:
+      // marcamos el conflicto para que se vea (reserva + bloqueo a la vez).
+      if (existing && existing.status === 'booked') {
+        existing.conflicto = true;
+        return;
       }
+      newSlots[b.court_id][b.time_slot] = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
     });
 
     // ── Disponibles (idéntico a la vista del jugador) ──
@@ -851,12 +975,17 @@ const AdminDashboard = () => {
   useEffect(() => {
     async function init() {
       try {
-        // Cargar ajustes globales
-        const { data: settingsData } = await supabase.from('site_settings').select('*').single();
-        if (settingsData) {
+        // Cargar ajustes globales. supabase-js NO lanza: devuelve {error}. Si
+        // falla, marcamos el error para avisar y bloquear "Guardar Ajustes"
+        // (guardar sobre un estado sin cargar machacaría la fila con valores por defecto).
+        const { data: settingsData, error: settingsErr } = await supabase.from('site_settings').select('*').single();
+        if (settingsErr || !settingsData) {
+          console.error('Error cargando site_settings:', settingsErr);
+          setSettingsLoadError(true);
+        } else {
           const schedCfg = normalizeScheduleConfig(settingsData.schedule_config);
           scheduleCfgRef.current = schedCfg;
-          setSiteSettings({
+          const loadedSettings = {
             booking_window_days: settingsData.booking_window_days,
             court_price: parseFloat(settingsData.court_price),
             slots_release_time: settingsData.slots_release_time || '00:00',
@@ -865,7 +994,9 @@ const AdminDashboard = () => {
             cancellation_enabled: settingsData.cancellation_enabled ?? true,
             cancellation_hours: settingsData.cancellation_hours ?? 24,
             schedule_config: schedCfg,
-          });
+          };
+          settingsLoadedRef.current = loadedSettings;
+          setSiteSettings(loadedSettings);
         }
 
         const { data } = await supabase.from('courts').select('*').order('name');
@@ -897,6 +1028,31 @@ const AdminDashboard = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ¿El destino de un "Mover reserva" SOLAPA con algo? Comprueba por intervalos
+  // (no por igualdad de texto) contra: reservas vivas (confirmadas + holds de
+  // pago válidos, salvo la que se mueve), bloqueos/entrenos y otros huecos
+  // personalizados de esa pista/fecha (un custom con la MISMA hora destino es el
+  // propio hueco al que se mueve y no cuenta). Devuelve true si hay conflicto.
+  const destinoTieneSolape = async (courtId, date, time, excludeId) => {
+    const [ti, tf] = parseSlot(time);
+    const solapa = (slotStr) => { const [a, b] = parseSlot(slotStr); return ti < b && a < tf; };
+    const [resBk, resBl, resCs] = await Promise.all([
+      supabase.from('bookings').select('id, time_slot, status, created_at').eq('court_id', courtId).eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
+      supabase.from('blocked_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
+      supabase.from('custom_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
+    ]);
+    if (resBk.error || resBl.error || resCs.error) return true; // ante la duda, no dejar mover
+    const HOLD_MS = 15 * 60 * 1000;
+    const bookingConflict = (resBk.data || []).some(b =>
+      b.id !== excludeId &&
+      (b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS) &&
+      solapa(b.time_slot)
+    );
+    const blockedConflict = (resBl.data || []).some(b => solapa(b.time_slot));
+    const customConflict = (resCs.data || []).some(c => c.time_slot !== time && solapa(c.time_slot));
+    return bookingConflict || blockedConflict || customConflict;
+  };
+
   // Comprueba disponibilidad del slot destino al mover una reserva
   useEffect(() => {
     if (!moveTargetDate || !moveTargetCourtId || !moveTargetTime) {
@@ -904,19 +1060,31 @@ const AdminDashboard = () => {
       return;
     }
     setMoveSlotInfo('checking');
-    const check = async () => {
-      const [{ data: existing }, { data: blocked }] = await Promise.all([
-        supabase.from('bookings').select('id').eq('court_id', moveTargetCourtId).eq('date', moveTargetDate).eq('time_slot', moveTargetTime).eq('status', 'confirmed').neq('id', moveBooking?.id || ''),
-        supabase.from('blocked_slots').select('id').eq('court_id', moveTargetCourtId).eq('date', moveTargetDate).eq('time_slot', moveTargetTime),
-      ]);
-      setMoveSlotInfo((existing?.length > 0 || blocked?.length > 0) ? 'conflict' : 'available');
-    };
-    check();
+    let alive = true;
+    (async () => {
+      const conflict = await destinoTieneSolape(moveTargetCourtId, moveTargetDate, moveTargetTime, moveBooking?.id);
+      if (alive) setMoveSlotInfo(conflict ? 'conflict' : 'available');
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moveTargetDate, moveTargetCourtId, moveTargetTime, moveBooking]);
 
   // Recarga slots cuando cambia la fecha
   useEffect(() => {
     if (courtsRef.current.length > 0) loadSlots(selectedDate);
+  }, [selectedDate, loadSlots]);
+
+  // Al volver la pestaña a primer plano, recargar la parrilla: mientras estaba
+  // en segundo plano han podido entrar reservas desde la web/app y la vista
+  // quedaría desfasada (riesgo de bloquear/mover sobre algo ya reservado).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && courtsRef.current.length > 0) {
+        loadSlots(selectedDate);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [selectedDate, loadSlots]);
 
   // Carga TODAS las reservas cuando se activa la pestaña Reservas
@@ -926,7 +1094,7 @@ const AdminDashboard = () => {
     (async () => {
       const { data: bookings, error } = await supabase
         .from('bookings')
-        .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)')
+        .select('id, date, time_slot, status, is_free, metodo_pago, court_id, user_id, courts(name, sport, gradient)')
         .eq('date', bookingsDate)
         .order('time_slot', { ascending: true });
       if (error) { console.error('Error cargando reservas:', error); setLoadingAllBookings(false); return; }
@@ -957,8 +1125,13 @@ const AdminDashboard = () => {
       const obs = (bookObs || '').trim();
       const bookUserId = selectedUserId || user.id;
       const bookedUserName = obs || allUsers.find(u => u.id === bookUserId)?.name || user.name || 'Cliente';
-      const courtName = courts.find(c => c.id === courtId)?.name || 'Pista';
-      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true, observaciones: obs || null, metodo_pago: 'manual' });
+      const bookedCourt = courts.find(c => c.id === courtId);
+      const courtName = bookedCourt?.name || 'Pista';
+      // Importe que correspondería cobrar por esta pista: su precio propio o, si
+      // no tiene, el global de site_settings (en euros). La reserva nace gratis
+      // (manual) y pasa a ingreso al marcarla pagada, pero dejamos el importe listo.
+      const importe = Number(bookedCourt?.price != null ? bookedCourt.price : siteSettings.court_price);
+      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true, observaciones: obs || null, metodo_pago: 'manual', importe: Number.isFinite(importe) ? importe : null });
       actionError = error;
       if (!error) {
         supabase.functions.invoke('send-push', {
@@ -1001,6 +1174,13 @@ const AdminDashboard = () => {
       setBookObs('');
     } else if (action === 'block') {
       const tipo = opts.tipo === 'entreno' ? 'entreno' : 'bloqueado';
+      // No bloquear sobre una reserva viva (por solape de intervalos, releyendo BD).
+      const [ini, fin] = parseSlot(time);
+      if (await haySolapeConReservas(courtId, selectedDate, ini, fin)) {
+        toast(`No se puede ${tipo === 'entreno' ? 'marcar el entreno' : 'bloquear'}: ese horario pisa una reserva de ese día.`, 'error');
+        setIsProcessing(false);
+        return;
+      }
       const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id, tipo, entreno_grupo: tipo === 'entreno' ? (opts.grupo || 'grupo4') : null });
       actionError = error;
     } else if (action === 'cancel') {
@@ -1029,6 +1209,14 @@ const AdminDashboard = () => {
   const handleMoveBooking = async () => {
     if (!moveBooking || !moveTargetDate || !moveTargetCourtId || !moveTargetTime) return;
     setIsProcessing(true);
+    // Revalidar el destino por solape JUSTO antes de mover: entre la comprobación
+    // visual y el clic ha podido entrar una reserva desde la web/app.
+    if (await destinoTieneSolape(moveTargetCourtId, moveTargetDate, moveTargetTime, moveBooking.id)) {
+      setMoveSlotInfo('conflict');
+      toast('Ese destino se acaba de ocupar o solapa con algo. Elige otra franja.', 'error');
+      setIsProcessing(false);
+      return;
+    }
     const { error } = await supabase.from('bookings').update({
       date: moveTargetDate,
       time_slot: moveTargetTime,
@@ -1043,7 +1231,7 @@ const AdminDashboard = () => {
         const today = serverToday();
         // profiles NO se puede incrustar desde bookings (no hay FK): se cargan aparte.
         const { data } = await supabase.from('bookings')
-          .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)')
+          .select('id, date, time_slot, status, is_free, metodo_pago, court_id, user_id, courts(name, sport, gradient)')
           .eq('status', 'confirmed').gte('date', today).order('date').order('time_slot');
         const rows = data || [];
         const uids = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
@@ -1060,8 +1248,15 @@ const AdminDashboard = () => {
 
   const toggleCourt = async (courtId) => {
     const court = courts.find(c => c.id === courtId);
-    await supabase.from('courts').update({ active: !court.active }).eq('id', courtId);
-    const updated = courts.map(c => c.id === courtId ? { ...c, active: !c.active } : c);
+    const nuevo = !court.active;
+    // Confirmar contra BD: .select('id') devuelve la fila tocada; data vacío =
+    // no se guardó (sin permiso o fila inexistente). Solo tocamos la UI si fue bien.
+    const { data, error } = await supabase.from('courts').update({ active: nuevo }).eq('id', courtId).select('id');
+    if (error || !data || data.length === 0) {
+      toast(error ? 'Error: ' + error.message : 'No se guardó: sin permiso o fila inexistente', 'error');
+      return;
+    }
+    const updated = courts.map(c => c.id === courtId ? { ...c, active: nuevo } : c);
     courtsRef.current = updated;
     setCourts(updated);
   };
@@ -1072,17 +1267,36 @@ const AdminDashboard = () => {
     const price = parseFloat(raw);
     if (isNaN(price) || price < 0) return;
     setSavingCourtPrice(courtId);
-    const { error } = await supabase.from('courts').update({ price }).eq('id', courtId);
+    const { data, error } = await supabase.from('courts').update({ price }).eq('id', courtId).select('id');
     setSavingCourtPrice(null);
-    if (error) {
-      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'error', text: error.message } }));
+    if (error || !data || data.length === 0) {
+      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'error', text: error ? error.message : 'No se guardó: sin permiso o fila inexistente' } }));
     } else {
       const updated = courts.map(c => c.id === courtId ? { ...c, price } : c);
       courtsRef.current = updated;
       setCourts(updated);
+      setCourtPriceEdits(prev => { const n = { ...prev }; delete n[courtId]; return n; });
       setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'ok' } }));
       setTimeout(() => setCourtPriceMsg(prev => { const n = { ...prev }; delete n[courtId]; return n; }), 2000);
     }
+  };
+
+  // "Usar precio global": borra el precio propio de la pista (price = null) para
+  // que vuelva a regirse por el precio global de Configuración.
+  const useGlobalPrice = async (courtId) => {
+    setSavingCourtPrice(courtId);
+    const { data, error } = await supabase.from('courts').update({ price: null }).eq('id', courtId).select('id');
+    setSavingCourtPrice(null);
+    if (error || !data || data.length === 0) {
+      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'error', text: error ? error.message : 'No se guardó: sin permiso o fila inexistente' } }));
+      return;
+    }
+    const updated = courts.map(c => c.id === courtId ? { ...c, price: null } : c);
+    courtsRef.current = updated;
+    setCourts(updated);
+    setCourtPriceEdits(prev => { const n = { ...prev }; delete n[courtId]; return n; });
+    setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'ok' } }));
+    setTimeout(() => setCourtPriceMsg(prev => { const n = { ...prev }; delete n[courtId]; return n; }), 2000);
   };
 
   const handleDateChange = (e) => {
@@ -1091,6 +1305,12 @@ const AdminDashboard = () => {
   };
 
   const handleSaveSettings = async () => {
+    // Si la carga inicial falló, no dejamos guardar (machacaría la fila con
+    // valores por defecto). El botón ya está deshabilitado; esto es por si acaso.
+    if (settingsLoadError) {
+      setSettingsMsg({ type: 'error', text: 'No se pudieron cargar los ajustes, así que no se pueden guardar. Recarga la página.' });
+      return;
+    }
     setSavingSettings(true);
     setSettingsMsg(null);
     // Validar ANTES de guardar: un campo vacío guardaría null y rompería en silencio.
@@ -1106,22 +1326,71 @@ const AdminDashboard = () => {
       setSettingsMsg({ type: 'error', text: 'El precio de la pista debe ser un número (0 o más).' });
       return;
     }
-    const { error } = await supabase.from('site_settings').update({
+    // Antelación mínima para cancelar: solo si la cancelación está activada.
+    // Rechazar vacío/no numérico — antes un campo en blanco guardaba 0 sin querer.
+    let cancellationHours = settingsLoadedRef.current?.cancellation_hours ?? 24;
+    if (siteSettings.cancellation_enabled) {
+      const rawCh = siteSettings.cancellation_hours;
+      if (rawCh === '' || rawCh === null || rawCh === undefined) {
+        setSavingSettings(false);
+        setSettingsMsg({ type: 'error', text: 'Indica la antelación mínima para cancelar (horas). Pon 0 si quieres permitir cancelar hasta el último momento.' });
+        return;
+      }
+      const ch = parseInt(rawCh, 10);
+      if (!Number.isFinite(ch) || ch < 0) {
+        setSavingSettings(false);
+        setSettingsMsg({ type: 'error', text: 'La antelación mínima para cancelar debe ser un número de horas (0 o más).' });
+        return;
+      }
+      cancellationHours = ch;
+    }
+    // Sanear club_hours: null = día desactivado (se respeta); '' (bug) → '00:00'.
+    const sanitizedClubHours = {};
+    Object.entries(siteSettings.club_hours || {}).forEach(([k, v]) => {
+      sanitizedClubHours[k] = v === '' ? '00:00' : v;
+    });
+    const desired = {
       booking_window_days: windowDays,
       court_price: price,
       slots_release_time: siteSettings.slots_release_time || '00:00',
       club_open_time: siteSettings.club_open_time || '00:00',
-      club_hours: siteSettings.club_hours,
+      club_hours: sanitizedClubHours,
       cancellation_enabled: !!siteSettings.cancellation_enabled,
-      cancellation_hours: Math.max(0, parseInt(siteSettings.cancellation_hours, 10) || 0),
-    }).eq('id', 1);
-    setSavingSettings(false);
-    if (error) {
-      console.error(error);
-      setSettingsMsg({ type: 'error', text: 'Error al guardar: ' + error.message });
-    } else {
-      setSettingsMsg({ type: 'ok', text: '✓ Ajustes guardados. Los cambios ya son visibles para los clientes.' });
+      cancellation_hours: cancellationHours,
+    };
+    // Enviar SOLO las columnas que han cambiado respecto a lo que se cargó, para
+    // no pisar cambios hechos en otra pestaña/dispositivo mientras tanto.
+    const loaded = settingsLoadedRef.current || {};
+    const patch = {};
+    Object.keys(desired).forEach(k => {
+      const changed = k === 'club_hours'
+        ? JSON.stringify(desired[k]) !== JSON.stringify(loaded[k])
+        : desired[k] !== loaded[k];
+      if (changed) patch[k] = desired[k];
+    });
+    if (Object.keys(patch).length === 0) {
+      setSavingSettings(false);
+      // Reflejar el saneado de club_hours en la UI aunque no haya cambio en BD.
+      setSiteSettings(s => ({ ...s, club_hours: sanitizedClubHours, cancellation_hours: cancellationHours }));
+      setSettingsMsg({ type: 'ok', text: 'No había cambios que guardar.' });
       setTimeout(() => setSettingsMsg(null), 4000);
+      return;
+    }
+    const { data, error } = await supabase.from('site_settings').update(patch).eq('id', 1).select('id');
+    setSavingSettings(false);
+    if (error || !data || data.length === 0) {
+      console.error(error);
+      setSettingsMsg({ type: 'error', text: error ? 'Error al guardar: ' + error.message : 'No se guardó: sin permiso o fila inexistente.' });
+    } else {
+      settingsLoadedRef.current = { ...settingsLoadedRef.current, ...desired };
+      setSiteSettings(s => ({ ...s, club_hours: sanitizedClubHours, cancellation_hours: cancellationHours }));
+      // Si cambió el precio global, avisar de las pistas con precio propio (que no lo usan).
+      const ownPriceCourts = courts.filter(c => c.price != null);
+      const extraMsg = patch.court_price !== undefined && ownPriceCourts.length > 0
+        ? ` Estas pistas tienen precio propio y no usan el global: ${ownPriceCourts.map(c => c.name).join(', ')}.`
+        : '';
+      setSettingsMsg({ type: 'ok', text: '✓ Ajustes guardados. Los cambios ya son visibles para los clientes.' + extraMsg });
+      setTimeout(() => setSettingsMsg(null), extraMsg ? 7000 : 4000);
     }
   };
 
@@ -1630,7 +1899,7 @@ const AdminDashboard = () => {
                                     onClick={() => setActiveSlot(prev => prev?.courtId === court.id && prev?.time === time ? null : { courtId: court.id, time })}
                                     style={{ padding: '0.5rem 0.2rem', borderRadius: '0.5rem', border: `1.5px ${esCustom ? 'dashed' : 'solid'} ${c.borderColor}`, backgroundColor: c.backgroundColor, color: c.color, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', textAlign: 'center', cursor: court.active ? 'pointer' : 'not-allowed', transition: 'all 0.15s', lineHeight: 1.3 }}
                                   >
-                                    <div>{esCustom ? '🕐 ' : ''}{time.split(' - ')[0]}</div>
+                                    <div>{slot?.conflicto ? '⚠️ ' : ''}{esCustom ? '🕐 ' : ''}{time.split(' - ')[0]}</div>
                                     <div style={{ fontSize: '0.58rem', fontWeight: 500, marginTop: '0.15rem', opacity: 0.85 }}>
                                       {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? '🏋️ Entreno' : '🔒 Bloqueada') : 'Libre'}
                                     </div>
@@ -1650,6 +1919,11 @@ const AdminDashboard = () => {
                                     {selectedSlotData.status === 'booked' && (
                                       <p style={{ margin: '0.2rem 0 0', fontSize: '0.775rem', fontWeight: 700, color: '#1B3A6E' }}>
                                         Pago: {formatMetodoPago(selectedSlotData.metodo, selectedSlotData.isFree)}
+                                      </p>
+                                    )}
+                                    {selectedSlotData.conflicto && (
+                                      <p style={{ margin: '0.3rem 0 0', fontSize: '0.74rem', fontWeight: 800, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.5rem', padding: '0.3rem 0.5rem' }}>
+                                        ⚠️ Hay un bloqueo o entreno a esta misma hora. Revísalo: la reserva manda.
                                       </p>
                                     )}
                                   </div>
@@ -1806,9 +2080,37 @@ const AdminDashboard = () => {
                 const startDate = new Date(); startDate.setDate(startDate.getDate() - 30);
                 const startDateStr = startDate.getFullYear() + '-' + String(startDate.getMonth()+1).padStart(2,'0') + '-' + String(startDate.getDate()).padStart(2,'0');
                 const fmtDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-                const cancelDbBooking = async (id) => {
-                  await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', id);
-                  setAllDbBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
+                const cancelDbBooking = async (b) => {
+                  const nombre = b.profiles?.name || b.profiles?.email?.split('@')[0] || 'el cliente';
+                  const esReembolsable = b.metodo_pago === 'tarjeta' || b.metodo_pago === 'bizum';
+                  const ok = await confirmDialog(
+                    esReembolsable
+                      ? `¿Cancelar la reserva de ${nombre} (${b.time_slot})? Se pagó por ${b.metodo_pago === 'tarjeta' ? 'tarjeta' : 'Bizum'}: la DEVOLUCIÓN hay que hacerla a mano, esto no la hace.`
+                      : `¿Cancelar la reserva de ${nombre} (${b.time_slot})?`,
+                    { title: 'Cancelar reserva', okText: 'Cancelar reserva', danger: true }
+                  );
+                  if (!ok) return;
+                  // Confirmar contra BD: data vacío = no se canceló (sin permiso o fila inexistente).
+                  const { data, error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', b.id).select('id');
+                  if (error || !data || data.length === 0) {
+                    toast(error ? 'Error al cancelar: ' + error.message : 'No se canceló: sin permiso o fila inexistente', 'error');
+                    return;
+                  }
+                  setAllDbBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'cancelled' } : x));
+                  toast('Reserva cancelada', 'success');
+                  // Avisar al cliente (dueño de la reserva) por email de la cancelación.
+                  if (b.profiles?.email) {
+                    supabase.functions.invoke('send-booking-email', {
+                      body: {
+                        type: 'cancelada',
+                        email: b.profiles.email,
+                        userName: b.profiles.name || 'jugador/a',
+                        courtName: b.courts?.name || 'Pista',
+                        date: b.date,
+                        timeSlot: b.time_slot,
+                      },
+                    }).catch(() => {});
+                  }
                 };
                 return (
                   <div>
@@ -1859,7 +2161,7 @@ const AdminDashboard = () => {
                                     }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
                                       Mover
                                     </button>
-                                    <button onClick={() => cancelDbBooking(b.id)}
+                                    <button onClick={() => cancelDbBooking(b)}
                                       style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
                                       Cancelar
                                     </button>
@@ -1885,8 +2187,15 @@ const AdminDashboard = () => {
               {activeTab === 'settings' && (
                 <div style={{ maxWidth: '600px' }}>
                   <p className="section-label" style={{ marginBottom: '1.5rem' }}>Ajustes Generales del Club</p>
-                  
-                  <div style={{ backgroundColor: 'white', padding: '1.75rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+                  {settingsLoadError && (
+                    <div style={{ marginBottom: '1.25rem', padding: '0.875rem 1rem', borderRadius: '0.75rem', fontSize: '0.875rem', fontWeight: 600, backgroundColor: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      No se pudieron cargar los ajustes. No se pueden guardar cambios hasta recargar la página (si no, se machacarían con valores por defecto).
+                    </div>
+                  )}
+
+                  <div style={{ backgroundColor: 'white', padding: '1.75rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1.5rem', opacity: settingsLoadError ? 0.6 : 1, pointerEvents: settingsLoadError ? 'none' : 'auto' }}>
                     <div>
                       <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
                         Días de antelación permitidos para reservar
@@ -2040,7 +2349,7 @@ const AdminDashboard = () => {
                                   <input
                                     type="time"
                                     value={val || '00:00'}
-                                    onChange={(e) => updateHours(e.target.value)}
+                                    onChange={(e) => updateHours(e.target.value || '00:00')}
                                     className="ch-time-input"
                                   />
                                   {val === '00:00' && <span style={{ fontSize: '0.72rem', color: '#16A34A', fontWeight: 700, whiteSpace: 'nowrap' }}>siempre</span>}
@@ -2109,10 +2418,10 @@ const AdminDashboard = () => {
                         {settingsMsg.text}
                       </div>
                     )}
-                    <button 
+                    <button
                       onClick={handleSaveSettings}
-                      disabled={savingSettings}
-                      style={{ marginTop: '0.5rem', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: savingSettings ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
+                      disabled={savingSettings || settingsLoadError}
+                      style={{ marginTop: '0.5rem', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: (savingSettings || settingsLoadError) ? '#94A3B8' : '#16A34A', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: (savingSettings || settingsLoadError) ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
                     >
                       {savingSettings ? 'Guardando cambios...' : 'Guardar Ajustes'}
                     </button>
@@ -2173,6 +2482,16 @@ const AdminDashboard = () => {
                                 {savingCourtPrice === court.id ? '...' : 'Guardar'}
                               </button>
                             )}
+                            {court.price != null && (
+                              <button
+                                onClick={() => useGlobalPrice(court.id)}
+                                disabled={savingCourtPrice === court.id}
+                                title="Quitar el precio propio y usar el global de Configuración"
+                                style={{ padding: '0.35rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.78rem', cursor: savingCourtPrice === court.id ? 'not-allowed' : 'pointer' }}
+                              >
+                                Usar precio global
+                              </button>
+                            )}
                             {msg?.type === 'ok' && <span style={{ fontSize: '0.78rem', color: '#16A34A', fontWeight: 700 }}>✓ Guardado</span>}
                             {msg?.type === 'error' && <span style={{ fontSize: '0.78rem', color: '#DC2626', fontWeight: 700 }}>Error: {msg.text}</span>}
                             {court.price == null && !isDirty && (
@@ -2229,11 +2548,22 @@ const AdminDashboard = () => {
                                     );
                                   })}
                                 </div>
-                                <p style={{ margin: '0 0 0.625rem', fontSize: '0.7rem', color: paymentDayFilter === -1 ? '#1D4ED8' : '#15803D', fontWeight: 700 }}>
-                                  {paymentDayFilter === -1
-                                    ? 'Editando regla por defecto (todos los días)'
-                                    : `Editando solo ${DAY_OPTIONS.find(o => o.key === paymentDayFilter)?.label}`}
-                                </p>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', margin: '0 0 0.625rem' }}>
+                                  <p style={{ margin: 0, fontSize: '0.7rem', color: paymentDayFilter === -1 ? '#1D4ED8' : '#15803D', fontWeight: 700 }}>
+                                    {paymentDayFilter === -1
+                                      ? 'Editando regla por defecto (todos los días)'
+                                      : `Editando solo ${DAY_OPTIONS.find(o => o.key === paymentDayFilter)?.label}`}
+                                  </p>
+                                  {paymentDayFilter !== -1 && paymentRules[court.id]?.[paymentDayFilter] && Object.keys(paymentRules[court.id][paymentDayFilter]).length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => volverAHeredado(court.id)}
+                                      style={{ padding: '0.3rem 0.65rem', borderRadius: '999px', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', cursor: 'pointer' }}
+                                    >
+                                      ↺ Volver a heredado
+                                    </button>
+                                  )}
+                                </div>
 
                                 <div style={{ overflowX: 'auto' }}>
                                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', minWidth: '360px' }}>

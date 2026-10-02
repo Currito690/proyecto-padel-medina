@@ -17,6 +17,17 @@ const SECRET_KEY    = Deno.env.get('REDSYS_SECRET_KEY');
 // ── URL del TPV Virtual Redsys (Producción Real) ──
 const REDSYS_URL = 'https://sis.redsys.es/sis/realizarPago';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Redsys firma los parámetros con btoa(JSON), que solo admite Latin-1: un nombre
+// de torneo con guion largo, €, comillas tipográficas o emoji hace que btoa lance
+// 'Invalid character' y nadie pueda pagar. Dejamos la descripción en ASCII puro.
+function ascii(s: string): string {
+  return (s || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // quita acentos: á→a, ñ→n
+    .replace(/[^\x20-\x7E]/g, ''); // elimina lo que no sea ASCII imprimible
+}
+
 // ── Genera número de pedido único (12 chars, empieza por 4 dígitos) ──
 function generateOrderId(): string {
   const ts = Date.now().toString().slice(-8);
@@ -75,7 +86,6 @@ serve(async (req) => {
     let chargeAmount = amount;
     let expectedCents: number | null = null;
     if (isTournament) {
-      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (typeof registrationId !== 'string' || !UUID_RE.test(registrationId)) {
         throw new Error('Inscripción no válida');
       }
@@ -103,6 +113,41 @@ serve(async (req) => {
       }
       chargeAmount = Math.round(fee * 2 * 100) / 100; // por pareja
       expectedCents = Math.round(chargeAmount * 100);
+    } else if (!isSharedPayment) {
+      // Reserva normal: NO nos fiamos del importe que manda el navegador (si no,
+      // cualquiera podría pagar 1 céntimo y quedar como pagado). Cargamos el hold
+      // 'pendiente_pago' con la service key y calculamos el precio desde la pista.
+      if (typeof bookingId !== 'string' || !UUID_RE.test(bookingId)) {
+        throw new Error('Reserva no válida');
+      }
+      const admin = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      );
+      const { data: hold, error: holdErr } = await admin
+        .from('bookings')
+        .select('id, court_id, user_id, status')
+        .eq('id', bookingId)
+        .maybeSingle();
+      if (holdErr) {
+        console.error('Error cargando el hold para cobro:', holdErr);
+        throw new Error('No se pudo comprobar la reserva');
+      }
+      if (!hold) throw new Error('Reserva no encontrada');
+      if (hold.status !== 'pendiente_pago') throw new Error('La reserva ya no está pendiente de pago');
+      if (userId && hold.user_id !== userId) throw new Error('La reserva no es de este usuario');
+
+      // Precio: el propio de la pista o, si no tiene, el global de site_settings.
+      const { data: court } = await admin.from('courts').select('price').eq('id', hold.court_id).maybeSingle();
+      let precio = court?.price;
+      if (precio === null || precio === undefined) {
+        const { data: ss } = await admin.from('site_settings').select('court_price').single();
+        precio = ss?.court_price;
+      }
+      const precioNum = Number(precio);
+      if (!(precioNum > 0)) throw new Error('Precio de pista no válido');
+      chargeAmount = Math.round(precioNum * 100) / 100;
+      expectedCents = Math.round(chargeAmount * 100);
     }
     const amountCents = Math.round(chargeAmount * 100).toString().padStart(4, '0');
 
@@ -117,14 +162,15 @@ serve(async (req) => {
           userId,
           date,
           timeSlot,
+          expectedCents, // redsys-notify comprueba que Ds_Amount coincide antes de confirmar
           isSharedPayment: !!isSharedPayment,
           sharedPhones: isSharedPayment ? sharedPhones : []
         };
     if (splitToken && !isTournament) merchantDataObj.splitToken = splitToken;
 
     const productDescription = isTournament
-      ? `Inscripcion torneo ${(tournamentName || '').slice(0, 60)}`.slice(0, 125)
-      : `Pista padel ${date} ${timeSlot}`;
+      ? ascii(`Inscripcion torneo ${(tournamentName || '').slice(0, 60)}`).slice(0, 125)
+      : ascii(`Pista padel ${date} ${timeSlot}`);
 
     const params: Record<string, string> = {
       DS_MERCHANT_MERCHANTCODE:       MERCHANT_CODE,

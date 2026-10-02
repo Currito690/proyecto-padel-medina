@@ -41,25 +41,12 @@ function App() {
   useEffect(() => {
     if (user?.role !== 'admin') return;
 
+    // Solo registramos/refrescamos la suscripción push del admin. El aviso
+    // "Nueva reserva" lo manda cada ruta de reserva por su cuenta; disparar
+    // aquí desde el canal Realtime duplicaba avisos (y avisaba de holds sin
+    // pagar y de las propias reservas del admin), así que se ha quitado.
     subscribeAdminToPush(supabase, user.id);
-
-    const triggerPush = async (title, body) => {
-      await supabase.functions.invoke('send-push', {
-        body: { title, body, url: '/admin' },
-        headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY }
-      });
-    };
-
-    const channel = supabase.channel('admin-push-channel')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bookings' }, () => {
-        triggerPush('Nueva reserva', `Se ha realizado una nueva reserva`);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user]);
+  }, [user?.id]);
 
   // === MODO MANTENIMIENTO ===
   const MAINTENANCE_MODE = false;

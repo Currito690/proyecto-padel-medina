@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
+import { serverNow } from '../utils/serverTime';
 
 // Pago compartido temporalmente DESACTIVADO (oculta la pestaña "Compartido").
 // Cambiar a true para reactivarlo cuando esté probado.
@@ -41,20 +42,27 @@ const PaymentGateway = () => {
   // Calcular si el pago en club está disponible ahora (por día y hora)
   const { isClubOpen, clubOpenTime } = (() => {
     if (!clubHours) return { isClubOpen: true, clubOpenTime: null };
-    const now = new Date();
+    const now = serverNow();
     const dayKey = String(now.getDay()); // 0=dom, 1=lun ...
     const val = clubHours[dayKey];
     if (val === null || val === undefined) return { isClubOpen: false, clubOpenTime: null };
-    if (val === '00:00') return { isClubOpen: true, clubOpenTime: null };
+    // '' (vacío) = abierto todo el día, igual que '00:00'. El selector de hora de
+    // Android deja '' al pulsar "Borrar"; sin esto, ese día desaparecía "Pago en
+    // el club" aunque el panel lo mostrara activado.
+    if (val === '00:00' || val === '') return { isClubOpen: true, clubOpenTime: null };
     const [h, m] = val.split(':').map(Number);
     const openMin = h * 60 + m;
     const nowMin  = now.getHours() * 60 + now.getMinutes();
     return { isClubOpen: nowMin >= openMin, clubOpenTime: val };
   })();
 
-  // Si el carrito está vacío, volver al inicio
+  // Si el carrito está vacío, volver al inicio. Si tenía pistas y se vació solo
+  // (caducan a los 5 min), avisar para que el jugador no se quede sin saber qué pasó.
+  const teniaItemsRef = useRef(false);
   useEffect(() => {
+    if (items.length > 0) teniaItemsRef.current = true;
     if (items.length === 0) {
+      if (teniaItemsRef.current) toast('Tu pista ha caducado en el carrito, vuelve a elegirla.', 'info');
       navigate('/', { replace: true });
     }
   }, [items.length, navigate]);
@@ -158,6 +166,7 @@ const PaymentGateway = () => {
           split_phones: [],
           split_paid: 4,
           metodo_pago: 'gratis',
+          importe: 0,
         });
         if (bookErr) throw bookErr;
         supabase.functions.invoke('send-push', {
@@ -184,6 +193,10 @@ const PaymentGateway = () => {
             metodoPago: 'Gratuita',
           },
         }).catch(() => {});
+        // Borrar cualquier pago a medias anterior: si no, Mis Reservas lo tomaría
+        // por el "pago" recién hecho y confirmaría una reserva fantasma.
+        sessionStorage.removeItem('pendingBooking');
+        try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
         clearCart();
         navigate('/mis-reservas?pago=ok');
         return;
@@ -279,6 +292,7 @@ const PaymentGateway = () => {
         date: item.date,
         timeSlot: item.timeSlot,
         metodo: method === 'bizum' ? 'bizum' : 'tarjeta',
+        ts: Date.now(), // para descartar pagos a medias viejos en Mis Reservas
       });
       sessionStorage.setItem('pendingBooking', pendingData);
       try { localStorage.setItem('pendingBooking', pendingData); } catch { /* storage lleno */ }
@@ -301,6 +315,10 @@ const PaymentGateway = () => {
     if (payLockRef.current) return; // mismo lock — evita combinar pagos en paralelo
     payLockRef.current = true;
     setProcessingClub(true);
+    // Borrar cualquier pago a medias anterior (p. ej. una tarjeta cancelada): si
+    // no, al navegar a ?pago=ok, Mis Reservas lo confirmaría como reserva fantasma.
+    sessionStorage.removeItem('pendingBooking');
+    try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
     try {
       const rows = items.map((item) => ({
         court_id: item.courtId,
@@ -310,6 +328,7 @@ const PaymentGateway = () => {
         status: 'confirmed',
         is_free: false,
         metodo_pago: 'club',
+        importe: item.price,
       }));
 
       const { error } = await supabase.from('bookings').insert(rows);
@@ -411,6 +430,7 @@ const PaymentGateway = () => {
         timeSlot: item.timeSlot,
         metodo: 'tarjeta',
         isSplit: true,
+        ts: Date.now(),
       });
       sessionStorage.setItem('pendingBooking', pendingSplit);
       try { localStorage.setItem('pendingBooking', pendingSplit); } catch { /* storage lleno */ }

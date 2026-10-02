@@ -8,6 +8,18 @@ import { CartProvider } from './context/CartContext'
 import { startServerTimeSync } from './utils/serverTime'
 import { registrarDesdeUrl } from './utils/gpsNativo'
 
+// Capturamos el hash de la URL de forma SÍNCRONA al arrancar, ANTES de que
+// supabase (detectSessionInUrl) lo borre durante su inicialización asíncrona.
+// La página de recuperar contraseña lo necesita para saber que venimos de un
+// enlace de recuperación válido (y no de una sesión normal ya abierta).
+try {
+  const h = window.location.hash || '';
+  window.__pmAuthHash = {
+    recovery: /type=recovery/.test(h) && /access_token=/.test(h),
+    error: /[#&?]error(_code)?=/.test(h),
+  };
+} catch { /* sin window: nada */ }
+
 // Sincroniza la hora con el servidor (Supabase Date header). Necesario para
 // que las comprobaciones de plazo, orden cronológico, etc. no dependan del
 // reloj del navegador (que el usuario puede tener mal).
@@ -19,6 +31,12 @@ startServerTimeSync();
 registrarDesdeUrl();
 
 if ('serviceWorker' in navigator) {
+  // ¿Había ya un SW controlando la página en este arranque? En la primera
+  // visita no lo hay: el primer controllerchange es la activación inicial y NO
+  // debe recargar (perdería formularios a medio rellenar). Solo recargamos
+  // cuando un deploy nuevo releva a un SW que ya controlaba la página.
+  const teniaControlador = !!navigator.serviceWorker.controller;
+
   navigator.serviceWorker.register('/sw.js').then((reg) => {
     // Cuando el usuario vuelve a la pestaña (Ej: tras estar en otra app),
     // pedimos al browser que compruebe si hay un SW nuevo. Si lo hay y
@@ -31,9 +49,10 @@ if ('serviceWorker' in navigator) {
   // Si el SW activo cambia (= deploy nuevo + skipWaiting + clients.claim),
   // recarga la página automáticamente para que el usuario obtenga el JS/CSS
   // actualizado sin tener que hacer Ctrl+Shift+R. Solo recarga una vez para
-  // evitar bucles si algo va mal.
+  // evitar bucles, y solo si ya había un controlador (no en la primera visita).
   let _swReloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!teniaControlador) return;
     if (_swReloaded) return;
     _swReloaded = true;
     window.location.reload();

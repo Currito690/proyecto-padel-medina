@@ -44,6 +44,55 @@ const parseScore = (scoreStr, pIdx) => {
   }).filter(n => n !== null);
 };
 
+// Clasificación de liguilla con desempates. Orden: puntos → enfrentamiento
+// directo → diferencia de sets → diferencia de juegos → partidos ganados.
+// Lee los juegos de match.score ("6-4 7-6(5)" = p1 6/7, p2 4/6). MISMA lógica
+// en el panel del admin y en la página pública del cuadro.
+const computeLiguillaStandings = (catRounds) => {
+  const setToken = (raw) => {
+    const s = String(raw).replace(/\(.*?\)/g, '').replace(/[[\]]/g, '');
+    const m = s.match(/^(\d+)-(\d+)$/);
+    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+  };
+  const map = {};
+  const h2h = {}; // h2h[ganadorId][perdedorId] = true
+  (catRounds || []).forEach(round => (round || []).forEach(m => {
+    [m.p1, m.p2].forEach(p => {
+      if (p && !p.isBye && !map[p.id]) {
+        map[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0, sf: 0, sa: 0, gf: 0, ga: 0 };
+      }
+    });
+    if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye && map[m.p1.id] && map[m.p2.id]) {
+      const a = map[m.p1.id], b = map[m.p2.id];
+      a.pj++; b.pj++;
+      if (m.winner.id === m.p1.id) { a.pg++; a.pts += 2; b.pp++; }
+      else { b.pg++; b.pts += 2; a.pp++; }
+      let w1 = 0, w2 = 0;
+      String(m.score || '').trim().split(/\s+/).forEach(raw => {
+        const set = setToken(raw);
+        if (!set) return;
+        a.gf += set[0]; a.ga += set[1];
+        b.gf += set[1]; b.ga += set[0];
+        if (set[0] > set[1]) w1++; else if (set[1] > set[0]) w2++;
+      });
+      a.sf += w1; a.sa += w2;
+      b.sf += w2; b.sa += w1;
+      const win = m.winner.id, lose = m.winner.id === m.p1.id ? m.p2.id : m.p1.id;
+      (h2h[win] = h2h[win] || {})[lose] = true;
+    }
+  }));
+  return Object.values(map).sort((x, y) => {
+    if (y.pts !== x.pts) return y.pts - x.pts;
+    if (h2h[x.pair.id]?.[y.pair.id]) return -1;
+    if (h2h[y.pair.id]?.[x.pair.id]) return 1;
+    const xs = x.sf - x.sa, ys = y.sf - y.sa;
+    if (ys !== xs) return ys - xs;
+    const xg = x.gf - x.ga, yg = y.gf - y.ga;
+    if (yg !== xg) return yg - xg;
+    return y.pg - x.pg;
+  });
+};
+
 // Reemplaza "Pista N" por su nombre custom (config.courtNames[N]) si existe.
 const displayTimeWithCourtNames = (timeStr, courtNames) => {
   if (!timeStr) return '';
@@ -164,6 +213,30 @@ export default function TournamentBracket() {
     fetchTournament();
   }, [id]);
 
+  // "Cuadro en vivo": el cuadro cambia durante el torneo (resultados, horarios).
+  // Volvemos a consultar al pasar la pestaña a primer plano y cada 60 s mientras
+  // esté visible, para que la etiqueta "en vivo" sea cierta sin recargar.
+  useEffect(() => {
+    let cancelled = false;
+    const refetch = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const { data } = await supabase
+        .from('tournaments')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (!cancelled && data && data.config?.bracketPublished === true) setTournament(data);
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refetch(); };
+    const interval = setInterval(refetch, 60000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [id]);
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -203,7 +276,7 @@ export default function TournamentBracket() {
       <div style={{ background: 'linear-gradient(135deg, #1B3A6E 0%, #152D57 100%)', color: 'white', padding: 'clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2rem)', boxShadow: '0 4px 20px rgba(27,58,110,0.3)' }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => (window.history.length <= 1 ? navigate('/') : navigate(-1))}
             style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.75)', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', marginBottom: '1rem', padding: 0, transition: 'color 0.15s' }}
             onMouseOver={e => e.currentTarget.style.color = 'white'}
             onMouseOut={e => e.currentTarget.style.color = 'rgba(255,255,255,0.75)'}
@@ -281,22 +354,8 @@ export default function TournamentBracket() {
               const isLiguilla = catRounds[0]?.[0]?.isRR;
 
               if (isLiguilla) {
-                // Standings computation
-                const standingsMap = {};
-                catRounds.forEach(round => round.forEach(m => {
-                  [m.p1, m.p2].forEach(p => {
-                    if (p && !standingsMap[p.id]) standingsMap[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0 };
-                  });
-                  if (m.winner) {
-                    standingsMap[m.p1.id].pj++; standingsMap[m.p2.id].pj++;
-                    if (m.winner.id === m.p1.id) {
-                      standingsMap[m.p1.id].pg++; standingsMap[m.p1.id].pts += 2; standingsMap[m.p2.id].pp++;
-                    } else {
-                      standingsMap[m.p2.id].pg++; standingsMap[m.p2.id].pts += 2; standingsMap[m.p1.id].pp++;
-                    }
-                  }
-                }));
-                const standings = Object.values(standingsMap).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
+                // Clasificación con desempates (misma lógica que el panel).
+                const standings = computeLiguillaStandings(catRounds);
 
                 return (
                   <div key={cat}>
