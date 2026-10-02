@@ -171,6 +171,13 @@ BEGIN
 END;
 $function$;
 
+-- 4b) Un cliente solo puede CANCELAR su reserva, nunca confirmarla sin pagar.
+DROP POLICY IF EXISTS "Usuarios cancelan sus reservas" ON public.bookings;
+CREATE POLICY "Usuarios cancelan sus reservas" ON public.bookings
+  FOR UPDATE
+  USING ( auth.uid() = user_id OR public.is_admin() )
+  WITH CHECK ( public.is_admin() OR status = 'cancelled' );
+
 -- 5) DATOS: arreglar el jueves vacio (los clientes no veian 'Pago en el club')
 UPDATE public.site_settings SET club_hours = jsonb_set(club_hours::jsonb, '{4}', '"00:00"'::jsonb)::json WHERE (club_hours::jsonb ->> '4') = '';
 
