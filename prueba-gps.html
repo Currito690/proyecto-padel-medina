@@ -17,7 +17,24 @@
 <h1>Diagnóstico de ubicación</h1>
 <button id="pedir">Pedir ubicación</button>
 <button id="seguir">Seguimiento 20 s</button>
+<button id="nativo" style="background:#1B3A6E">Ubicación por la app</button>
 <div id="log"></div>
+<script>
+  // Prueba del puente nativo: salta a la pantalla de la app y vuelve aquí con ?gps=
+  var q = new URLSearchParams(location.search);
+  if (q.get('gps')) {
+    var d0 = document.createElement('div'); d0.className = 'l ok'; d0.textContent = 'VUELTA DE LA APP: gps=' + q.get('gps');
+    document.getElementById('log').appendChild(d0);
+  }
+  document.getElementById('nativo').addEventListener('click', function () {
+    var volver = location.origin + location.pathname;
+    var intent = 'intent://ubicacion#Intent;scheme=padelmedina;package=com.padelmedina.app;S.volver=' + encodeURIComponent(volver) + ';end';
+    var d = document.createElement('div'); d.className = 'l info'; d.textContent = 'Saltando a la app: ' + intent;
+    document.getElementById('log').appendChild(d);
+    location.href = intent;
+  });
+</script>
+
 <script>
   var log = function (t, c) {
     var d = document.createElement('div');
