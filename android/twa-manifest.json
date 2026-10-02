@@ -13,7 +13,7 @@
   "navigationDividerColorDark": "#1E293B",
   "backgroundColor": "#FFFFFF",
   "enableNotifications": true,
-  "startUrl": "/?source=pwa",
+  "startUrl": "/?source=pwa&gpsnativo=1",
   "iconUrl": "https://padelmedina.com/icon-512.png",
   "maskableIconUrl": "https://padelmedina.com/icon-512-maskable.png",
   "splashScreenFadeOutDuration": 300,
@@ -21,17 +21,13 @@
     "path": "C:/Users/curri/AndroidBuild/claves/padelmedina-upload.jks",
     "alias": "padelmedina"
   },
-  "appVersion": "1.0.1",
-  "appVersionCode": 3,
+  "appVersion": "1.0.4",
+  "appVersionCode": 6,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://padelmedina.com/manifest.json",
   "fallbackType": "customtabs",
-  "features": {
-    "locationDelegation": {
-      "enabled": true
-    }
-  },
+  "features": {},
   "alphaDependencies": {
     "enabled": false
   },
@@ -41,6 +37,6 @@
   "fullScopeUrl": "https://padelmedina.com/",
   "additionalTrustedOrigins": [],
   "retainedBundles": [],
-  "appVersionName": "1.0.1",
+  "appVersionName": "1.0.4",
   "minSdkVersion": 24
 }

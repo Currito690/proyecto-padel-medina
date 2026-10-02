@@ -6,11 +6,17 @@ import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
 import { startServerTimeSync } from './utils/serverTime'
+import { registrarDesdeUrl } from './utils/gpsNativo'
 
 // Sincroniza la hora con el servidor (Supabase Date header). Necesario para
 // que las comprobaciones de plazo, orden cronológico, etc. no dependan del
 // reloj del navegador (que el usuario puede tener mal).
 startServerTimeSync();
+
+// La app Android arranca con ?gpsnativo=1: a partir de ahí la ubicación del
+// fichaje se pide a la app y no a Chrome. Hay que leerlo antes de que el
+// enrutador limpie la URL.
+registrarDesdeUrl();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').then((reg) => {

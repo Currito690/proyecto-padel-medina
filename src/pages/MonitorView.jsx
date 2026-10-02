@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
+import { hayGpsNativo, pedirUbicacionNativa, leerVueltaNativa } from '../utils/gpsNativo';
 
 const horaDe = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
@@ -187,6 +188,27 @@ export default function MonitorView() {
     return () => clearTimeout(ref.current); // sin reintentos huérfanos al salir
   }, [loadFichajes]);
 
+  // Vuelta desde la pantalla nativa de ubicación de la app Android: trae la
+  // posición (o el motivo del fallo) en la URL y hay que seguir con la firma.
+  useEffect(() => {
+    const vuelta = leerVueltaNativa();
+    if (!vuelta) return;
+    if (vuelta.pos) {
+      errGpsRef.current = null;
+      ultimaPosRef.current = vuelta.pos;
+    } else if (vuelta.error) {
+      errGpsRef.current = vuelta.error === 'permiso' ? 1 : vuelta.error === 'desactivada' ? 2 : 3;
+      if (vuelta.error === 'permiso') setGpsPermiso('denied');
+      toast(
+        vuelta.error === 'permiso' ? 'La app no tiene permiso de ubicación: el fichaje saldrá sin ella.'
+          : vuelta.error === 'desactivada' ? 'La ubicación del móvil está apagada: el fichaje saldrá sin ella.'
+          : 'No se ha podido obtener la ubicación: el fichaje saldrá sin ella.',
+        'warning', 6000,
+      );
+    }
+    if (vuelta.firmar) setFirmando(true);
+  }, []);
+
   // El estado del botón sale SOLO de los fichajes REALES del trabajador: un
   // turno manual que apunte el admin (aunque sea de hoy) no debe cambiarle el
   // botón de entrada/salida ni el "trabajando desde…".
@@ -259,6 +281,7 @@ export default function MonitorView() {
       try { return localStorage.getItem(AVISO_GPS_KEY); } catch { return null; }
     })();
     const decidir = (estado) => {
+      if (hayGpsNativo()) return; // la ubicación la pone la app, no Chrome
       if (estado === 'granted') calentarGps();
       // 'denied': el aviso de la tarjeta ya ofrece reintentar
       else if (estado === 'denied') { /* nada que pedir */ }
@@ -283,6 +306,19 @@ export default function MonitorView() {
     }
     return () => { cancelado = true; if (st) st.onchange = null; };
   }, [calentarGps]);
+
+  // Al pulsar "Firmar": en la app Android se abre primero la pantalla nativa
+  // de ubicación, que vuelve a esta misma página con la posición y con
+  // ?firmar=1 para seguir con la firma. Si nadie responde, vía normal.
+  const iniciarFirma = async () => {
+    if (hayGpsNativo()) {
+      setFichando(true);
+      const seFue = await pedirUbicacionNativa();
+      if (seFue) return; // la app toma el control; volvemos con la posición
+      setFichando(false);
+    }
+    setFirmando(true);
+  };
 
   const cerrarAvisoGps = (activar) => {
     // Se guarda QUÉ contestó, no solo que lo vio: "Ahora no" no puede dejarle
@@ -324,7 +360,7 @@ export default function MonitorView() {
         watchIdRef.current = null;
       }
     };
-    if (!firmando || !navigator.geolocation) { parar(); return undefined; }
+    if (!firmando || !navigator.geolocation || hayGpsNativo()) { parar(); return undefined; }
     posRef.current = null; // posición NUEVA para este fichaje (no la de la vez anterior)
     try {
       watchIdRef.current = navigator.geolocation.watchPosition(
@@ -358,6 +394,10 @@ export default function MonitorView() {
     const mejor = () => [...candidatos, posRef.current, reciente()]
       .filter(Boolean)
       .sort((a, b) => (a.precision_m ?? 9999) - (b.precision_m ?? 9999))[0] || null;
+
+    // En la app Android la posición ya vino de la pantalla nativa (o no vino):
+    // no se le pregunta a Chrome, que aquí se queda colgado.
+    if (hayGpsNativo()) { resolve(reciente()); return; }
 
     const yaBuena = mejor();
     if (yaBuena && (yaBuena.precision_m ?? 9999) <= PRECISION_BUENA_M) { resolve(yaBuena); return; }
@@ -1025,12 +1065,7 @@ export default function MonitorView() {
                 {trabajando ? `Trabajando desde las ${horaDe(ultimoFichaje.fichado_at)}` : 'Turno sin iniciar'}
                 {enClaseAhora && <span style={{ color: '#7E22CE' }}> · 🎾 ahora en clase</span>}
               </div>
-              <div style={{ marginTop: '0.4rem' }}>
-                <a href="/prueba-gps.html" style={{ fontSize: '0.68rem', color: '#94A3B8', textDecoration: 'underline' }}>
-                  🔧 Diagnóstico de ubicación
-                </a>
-              </div>
-              {gpsPermiso && gpsPermiso !== 'granted' && (
+              {!hayGpsNativo() && gpsPermiso && gpsPermiso !== 'granted' && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', fontWeight: 700, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.6rem', padding: '0.5rem 0.65rem', maxWidth: 440 }}>
                   {gpsPermiso === 'denied' ? (
                     <>
@@ -1056,7 +1091,7 @@ export default function MonitorView() {
                 </div>
               )}
             </div>
-            <button onClick={() => setFirmando(true)} disabled={fichando} style={{
+            <button onClick={iniciarFirma} disabled={fichando} style={{
               padding: '0.7rem 1.2rem', borderRadius: '0.7rem', border: 'none', cursor: fichando ? 'wait' : 'pointer',
               background: trabajando ? '#DC2626' : '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.88rem',
               fontFamily: 'inherit', opacity: fichando ? 0.7 : 1, boxShadow: trabajando ? '0 4px 14px rgba(220,38,38,0.3)' : '0 4px 14px rgba(22,163,74,0.3)',

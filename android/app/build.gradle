@@ -23,7 +23,7 @@ plugins {
 def twaManifest = [
     applicationId: 'com.padelmedina.app',
     hostName: 'padelmedina.com', // The domain being opened in the TWA.
-    launchUrl: '/?source=pwa', // The start path for the TWA. Must be relative to the domain.
+    launchUrl: '/?source=pwa&gpsnativo=1', // The start path for the TWA. Must be relative to the domain.
     name: 'Padel Medina', // The application name.
     launcherName: 'Padel Medina', // The name shown on the Android Launcher.
     themeColor: '#16A34A', // The color used for the status bar.
@@ -57,8 +57,8 @@ android {
         applicationId "com.padelmedina.app"
         minSdkVersion 24
         targetSdkVersion 36
-        versionCode 3
-        versionName "1.0.1"
+        versionCode 6
+        versionName "1.0.4"
 
         // The name for the application
         resValue "string", "appName", twaManifest.name
@@ -207,8 +207,6 @@ repositories {
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
-    
-        implementation 'com.google.androidbrowserhelper:locationdelegation:1.1.2'
     
         implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.6.2'
     

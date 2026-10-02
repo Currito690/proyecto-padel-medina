@@ -57,6 +57,30 @@ Ese `.aab` firmado es el fichero que se sube a Google Play.
 2. Vuelve a compilar y a firmar.
 3. Sube el `.aab` a Play Console en una versión nueva.
 
+## Después de regenerar el proyecto: aplicar el parche propio
+
+Bubblewrap regenera `app/` entero con `bubblewrap update` y pisa tres cosas
+nuestras. Por eso, **siempre** después de regenerar hay que ejecutar:
+
+```bash
+python parchear.py
+```
+
+Lo que mantiene ese parche, y por qué existe:
+
+- **Chrome forzado como motor de la app** (`LauncherActivity.java`). Android abre
+  estas apps con el navegador predeterminado del móvil; en muchos Samsung es
+  Samsung Internet, que solo tiene soporte básico y rompe cosas.
+- **Pantalla nativa de ubicación** (`extra/UbicacionActivity.java`, registrada en
+  el manifiesto con la dirección `padelmedina://ubicacion`). Dentro de la app,
+  Chrome no da ubicación precisa en algunos móviles y la delegación de ubicación
+  de Google se queda colgada. La web, cuando corre dentro de la app, abre esta
+  pantalla al pulsar «Firmar»; la pantalla coge la posición con el GPS de Android
+  y vuelve a la web con las coordenadas en la URL (`?gps=lat,lng,precision,ts`).
+  La web lo sabe porque la app arranca con `?gpsnativo=1` en su URL de inicio.
+- **Permisos de ubicación** declarados a mano en el manifiesto, porque la
+  delegación de Google (que los traía) está desactivada en `twa-manifest.json`.
+
 ## Si cambian los iconos o los colores
 
 Se regeneran los recursos del proyecto Android a partir del `twa-manifest.json`
