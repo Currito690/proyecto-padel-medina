@@ -61,6 +61,7 @@ const MyBookings = () => {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagoOk, setPagoOk] = useState(false);
+  const [offline, setOffline] = useState(false); // sin conexión: mostramos la copia guardada
   const [cancelSettings, setCancelSettings] = useState({ enabled: true, hours: 24 });
   const [splitTokens, setSplitTokens] = useState({}); // booking_id -> [tokens] (pago compartido)
   // Reserva recién pagada en Redsys: se pinta AL INSTANTE al volver del banco,
@@ -177,9 +178,26 @@ const MyBookings = () => {
       .eq('user_id', user.id)
       .eq('status', 'confirmed')
       .order('created_at', { ascending: false });
-    if (error) console.error('fetchBookings error:', error.message);
+    if (error) {
+      console.error('fetchBookings error:', error.message);
+      // Sin conexión: mostrar la última copia guardada de las reservas, para que
+      // puedas ver si tienes pista aunque te quedes sin internet.
+      try {
+        const raw = localStorage.getItem('pm_bookings_cache');
+        const cache = raw ? JSON.parse(raw) : null;
+        if (cache && cache.userId === user.id && Array.isArray(cache.rows)) {
+          setBookings(cache.rows);
+          setOffline(true);
+          return cache.rows;
+        }
+      } catch { /* sin copia guardada */ }
+      return [];
+    }
+    setOffline(false);
     if (data) {
       setBookings(data);
+      // Guardar una copia para poder verla sin conexión la próxima vez.
+      try { localStorage.setItem('pm_bookings_cache', JSON.stringify({ userId: user.id, rows: data })); } catch { /* almacenamiento lleno */ }
       // Cargar los tokens de pago compartido de las reservas 'split' (para los enlaces WhatsApp).
       const splitIds = data.filter(b => b.payment_type === 'split').map(b => b.id);
       if (splitIds.length) {
@@ -275,6 +293,13 @@ const MyBookings = () => {
   return (
     <div className="dashboard-container">
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+      {/* ── Aviso sin conexión ── */}
+      {offline && (
+        <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span>📴</span> Sin conexión. Mostrando tus reservas guardadas la última vez.
+        </div>
+      )}
 
       {/* ── Banner pago OK ── */}
       {pagoOk && (
