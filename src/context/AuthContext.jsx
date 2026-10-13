@@ -1,8 +1,17 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
+import { Capacitor } from '@capacitor/core';
 // Usuarios "monitor" (solo lectura de la agenda) reconocidos por email como
 // respaldo, además de profiles.role = 'monitor'.
 import { MONITOR_EMAILS } from '../utils/staff';
+
+// Hash SHA-256 en hex (para el nonce de "Iniciar sesión con Apple": Apple recibe
+// el hash y Supabase el valor crudo; así no se puede reutilizar el token).
+async function sha256Hex(str) {
+  const data = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 const AuthContext = createContext();
 
@@ -121,6 +130,32 @@ export function AuthProvider({ children }) {
     });
   };
 
+  // Login con Apple — NATIVO (Face ID, sin navegador). Solo en la app de iPhone.
+  // Usa el plugin de Capacitor para pedir el token a Apple y lo canjea en
+  // Supabase con signInWithIdToken (provider 'apple'). El plugin se carga de
+  // forma diferida para no incluirlo en el bundle web.
+  const loginWithApple = async () => {
+    if (!Capacitor.isNativePlatform()) {
+      throw new Error('Iniciar sesión con Apple solo está disponible en la app de iPhone');
+    }
+    const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
+    const rawNonce = `${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}.${Date.now().toString(36)}`;
+    const hashedNonce = await sha256Hex(rawNonce);
+    const { response } = await SignInWithApple.authorize({
+      clientId: 'com.padelmedina.app',
+      redirectURI: 'https://padelmedina.com/supabase/auth/v1/callback',
+      scopes: 'email name',
+      nonce: hashedNonce,
+    });
+    if (!response?.identityToken) throw new Error('Apple no devolvió el token de identidad');
+    const { error } = await supabase.auth.signInWithIdToken({
+      provider: 'apple',
+      token: response.identityToken,
+      nonce: rawNonce,
+    });
+    if (error) throw error;
+  };
+
   // Login con email + contraseña
   const loginWithPassword = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -222,7 +257,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resendSignupCode, resetPassword, updatePassword, logout, loading }}>
+    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithApple, loginWithPassword, signupWithEmail, verifySignupOtp, resendSignupCode, resetPassword, updatePassword, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
