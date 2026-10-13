@@ -7,6 +7,7 @@ import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
 import { startServerTimeSync } from './utils/serverTime'
 import { registrarDesdeUrl } from './utils/gpsNativo'
+import { Capacitor } from '@capacitor/core'
 
 // Capturamos el hash de la URL de forma SÍNCRONA al arrancar, ANTES de que
 // supabase (detectSessionInUrl) lo borre durante su inicialización asíncrona.
@@ -83,3 +84,10 @@ requestAnimationFrame(() => {
     }
   });
 });
+
+// Solo en la app NATIVA (iPhone/iPad vía Capacitor): barra de estado, splash,
+// enlaces profundos y push de Apple. En la web y en la app Android (TWA) es un
+// no-op — isNativePlatform() es false y el módulo nativo ni se descarga.
+if (Capacitor.isNativePlatform()) {
+  import('./native/capacitorBootstrap.js').then((m) => m.initNative()).catch(() => {});
+}
