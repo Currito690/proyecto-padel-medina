@@ -10,26 +10,32 @@ import DateSelector from '../components/booking/DateSelector';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverToday, serverNow } from '../utils/serverTime';
 import { DEFAULT_SCHEDULE_CONFIG, normalizeScheduleConfig, buildScheduleTimes, rebuildAvailableTimes, parseSlot, toMin } from '../utils/schedule';
+import { entrenoPagado as entrenoEstaPagado, reservaPagada } from '../utils/entrenos';
 
 const formatDate = (dateStr) => {
   const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 };
 
+// Solo DOS colores de cobro: verde = pagado, rojo = sin pagar. Valen igual
+// para una RESERVA de pista y para un ENTRENO. Libre = neutro; bloqueada = gris.
 const slotColors = {
-  available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' },
-  booked:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#DC2626' },
-  online:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#2563EB' }, // tarjeta/bizum
-  club:      { borderColor: '#FDE68A', backgroundColor: '#FFFBEB', color: '#B45309' }, // pago en el club
-  blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#94A3B8' },
-  entreno:   { borderColor: '#D8B4FE', backgroundColor: '#FAF5FF', color: '#9333EA' }, // bloqueada para entrenos
+  available: { borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', color: '#94A3B8' }, // hueco libre (neutro)
+  pagado:    { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' }, // cobrado (verde)
+  impago:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#DC2626' }, // sin cobrar (rojo)
+  blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#94A3B8' }, // bloqueada (gris)
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
-// Color de una reserva según su método de pago: tarjeta/bizum = AZUL;
-// todo lo demás (pago en club, manual del admin, gratis, antiguas) = ROJO.
-const metodoColor = (metodo) =>
-  metodo === 'tarjeta' || metodo === 'bizum' ? slotColors.online : slotColors.booked;
+// Color pagado/sin pagar (vale para reserva y entreno)
+const colorPago = (pagado) => pagado ? slotColors.pagado : slotColors.impago;
+const etiquetaEntreno = (pagado) => pagado ? '🏋️ Pagado' : '🏋️ Sin pagar';
+const textoEntrenoDetalle = (s) => {
+  const inf = s.entrenoInfo;
+  const estado = s.entrenoPagado ? 'Pagado' : 'Sin pagar';
+  if (!inf || inf.personas == null) return `🏋️ Entreno · ${estado}`;
+  return `🏋️ Entreno · ${estado} (${inf.pagados}/${inf.personas} alumnos)`;
+};
 
 // Etiqueta del método de pago de una reserva (con fallback para reservas antiguas).
 const METODO_PAGO_LABELS = {
@@ -884,10 +890,14 @@ const AdminDashboard = () => {
   };
 
   const loadSlots = useCallback(async (date) => {
-    const [resBookings, resBlocked, resCustoms] = await Promise.all([
+    const [resBookings, resBlocked, resCustoms, resClases] = await Promise.all([
       supabase.from('bookings').select('*').eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('*').eq('date', date),
       supabase.from('custom_slots').select('*').eq('date', date),
+      // Cobro de los entrenos: lo marca el monitor en clases_monitor (el admin,
+      // por RLS, ve todas las filas). Si la tabla no existe aún, data va vacío y
+      // los entrenos se pintan como "sin confirmar" (morado), como hasta ahora.
+      supabase.from('clases_monitor').select('court_id, time_slot, personas, pagos').eq('date', date),
     ]);
 
     if (resBookings.error) {
@@ -901,6 +911,19 @@ const AdminDashboard = () => {
       b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS
     );
     const blocked = resBlocked.data || [];
+
+    // Resumen de cobro por entreno (clave court_id|time_slot). Si hubiera varios
+    // monitores en la misma pista/hora, se suman sus alumnos y sus pagos.
+    const clasesEntreno = {};
+    (resClases.data || []).forEach(c => {
+      const key = `${c.court_id}|${c.time_slot}`;
+      const personas = Number(c.personas) || 0;
+      const pagados = Array.isArray(c.pagos) ? c.pagos.filter(Boolean).length : 0;
+      const prev = clasesEntreno[key];
+      clasesEntreno[key] = prev
+        ? { personas: prev.personas + personas, pagados: prev.pagados + pagados }
+        : { personas, pagados };
+    });
 
     if (bookings.length > 0) {
       const userIds = [...new Set(bookings.map(b => b.user_id))];
@@ -931,9 +954,10 @@ const AdminDashboard = () => {
           client: b.status === 'pendiente_pago'
             ? `⏳ ${b.profiles?.name || 'Pago en curso'}`
             : (b.observaciones || b.profiles?.name || 'Cliente'),
-          bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type,
+          bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type, splitPaid: b.split_paid,
           pagosJugadores: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
           cobroConfirmado: !!b.cobro_confirmado,
+          esHold: b.status === 'pendiente_pago',
         };
       }
     });
@@ -946,7 +970,14 @@ const AdminDashboard = () => {
         existing.conflicto = true;
         return;
       }
-      newSlots[b.court_id][b.time_slot] = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
+      const cell = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
+      // Entreno: le colgamos si está pagado (todos los alumnos) para el color.
+      if (cell.tipo === 'entreno') {
+        const conf = clasesEntreno[`${b.court_id}|${b.time_slot}`] || null;
+        cell.entrenoPagado = entrenoEstaPagado(conf);
+        cell.entrenoInfo = conf;
+      }
+      newSlots[b.court_id][b.time_slot] = cell;
     });
 
     // ── Disponibles (idéntico a la vista del jugador) ──
@@ -1844,11 +1875,10 @@ const AdminDashboard = () => {
 
                   <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
                     {[
-                      { label: 'Libre', s: slotColors.available },
-                      { label: '💳 Tarjeta/Bizum', s: slotColors.online },
-                      { label: '🏪 Club / ✍️ Manual', s: slotColors.booked },
+                      { label: '🟢 Pagado', s: slotColors.pagado },
+                      { label: '🔴 Sin pagar', s: slotColors.impago },
                       { label: '🔒 Bloqueada', s: slotColors.blocked },
-                      { label: '🏋️ Entreno', s: slotColors.entreno },
+                      { label: 'Libre', s: slotColors.available },
                     ].map(({ label, s }) => (
                       <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                         <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: s.backgroundColor, border: `1.5px solid ${s.borderColor}` }} />
@@ -1891,8 +1921,8 @@ const AdminDashboard = () => {
                                 const esCustom = (customByCourt[court.id] || []).some(cs => cs.time === time);
                                 const isSelected = activeSlot?.courtId === court.id && activeSlot?.time === time;
                                 const c = isSelected ? slotColors.selected
-                                  : slot?.status === 'booked' ? metodoColor(slot.metodo)
-                                  : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? slotColors.entreno : slotColors.blocked)
+                                  : slot?.status === 'booked' ? colorPago(reservaPagada(slot))
+                                  : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? colorPago(slot.entrenoPagado) : slotColors.blocked)
                                   : slotColors[slot?.status] || slotColors.available;
                                 return (
                                   <button key={time} disabled={!court.active}
@@ -1901,7 +1931,7 @@ const AdminDashboard = () => {
                                   >
                                     <div>{slot?.conflicto ? '⚠️ ' : ''}{esCustom ? '🕐 ' : ''}{time.split(' - ')[0]}</div>
                                     <div style={{ fontSize: '0.58rem', fontWeight: 500, marginTop: '0.15rem', opacity: 0.85 }}>
-                                      {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? '🏋️ Entreno' : '🔒 Bloqueada') : 'Libre'}
+                                      {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? etiquetaEntreno(slot.entrenoPagado) : '🔒 Bloqueada') : 'Libre'}
                                     </div>
                                   </button>
                                 );
@@ -1914,7 +1944,7 @@ const AdminDashboard = () => {
                                   <div>
                                     <p style={{ margin: 0, fontWeight: 800, color: '#0F172A', fontSize: '0.875rem' }}>{activeSlot.time}</p>
                                     <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
-                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Bloqueada para entrenos' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
+                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? textoEntrenoDetalle(selectedSlotData) : '🔒 Bloqueada por administrador') : 'Franja disponible'}
                                     </p>
                                     {selectedSlotData.status === 'booked' && (
                                       <p style={{ margin: '0.2rem 0 0', fontSize: '0.775rem', fontWeight: 700, color: '#1B3A6E' }}>

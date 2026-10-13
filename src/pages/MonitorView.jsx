@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
 import { hayGpsNativo, pedirUbicacionNativa, leerVueltaNativa } from '../utils/gpsNativo';
+import { entrenoPagado, pagadosDeEntreno, reservaPagada } from '../utils/entrenos';
 
 const horaDe = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
@@ -54,18 +55,18 @@ function formatLong(ymd) {
 
 // Mismos colores que el horario del admin: azul = pagada con tarjeta/bizum,
 // rojo = pago en club / manual, gris = bloqueada, morado = entreno.
+// Solo DOS colores de cobro: verde = pagado, rojo = sin pagar. Vale igual para
+// una reserva de pista y para un entreno. Bloqueada = gris.
 const TIPO = {
-  reservaOnline: { label: 'Reservada', emoji: '💳', bg: '#EFF6FF', border: '#93C5FD', color: '#2563EB' },
-  reserva: { label: 'Reservada', emoji: '🎾', bg: '#FEF2F2', border: '#FCA5A5', color: '#DC2626' },
+  pagado: { label: 'Pagado', emoji: '✅', bg: '#F0FDF4', border: '#86EFAC', color: '#15803D' },
+  impago: { label: 'Sin pagar', emoji: '❌', bg: '#FEF2F2', border: '#FCA5A5', color: '#DC2626' },
   bloqueo: { label: 'Bloqueada', emoji: '🔒', bg: '#F1F5F9', border: '#CBD5E1', color: '#64748B' },
-  entreno: { label: 'Entreno', emoji: '🏋️', bg: '#FAF5FF', border: '#D8B4FE', color: '#9333EA' },
 };
 
 const LEYENDA = [
-  { label: 'Tarjeta / Bizum', t: TIPO.reservaOnline },
-  { label: 'Club / Manual', t: TIPO.reserva },
+  { label: 'Pagado', t: TIPO.pagado },
+  { label: 'Sin pagar', t: TIPO.impago },
   { label: 'Bloqueada', t: TIPO.bloqueo },
-  { label: 'Entreno', t: TIPO.entreno },
 ];
 
 // Cómo se pagó la reserva (mismas etiquetas que en el panel del admin)
@@ -94,7 +95,7 @@ export default function MonitorView() {
     setLoading(true);
     try {
       const [bk, bl, ct] = await Promise.all([
-        supabase.from('bookings').select('id, court_id, time_slot, observaciones, status, user_id, metodo_pago, cobro_confirmado, pagos_jugadores, created_at').eq('date', d),
+        supabase.from('bookings').select('id, court_id, time_slot, observaciones, status, user_id, metodo_pago, cobro_confirmado, pagos_jugadores, payment_type, split_paid, created_at').eq('date', d),
         supabase.from('blocked_slots').select('court_id, time_slot, tipo, entreno_grupo').eq('date', d),
         supabase.from('courts').select('id, name'),
       ]);
@@ -118,7 +119,9 @@ export default function MonitorView() {
         ensure(b.court_id).slots.push({
           time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago,
           bookingId: b.id, cobro: !!b.cobro_confirmado, esHold: b.status === 'pendiente_pago',
+          paymentType: b.payment_type, splitPaid: b.split_paid,
           pagos: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
+          pagada: reservaPagada({ metodo: b.metodo_pago, cobroConfirmado: b.cobro_confirmado, esHold: b.status === 'pendiente_pago', paymentType: b.payment_type, splitPaid: b.split_paid }),
         });
       });
       (bl.data || []).forEach((s) => {
@@ -559,6 +562,7 @@ export default function MonitorView() {
   // lo planificado (tabla clases_monitor; el horario sigue siendo solo
   // lectura para él).
   const [clasesConf, setClasesConf] = useState({}); // "courtId|time" -> { personas, precio, pagos }
+  const [clasesConfReady, setClasesConfReady] = useState(false); // datos de cobro cargados para el día visible
   const [confGuardando, setConfGuardando] = useState(null);
   const [precioEdits, setPrecioEdits] = useState({}); // "courtId|time" -> texto en edición
 
@@ -574,13 +578,14 @@ export default function MonitorView() {
   useEffect(() => { dateRef.current = date; }, [date]);
 
   const loadClasesConf = useCallback(async (d) => {
-    if (!user?.id) return;
+    setClasesConfReady(false);
+    if (!user?.id) { setClasesConfReady(true); return; }
     const { data } = await supabase
       .from('clases_monitor')
       .select('*')
       .eq('user_id', user.id)
       .eq('date', d);
-    if (dateRef.current !== d) return; // respuesta de un día que ya no se ve
+    if (dateRef.current !== d) return; // respuesta de un día que ya no se ve (otra carga en curso marcará listo)
     const m = {};
     (data || []).forEach(c => {
       m[`${c.court_id}|${c.time_slot}`] = {
@@ -591,6 +596,7 @@ export default function MonitorView() {
     });
     setClasesConf(m);
     setPrecioEdits({});
+    setClasesConfReady(true); // ya podemos pintar los entrenos con su color de cobro
   }, [user?.id]);
   useEffect(() => { loadClasesConf(date); }, [date, loadClasesConf]);
 
@@ -737,7 +743,9 @@ export default function MonitorView() {
     }
     setCourts(prev => prev.map(c => c.id !== courtId ? c : {
       ...c,
-      slots: c.slots.map(x => x.bookingId === s.bookingId ? { ...x, cobro: !s.cobro } : x),
+      slots: c.slots.map(x => x.bookingId === s.bookingId
+        ? { ...x, cobro: !s.cobro, pagada: reservaPagada({ metodo: x.metodo, cobroConfirmado: !s.cobro, esHold: x.esHold, paymentType: x.paymentType, splitPaid: x.splitPaid }) }
+        : x),
     }));
     toast(!s.cobro ? '✅ Cobro en club confirmado (ya consta en Finanzas)' : 'Cobro marcado como pendiente', 'success');
   };
@@ -771,7 +779,9 @@ export default function MonitorView() {
     const cobroNuevo = despues >= 4 ? true : (antes >= 4 && despues < 4 ? false : s.cobro);
     setCourts(prev => prev.map(c => c.id !== courtId ? c : {
       ...c,
-      slots: c.slots.map(x => x.bookingId === s.bookingId ? { ...x, pagos: data, cobro: cobroNuevo } : x),
+      slots: c.slots.map(x => x.bookingId === s.bookingId
+        ? { ...x, pagos: data, cobro: cobroNuevo, pagada: reservaPagada({ metodo: x.metodo, cobroConfirmado: cobroNuevo, esHold: x.esHold, paymentType: x.paymentType, splitPaid: x.splitPaid }) }
+        : x),
     }));
     if (despues >= 4 && antes < 4) toast('✅ Los 4 pagos marcados: la reserva queda cobrada (ya consta en Finanzas)', 'success');
     else if (antes >= 4 && despues < 4) toast('Reserva de vuelta a pendiente de cobro', 'info');
@@ -1273,7 +1283,7 @@ export default function MonitorView() {
           ))}
         </div>
 
-        {loading ? (
+        {(loading || !clasesConfReady) ? (
           <p style={{ textAlign: 'center', color: '#94A3B8', padding: '2rem 0' }}>Cargando…</p>
         ) : totalOcupadas === 0 ? (
           <div style={{ textAlign: 'center', color: '#64748B', background: '#fff', border: '1px dashed #CBD5E1', borderRadius: '1rem', padding: '2.5rem 1rem' }}>
@@ -1298,13 +1308,27 @@ export default function MonitorView() {
                   </div>
                 ) : (
                   c.slots.map((s, i) => {
-                    const m = (s.tipo === 'reserva' && (s.metodo === 'tarjeta' || s.metodo === 'bizum'))
-                      ? TIPO.reservaOnline
-                      : (TIPO[s.tipo] || TIPO.bloqueo);
+                    let m, tag;
+                    if (s.tipo === 'bloqueo') {
+                      m = TIPO.bloqueo;
+                      tag = `${m.emoji} ${m.label}`;
+                    } else if (s.tipo === 'entreno') {
+                      // Entreno: verde si lo ha cobrado entero el monitor, rojo si no
+                      const conf = clasesConf[`${c.id}|${s.time}`];
+                      const pagado = entrenoPagado(conf);
+                      m = pagado ? TIPO.pagado : TIPO.impago;
+                      tag = conf?.personas != null
+                        ? `🏋️ ${pagado ? 'Pagado' : 'Sin pagar'} ${pagadosDeEntreno(conf)}/${conf.personas}`
+                        : '🏋️ Sin pagar';
+                    } else {
+                      // Reserva: verde si está cobrada, rojo si falta por cobrar
+                      m = s.pagada ? TIPO.pagado : TIPO.impago;
+                      tag = s.pagada ? '✅ Pagado' : '❌ Sin pagar';
+                    }
                     return (
                       <div key={i} className="slot" style={{ background: m.bg, border: `1px solid ${m.border}`, borderLeft: `3px solid ${m.color}` }}>
                         <div className="slot-time">{s.time}</div>
-                        <div className="slot-tag" style={{ color: m.color }}>{m.emoji} {m.label}</div>
+                        <div className="slot-tag" style={{ color: m.color }}>{tag}</div>
                         {s.note && <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: 2, fontWeight: 600 }}>{s.tipo === 'reserva' ? '👤 ' : ''}{s.note}</div>}
                         {s.tipo === 'reserva' && METODO[s.metodo] && (
                           <div style={{ fontSize: '0.68rem', color: '#64748B', marginTop: 2, fontWeight: 700 }}>{METODO[s.metodo]}</div>
