@@ -12,7 +12,7 @@ const ES_NATIVO = Capacitor.isNativePlatform();
 // servidor de login (GoTrue) y la capacidad "Sign in with Apple" está puesta en
 // Xcode. Hasta entonces, en iPhone se entra con correo (sin navegador). Poner a
 // true cuando el servidor esté listo.
-const APPLE_LISTO = false;
+const APPLE_LISTO = true;
 
 const MSG_ACEPTAR = 'Para registrarte tienes que aceptar la Política de Privacidad y el Aviso legal.';
 
