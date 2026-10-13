@@ -1,4 +1,4 @@
-import{r as n,t as o}from"./react-vendor-5-kJuc0W.js";import"./pdf-vendor-CcZKRWo-.js";import{n as a,r as t,t as d}from"./LegalPage-BXlS3YC1.js";import{t as r}from"./legal-DkTLKqS1.js";var e=o();function p(){const s=encodeURIComponent("Solicitud de eliminación de cuenta - Padel Medina"),i=encodeURIComponent(`Hola:
+import{r as n,t as o}from"./react-vendor-5-kJuc0W.js";import"./pdf-vendor-CcZKRWo-.js";import{n as a,r as t,t as d}from"./LegalPage-BHfLpmNY.js";import{t as r}from"./legal-Bw9v9DWQ.js";var e=o();function p(){const s=encodeURIComponent("Solicitud de eliminación de cuenta - Padel Medina"),i=encodeURIComponent(`Hola:
 
 Solicito la eliminación de mi cuenta de Padel Medina y de mis datos personales.
 
