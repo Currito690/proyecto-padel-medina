@@ -31,7 +31,19 @@ startServerTimeSync();
 // enrutador limpie la URL.
 registrarDesdeUrl();
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && Capacitor.isNativePlatform()) {
+  // En la app NATIVA (iPhone/iPad) el service worker sobra: Capacitor ya sirve
+  // los archivos del paquete, y el SW puede dejar servida una versión VIEJA en
+  // caché (la app "no se actualiza" aunque recompiles). Así que, si quedó uno de
+  // una versión anterior, lo quitamos y borramos sus cachés para que siempre
+  // cargue el paquete recién compilado.
+  navigator.serviceWorker.getRegistrations()
+    .then((rs) => rs.forEach((r) => r.unregister()))
+    .catch(() => {});
+  if (window.caches) {
+    caches.keys().then((ks) => ks.forEach((k) => caches.delete(k))).catch(() => {});
+  }
+} else if ('serviceWorker' in navigator) {
   // ¿Había ya un SW controlando la página en este arranque? En la primera
   // visita no lo hay: el primer controllerchange es la activación inicial y NO
   // debe recargar (perdería formularios a medio rellenar). Solo recargamos
