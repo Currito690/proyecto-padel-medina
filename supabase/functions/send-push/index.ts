@@ -9,7 +9,7 @@
 // Llega a la web/Android (web push) y al iPhone (APNs), y borra los
 // dispositivos caducados (ver _shared/envioPush.ts).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { enviarAFilas, esCorreoAdmin, esPerfilAdmin, idsAdministradores, type FilaPush } from '../_shared/envioPush.ts';
+import { enviarAFilas, esCorreoAdmin, esFilaIos, esPerfilAdmin, idsAdministradores, type FilaPush } from '../_shared/envioPush.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
 
@@ -95,7 +95,10 @@ Deno.serve(async (req: Request) => {
         if (audiencia === 'jugadores') {
             const { data, error } = await supabase.from('push_subscriptions').select('*');
             if (error) throw error;
-            subs = data;
+            // Los anuncios (eventos) NO van al iPhone: allí el jugador solo aceptó
+            // "recordatorios de su pista", y Apple (norma 4.5.4) prohíbe avisos
+            // promocionales sin un consentimiento aparte y una forma de darse de baja.
+            subs = (data || []).filter((f: FilaPush) => !esFilaIos(f));
         } else {
             const admins = await idsAdministradores(supabase);
             subs = [];

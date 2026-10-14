@@ -218,6 +218,20 @@ textarea {
   }
 }
 
+/* Texto solo para lectores de pantalla (y buscadores): no se ve en pantalla.
+   Lo usa el <h1> del inicio, que antes salía a la vista porque faltaba esta regla. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Dashboard Layout */
 .dashboard-container {
   padding: 1.25rem 1rem 5.5rem;

@@ -307,7 +307,10 @@ function App() {
         </Routes>
       </Suspense>
       </ErrorBoundary>
-      <InstallPrompt />
+      {/* El banner "Instala Padel Medina" es para la web en el móvil. En la app
+          de iPhone/Android ya está instalada: allí el WebView parece Safari y el
+          banner pedía "Compartir > Añadir a pantalla de inicio". */}
+      {!Capacitor.isNativePlatform() && <InstallPrompt />}
     </div>
   );
 }

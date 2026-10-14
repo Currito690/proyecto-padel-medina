@@ -177,6 +177,21 @@ export function AuthProvider({ children }) {
       nonce: rawNonce,
     });
     if (error) throw error;
+
+    // Apple da el nombre solo la PRIMERA vez que el usuario autoriza la app (no va
+    // en el token): lo guardamos para que no salga el prefijo del correo, que con
+    // "Ocultar mi correo" es un código aleatorio. Nunca pisa un nombre ya puesto.
+    const nombre = [response.givenName, response.familyName].filter(Boolean).join(' ').trim();
+    if (nombre) {
+      try {
+        const { data: { user: u } } = await supabase.auth.getUser();
+        const prefijo = (u?.email || '').split('@')[0];
+        if (u && (!u.user_metadata?.name || u.user_metadata.name === prefijo)) {
+          await supabase.auth.updateUser({ data: { name: nombre } });
+          await supabase.from('profiles').update({ name: nombre }).eq('id', u.id).eq('name', prefijo);
+        }
+      } catch { /* el nombre es opcional: el inicio de sesión ya está hecho */ }
+    }
   };
 
   // Login con email + contraseña

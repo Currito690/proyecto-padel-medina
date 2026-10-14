@@ -160,9 +160,14 @@ const Login = () => {
     try {
       await loginWithApple();
     } catch (err) {
+      // El plugin rechaza solo con el texto de iOS, sin código: al cancelar llega
+      // "…AuthorizationError error 1001." (sin la palabra "cancel").
       const msg = (err?.message || '').toLowerCase();
-      const cancelado = msg.includes('cancel') || err?.code === '1001' || err?.code === 1001;
-      if (!cancelado) setError(traduceError(err));
+      const cancelado = msg.includes('cancel') || msg.includes('error 1001') || err?.code === '1001' || err?.code === 1001;
+      if (cancelado) return;
+      setError(msg.includes('authorizationerror')
+        ? 'No se ha podido iniciar sesión con Apple. Comprueba que tienes tu Apple ID en Ajustes del iPhone e inténtalo de nuevo.'
+        : traduceError(err));
     } finally {
       setLoading(false);
     }
