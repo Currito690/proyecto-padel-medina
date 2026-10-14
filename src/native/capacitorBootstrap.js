@@ -35,9 +35,11 @@ function rutaDeURL(url) {
 
 async function initStatusBarYSplash() {
   try {
-    // Texto/íconos oscuros sobre el fondo claro de la app. Ajustable en el Mac.
-    await StatusBar.setStyle({ style: Style.Light });
-    await StatusBar.setOverlaysWebView({ overlay: false });
+    // La web ocupa TODA la pantalla, también bajo la barra de estado (así el azul
+    // de la cabecera llega hasta arriba y no queda una franja negra). Los iconos
+    // de la barra (hora/batería) van en blanco, que es lo que se ve sobre el azul.
+    await StatusBar.setOverlaysWebView({ overlay: true });
+    await StatusBar.setStyle({ style: Style.Dark });
   } catch { /* algunos dispositivos no lo soportan */ }
   try {
     // La web ya está pintada: quitamos el splash nativo.
