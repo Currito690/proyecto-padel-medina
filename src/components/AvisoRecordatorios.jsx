@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
-import { estadoAvisos, activarAvisos } from '../services/pushNotifications';
+import { Capacitor } from '@capacitor/core';
+import { estadoAvisos, activarAvisos, falloAvisosNativo } from '../services/pushNotifications';
 import { toast } from '../utils/notify';
 
 // Invitación a activar los recordatorios de partido (aviso al móvil unas horas
@@ -27,7 +28,10 @@ const descartar = () => {
 // deja mostrar el diálogo de permiso tras un gesto del usuario).
 async function activarDesdeBoton(userId) {
   const estado = await activarAvisos(supabase, userId, { preguntar: true });
-  if (estado === 'activos') {
+  const fallo = estado === 'activos' && Capacitor.isNativePlatform() ? falloAvisosNativo() : null;
+  if (fallo) {
+    toast(`No se han podido activar los avisos en este iPhone: ${fallo}`, 'error', 8000);
+  } else if (estado === 'activos') {
     toast('¡Listo! Te avisaremos antes de tus partidos.', 'success');
   } else if (estado === 'bloqueados') {
     toast('Los avisos están desactivados en los ajustes de tu móvil o navegador. Puedes activarlos allí cuando quieras.', 'info', 6000);
@@ -101,18 +105,25 @@ export const FilaRecordatorios = () => {
   const { user } = useAuth();
   const [estado, setEstado] = useState(null);
   const [activando, setActivando] = useState(false);
+  // iPhone: permiso concedido pero el dispositivo NO quedó registrado (sin esto
+  // ponía "Activados ✓" y los avisos no llegaban nunca).
+  const [fallo, setFallo] = useState(null);
+  const nativo = Capacitor.isNativePlatform();
 
   useEffect(() => {
     if (!user?.id) return;
     let vivo = true;
     let ultimo = null;
-    // Al volver de los ajustes del móvil el permiso puede haber cambiado: si
-    // acaba de concederse, de paso se registra el dispositivo (refresco silencioso).
-    const leer = (alVolverDeAjustes) => estadoAvisos().then((e) => {
+    // En el iPhone, al abrir el perfil con permiso se (re)registra el
+    // dispositivo y se enseña si algo falla. Y al volver de los ajustes del móvil
+    // el permiso puede haber cambiado: si acaba de concederse, también se registra.
+    const leer = (alVolverDeAjustes) => estadoAvisos().then(async (e) => {
       if (!vivo) return;
-      if (alVolverDeAjustes && e === 'activos' && ultimo !== 'activos') {
-        activarAvisos(supabase, user.id, { preguntar: false });
+      if (e === 'activos' && (nativo ? ultimo !== 'activos' : alVolverDeAjustes && ultimo !== 'activos')) {
+        await activarAvisos(supabase, user.id, { preguntar: false });
+        if (!vivo) return;
       }
+      if (nativo) setFallo(e === 'activos' ? falloAvisosNativo() : null);
       ultimo = e;
       setEstado(e);
     });
@@ -125,13 +136,19 @@ export const FilaRecordatorios = () => {
       vivo = false;
       document.removeEventListener('visibilitychange', alVolver);
     };
-  }, [user?.id]);
+  }, [user?.id, nativo]);
 
   if (!user || !estado || estado === 'no-disponible') return null;
 
   const activar = async () => {
     setActivando(true);
-    setEstado(await activarDesdeBoton(user.id));
+    const e = nativo && estado === 'activos'
+      ? await activarAvisos(supabase, user.id, { preguntar: false }) // reintento
+      : await activarDesdeBoton(user.id);
+    const f = nativo && e === 'activos' ? falloAvisosNativo() : null;
+    if (estado === 'activos' && !f) toast('¡Listo! Este iPhone ya recibe los avisos.', 'success');
+    setFallo(f);
+    setEstado(e);
     setActivando(false);
   };
 
@@ -146,10 +163,19 @@ export const FilaRecordatorios = () => {
         </span>
         <div style={{ minWidth: 0 }}>
           <span style={{ display: 'block', fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-text-primary)' }}>Recordatorios de partidos</span>
-          <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>Un aviso unas horas antes de tu pista</span>
+          {fallo ? (
+            <span style={{ display: 'block', fontSize: '0.72rem', color: '#B45309', lineHeight: 1.4 }}>⚠️ No se ha podido activar en este iPhone: {fallo}</span>
+          ) : (
+            <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>Un aviso unas horas antes de tu pista</span>
+          )}
         </div>
       </div>
-      {estado === 'activos' && (
+      {estado === 'activos' && fallo && (
+        <button onClick={activar} disabled={activando} style={{ ...botonVerde, flexShrink: 0, padding: '0.5rem 0.95rem', minHeight: '36px', opacity: activando ? 0.7 : 1, cursor: activando ? 'wait' : 'pointer' }}>
+          {activando ? 'Probando…' : 'Reintentar'}
+        </button>
+      )}
+      {estado === 'activos' && !fallo && (
         <span style={{ flexShrink: 0, fontSize: '0.8rem', fontWeight: 700, color: '#15803D', whiteSpace: 'nowrap' }}>Activados ✓</span>
       )}
       {estado === 'pendiente' && (

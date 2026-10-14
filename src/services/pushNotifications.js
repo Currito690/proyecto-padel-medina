@@ -5,6 +5,18 @@ const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
 // Token APNs de este iPhone (para poder borrar su fila al cerrar sesión).
 const CLAVE_TOKEN_APNS = 'pm-apns-token';
+// Último motivo por el que el iPhone NO quedó registrado (lo enseña el perfil:
+// con permiso concedido pero sin registro, los avisos no llegan).
+const CLAVE_FALLO = 'pm-avisos-fallo';
+const guardarFallo = (motivo) => {
+  try {
+    if (motivo) localStorage.setItem(CLAVE_FALLO, motivo);
+    else localStorage.removeItem(CLAVE_FALLO);
+  } catch { /* sin almacenamiento */ }
+};
+export const falloAvisosNativo = () => {
+  try { return localStorage.getItem(CLAVE_FALLO); } catch { return null; }
+};
 
 // Estados que ve la interfaz:
 //   'activos'       → permiso concedido (el dispositivo se registra solo)
@@ -55,26 +67,28 @@ const faltaRpc = (error) =>
 // tampoco tiene el send-push nuevo (que manda los avisos del club SOLO a los
 // admins): un jugador registrado entonces recibiría los avisos internos con
 // datos de otros clientes, así que sin la RPC los jugadores no se registran.
+// Devuelve null si quedó guardado, o el motivo si no.
 async function registrarDispositivo(supabase, userId, endpoint, subscription, plataforma, { respaldo = false } = {}) {
   const { error } = await supabase.rpc('registrar_dispositivo_push', {
     p_endpoint: endpoint,
     p_subscription: subscription,
     p_plataforma: plataforma,
   });
-  if (!error) return;
+  if (!error) return null;
   if (!faltaRpc(error)) {
     console.warn('Push: no se pudo registrar el dispositivo:', error.message);
-    return;
+    return error.message || 'error del servidor';
   }
   if (!respaldo) {
     console.warn('Push: el servidor aún no admite avisos para jugadores; no se registra este dispositivo.');
-    return;
+    return 'el servidor aún no admite avisos';
   }
   // Sin la RPC (admin en la web): el upsert de siempre.
   const { error: e2 } = await supabase
     .from('push_subscriptions')
     .upsert({ user_id: userId, endpoint, subscription }, { onConflict: 'endpoint' });
   if (e2) console.warn('Push: no se pudo guardar la suscripción:', e2.message);
+  return e2 ? (e2.message || 'error del servidor') : null;
 }
 
 const registrarSuscripcionWeb = (supabase, userId, subscription, opciones) => {
@@ -122,22 +136,26 @@ export async function subscribeAdminToPush(supabase, userId) {
   }
 }
 
-// Pide a iOS el token APNs (register) y lo devuelve; null si no llega en ~10 s.
-// Los listeners se quitan al terminar, para no acumularlos en cada llamada.
+// Pide a iOS el token APNs (register). Devuelve {token} o {error} (motivo, p. ej.
+// si no llega en ~10 s). Los listeners se quitan al terminar, para no
+// acumularlos en cada llamada.
 async function tokenAPNs(PushNotifications, ms = 10000) {
   let terminar;
   const resultado = new Promise((resolve) => { terminar = resolve; });
-  const timer = setTimeout(() => terminar(null), ms);
+  const timer = setTimeout(() => terminar({
+    error: 'el iPhone no ha dado su token de avisos (falta la configuración de avisos en Xcode)',
+  }), ms);
   const handles = [];
   try {
-    handles.push(await PushNotifications.addListener('registration', (t) => terminar(t?.value || null)));
+    handles.push(await PushNotifications.addListener('registration', (t) => terminar(
+      t?.value ? { token: t.value } : { error: 'token de avisos vacío' })));
     handles.push(await PushNotifications.addListener('registrationError', (err) => {
       console.warn('[APNs] error de registro:', err);
-      terminar(null);
+      terminar({ error: `Apple: ${err?.error || err?.message || 'error de registro'}` });
     }));
     PushNotifications.register().catch((err) => {
       console.warn('[APNs] register falló:', err);
-      terminar(null);
+      terminar({ error: `register: ${err?.message || err}` });
     });
     return await resultado;
   } finally {
@@ -178,12 +196,19 @@ export async function activarAvisos(supabase, userId, { preguntar = false } = {}
       estado = estadoNativo(receive);
       if (estado !== 'activos') return estado;
 
-      const token = await tokenAPNs(PushNotifications);
-      if (!token) return estado;
-      await registrarDispositivo(supabase, userId, `apns:${token}`, { token }, 'ios');
-      try { localStorage.setItem(CLAVE_TOKEN_APNS, token); } catch { /* sin almacenamiento */ }
+      const { token, error } = await tokenAPNs(PushNotifications);
+      if (!token) {
+        guardarFallo(error);
+        return estado;
+      }
+      const fallo = await registrarDispositivo(supabase, userId, `apns:${token}`, { token }, 'ios');
+      guardarFallo(fallo ? `el servidor no ha guardado este iPhone (${fallo})` : null);
+      if (!fallo) {
+        try { localStorage.setItem(CLAVE_TOKEN_APNS, token); } catch { /* sin almacenamiento */ }
+      }
     } catch (err) {
       console.warn('Push (iPhone): no se pudieron activar los avisos:', err);
+      guardarFallo(String(err?.message || err));
     }
     return estado;
   }
