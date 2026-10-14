@@ -32,7 +32,12 @@ const webPushDisponible = () =>
 
 // El plugin solo existe en la app de iPhone: se carga bajo demanda para no
 // meterlo en el bundle de la web.
-const pluginPush = async () => (await import('@capacitor/push-notifications')).PushNotifications;
+// OJO: devuelve el MÓDULO, nunca el plugin. El plugin de Capacitor es un Proxy
+// que responde a cualquier propiedad, también a `then`: si una función async lo
+// devuelve (o se hace `await` sobre él), JavaScript lo toma por una promesa, llama
+// a su `then` nativo, que no existe, y se queda esperando para siempre (en el
+// iPhone el permiso "no respondía" por esto). Uso: const { PushNotifications } = await moduloPush();
+const moduloPush = () => import('@capacitor/push-notifications');
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -170,7 +175,10 @@ export async function estadoAvisos() {
     if (Capacitor.isNativePlatform()) {
       // Con límite de tiempo: si el plugin no contesta, mejor decirlo que dejar
       // la pantalla esperando para siempre.
-      const leer = (async () => (await (await pluginPush()).checkPermissions()).receive)();
+      const leer = (async () => {
+        const { PushNotifications } = await moduloPush();
+        return (await PushNotifications.checkPermissions()).receive;
+      })();
       const limite = new Promise((_, rechazar) => setTimeout(() => rechazar(new Error('el iPhone no responde')), 3000));
       return estadoNativo(await Promise.race([leer, limite]));
     }
@@ -192,7 +200,7 @@ export async function activarAvisos(supabase, userId, { preguntar = false } = {}
   if (Capacitor.isNativePlatform()) {
     let estado = 'no-disponible';
     try {
-      const PushNotifications = await pluginPush();
+      const { PushNotifications } = await moduloPush();
       let { receive } = await PushNotifications.checkPermissions();
       if (preguntar && (receive === 'prompt' || receive === 'prompt-with-rationale')) {
         receive = (await PushNotifications.requestPermissions()).receive;
@@ -262,7 +270,7 @@ export async function unsubscribeFromPush(client) {
     // siga mostrando sus avisos con la sesión cerrada (la fila se limpiará sola
     // cuando Apple conteste que ya no existe). El próximo activarAvisos vuelve a
     // registrarlo.
-    try { await (await pluginPush()).unregister(); } catch (err) {
+    try { const { PushNotifications } = await moduloPush(); await PushNotifications.unregister(); } catch (err) {
       console.warn('Push (iPhone): no se pudo dar de baja:', err);
     }
     return;
