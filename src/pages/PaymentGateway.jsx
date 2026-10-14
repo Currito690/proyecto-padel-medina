@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverNow } from '../utils/serverTime';
-import { urlVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
+import { urlsVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
 
 // Pago compartido temporalmente DESACTIVADO (oculta la pestaña "Compartido").
 // Cambiar a true para reactivarlo cuando esté probado.
@@ -227,9 +227,9 @@ const PaymentGateway = () => {
       }
       holdId = holdRow.id;
 
-      const rutaKo     = '/?pago=cancelado';
-      const successUrl = urlVueltaRedsys('/mis-reservas?pago=ok');
-      const failUrl    = urlVueltaRedsys(rutaKo);
+      const rutaOk = '/mis-reservas?pago=ok';
+      const rutaKo = '/?pago=cancelado';
+      const { successUrl, failUrl } = urlsVueltaRedsys(rutaOk, rutaKo);
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {
@@ -282,8 +282,9 @@ const PaymentGateway = () => {
       try { localStorage.setItem('pendingBooking', pendingData); } catch { /* storage lleno */ }
 
       // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
-      await enviarARedsys(data, rutaKo, {
-        rutaOk: '/mis-reservas?pago=ok',
+      await enviarARedsys(data, {
+        rutaOk,
+        rutaKo,
         // El hueco retenido pasa a 'confirmed' cuando llega el aviso de Redsys.
         comprobarPagado: async () => {
           const { data: b } = await supabase.from('bookings').select('status').eq('id', holdId).maybeSingle();
@@ -386,9 +387,9 @@ const PaymentGateway = () => {
     setError(null);
     try {
       const myShare = Math.round((item.price / 4) * 100) / 100;
-      const rutaKo     = '/?pago=cancelado';
-      const successUrl = urlVueltaRedsys('/mis-reservas?pago=ok&compartido=1');
-      const failUrl    = urlVueltaRedsys(rutaKo);
+      const rutaOk = '/mis-reservas?pago=ok&compartido=1';
+      const rutaKo = '/?pago=cancelado';
+      const { successUrl, failUrl } = urlsVueltaRedsys(rutaOk, rutaKo);
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {
@@ -428,8 +429,9 @@ const PaymentGateway = () => {
       sessionStorage.setItem('pendingBooking', pendingSplit);
       try { localStorage.setItem('pendingBooking', pendingSplit); } catch { /* storage lleno */ }
       // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
-      await enviarARedsys(data, rutaKo, {
-        rutaOk: '/mis-reservas?pago=ok&compartido=1',
+      await enviarARedsys(data, {
+        rutaOk,
+        rutaKo,
         // En el pago compartido la reserva la crea el aviso de Redsys al cobrar.
         comprobarPagado: async () => {
           const { data: rows } = await supabase.from('bookings').select('id')

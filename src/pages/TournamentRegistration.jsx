@@ -4,7 +4,7 @@ import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
 import { toTitleCase } from '../utils/names';
 import { serverNowMs } from '../utils/serverTime';
-import { urlVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
+import { urlsVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
 
 const HOURS = [
   '00:00','01:00','02:00','03:00','04:00','05:00','06:00','07:00','08:00','09:00','10:00','11:00',
@@ -521,12 +521,12 @@ export default function TournamentRegistration() {
   };
 
   const redirectToRedsys = async (registrationId, amount) => {
-    const successUrl = urlVueltaRedsys(`/torneos/${id}?inscripcion=ok`);
+    const rutaOk = `/torneos/${id}?inscripcion=ok`;
     // Llevamos el id de inscripción y el importe en la URL de vuelta: si el
     // storage se pierde (recarga, pestaña descartada), "Reintentar pago" se
     // reconstruye desde aquí al volver del TPV.
-    const rutaKo     = `/torneos/${id}?inscripcion=fallo&reg=${registrationId}&imp=${amount}`;
-    const failUrl    = urlVueltaRedsys(rutaKo);
+    const rutaKo = `/torneos/${id}?inscripcion=fallo&reg=${registrationId}&imp=${amount}`;
+    const { successUrl, failUrl } = urlsVueltaRedsys(rutaOk, rutaKo);
     const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
     const res = await supabase.functions.invoke('redsys-create', {
@@ -547,8 +547,9 @@ export default function TournamentRegistration() {
     const data = res.data;
 
     // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
-    await enviarARedsys(data, rutaKo, {
-      rutaOk: `/torneos/${id}?inscripcion=ok`,
+    await enviarARedsys(data, {
+      rutaOk,
+      rutaKo,
       // Los jugadores no pueden leer las inscripciones (RLS). redsys-create no
       // escribe nada y responde «ya está pagada» si el aviso de Redsys ya la
       // confirmó: lo usamos como comprobación (no se envía nada a Redsys).

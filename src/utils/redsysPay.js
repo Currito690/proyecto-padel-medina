@@ -1,47 +1,44 @@
-// Envío a Redsys y URLs de vuelta, comunes a todos los pagos (reserva, pago
-// compartido, parte del amigo, torneos).
+// Envío a Redsys y vuelta, comunes a todos los pagos (reserva, pago compartido,
+// parte del amigo, torneos).
 //
 // Web y app Android (TWA): EXACTAMENTE como antes — form POST en la misma pestaña
 // y vuelta por redsys-redirect a la ruta de la web.
 //
 // App iPhone (Capacitor): su webview no deja hacer el POST a Redsys (Capacitor
-// abre los dominios externos en Safari y el POST se pierde). Así que el pago se
-// abre en una hoja de Safari DENTRO de la app (public/pago-redsys.html envía el
-// form) y, al acabar, Redsys vuelve por redsys-redirect a public/pv.html, que
-// salta a com.padelmedina.app://pago/<ruta>; native/capacitorBootstrap.js cierra
-// la hoja y recarga esa ruta en la app (misma sesión).
+// manda los dominios externos a Safari y el POST se pierde). Así que la pasarela
+// se abre en una PANTALLA DE PAGO PROPIA de la app (@capacitor/inappbrowser, sin
+// barra de direcciones): public/pago-redsys.html envía el form y, al acabar,
+// Redsys vuelve por redsys-redirect a public/pv.html?r=ok|ko. La app detecta esa
+// página, cierra la pantalla de pago y abre la ruta OK o KO dentro de la app
+// (misma sesión). No hace falta ningún esquema de URL propio.
 import { ORIGEN_PUBLICO, esAppNativa } from './origen';
 
-// DS_MERCHANT_URLOK / URLKO admiten como máximo 250 caracteres.
-const MAX_URL_REDSYS = 250;
-
-// ruta = ruta interna con su query, p. ej. '/mis-reservas?pago=ok'
-export function urlVueltaRedsys(ruta) {
-  // En iPhone la ruta va en el FRAGMENTO de pv.html (#/ruta): así solo se
-  // codifica una vez; en ?r= se codificaría dos veces y la vuelta del torneo
-  // pasaría del límite de Redsys.
-  const destino = esAppNativa()
-    ? `${ORIGEN_PUBLICO}/pv.html#${ruta}`
-    : `${window.location.origin}${ruta}`;
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect?to=${encodeURIComponent(destino)}`;
-  if (esAppNativa() && url.length > MAX_URL_REDSYS) {
-    // Mejor fallar aquí (antes de cobrar) que a mitad del pago en Redsys.
-    throw new Error('La dirección de vuelta del pago es demasiado larga');
-  }
-  return url;
-}
-
+const fnRedirect = () => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// data = respuesta de redsys-create ({ redsysUrl, Ds_MerchantParameters, Ds_Signature }).
-// rutaKo = a dónde ir si el pago no se completó.
-// En iPhone, si la hoja del pago se cierra con «Listo» sin volver por pv.html
-// (p. ej. pagó y pulsó «Listo» en el recibo en vez de «Continuar»), NO se da por
-// cancelado a ciegas: se pregunta al servidor con comprobarPagado() durante unos
-// segundos (el aviso de Redsys llega en segundos) y se va a rutaOk si entró.
-export async function enviarARedsys(data, rutaKo = '/', { rutaOk, comprobarPagado } = {}) {
+// URLs de vuelta para redsys-create (DS_MERCHANT_URLOK / URLKO).
+// rutaOk / rutaKo = rutas internas con su query, p. ej. '/mis-reservas?pago=ok'.
+export function urlsVueltaRedsys(rutaOk, rutaKo) {
   if (esAppNativa()) {
-    const { Browser } = await import('@capacitor/browser');
+    // En iPhone la app ya sabe a qué ruta ir: solo hace falta distinguir OK/KO.
+    return {
+      successUrl: `${fnRedirect()}?to=${encodeURIComponent(`${ORIGEN_PUBLICO}/pv.html?r=ok`)}`,
+      failUrl: `${fnRedirect()}?to=${encodeURIComponent(`${ORIGEN_PUBLICO}/pv.html?r=ko`)}`,
+    };
+  }
+  return {
+    successUrl: `${fnRedirect()}?to=${encodeURIComponent(`${window.location.origin}${rutaOk}`)}`,
+    failUrl: `${fnRedirect()}?to=${encodeURIComponent(`${window.location.origin}${rutaKo}`)}`,
+  };
+}
+
+// data = respuesta de redsys-create ({ redsysUrl, Ds_MerchantParameters, Ds_Signature }).
+// En iPhone, si se cierra la pantalla de pago sin que Redsys vuelva (p. ej. pagó y
+// cerró en el recibo), NO se da por cancelado a ciegas: se pregunta al servidor
+// con comprobarPagado() unos segundos (el aviso de Redsys llega en segundos).
+export async function enviarARedsys(data, { rutaOk = '/', rutaKo = '/', comprobarPagado } = {}) {
+  if (esAppNativa()) {
+    const { InAppBrowser, DefaultWebViewOptions, ToolbarPosition, iOSViewStyle } = await import('@capacitor/inappbrowser');
     // Los datos van en el fragmento (#): no llegan a los logs del servidor.
     const frag = new URLSearchParams({
       u: data.redsysUrl,
@@ -49,26 +46,60 @@ export async function enviarARedsys(data, rutaKo = '/', { rutaOk, comprobarPagad
       p: data.Ds_MerchantParameters,
       s: data.Ds_Signature,
     }).toString();
-    window.__pmVueltaPago = false;
-    // Solo salta con «Listo»: la vuelta normal cierra la hoja con Browser.close(),
-    // que no lo dispara (y además marca __pmVueltaPago).
-    const h = await Browser.addListener('browserFinished', async () => {
-      h.remove();
-      if (window.__pmVueltaPago) return;
-      if (rutaOk && comprobarPagado) {
+
+    let terminado = false;
+    const handles = [];
+    const quitarAvisos = () => handles.forEach((h) => { try { h.remove(); } catch { /* nada */ } });
+    const ir = (ruta) => { quitarAvisos(); window.location.replace(ruta); };
+
+    // Redsys ha vuelto (pv.html?r=ok|ko): cerramos la pantalla de pago y seguimos en la app.
+    handles.push(await InAppBrowser.addListener('browserPageNavigationCompleted', async (e) => {
+      if (terminado || !e?.url) return;
+      let u;
+      try { u = new URL(e.url); } catch { return; }
+      if (u.origin !== ORIGEN_PUBLICO || u.pathname !== '/pv.html') return;
+      terminado = true;
+      try { await InAppBrowser.close(); } catch { /* ya estaba cerrada */ }
+      ir(u.searchParams.get('r') === 'ok' ? rutaOk : rutaKo);
+    }));
+
+    // Cerró la pantalla de pago («Cerrar») sin que Redsys volviera.
+    handles.push(await InAppBrowser.addListener('browserClosed', async () => {
+      if (terminado) return;
+      terminado = true;
+      if (comprobarPagado) {
         for (let i = 0; i < 5; i++) {
           try {
-            if (await comprobarPagado()) { window.location.replace(rutaOk); return; }
+            if (await comprobarPagado()) { ir(rutaOk); return; }
           } catch { /* sin red: se reintenta */ }
           await esperar(2000);
         }
       }
-      window.location.replace(rutaKo);
-    });
+      ir(rutaKo);
+    }));
+
     try {
-      await Browser.open({ url: `${ORIGEN_PUBLICO}/pago-redsys.html#${frag}`, presentationStyle: 'fullscreen' });
+      await InAppBrowser.openInWebView({
+        url: `${ORIGEN_PUBLICO}/pago-redsys.html#${frag}`,
+        options: {
+          ...DefaultWebViewOptions,
+          showURL: false,               // sin barra de direcciones
+          showToolbar: true,
+          showNavigationButtons: false,
+          closeButtonText: 'Cerrar',
+          toolbarPosition: ToolbarPosition.TOP,
+          clearCache: false,            // no tocar cookies ni sesión de nada
+          clearSessionCache: false,
+          iOS: {
+            ...DefaultWebViewOptions.iOS,
+            viewStyle: iOSViewStyle.FULL_SCREEN,
+            allowOverScroll: false,
+            allowsBackForwardNavigationGestures: false,
+          },
+        },
+      });
     } catch (e) {
-      h.remove();
+      quitarAvisos();
       throw e;
     }
     return;

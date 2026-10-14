@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
-import { urlVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
+import { urlsVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
 
 const SharedPayment = () => {
   const [searchParams] = useSearchParams();
@@ -37,16 +37,9 @@ const SharedPayment = () => {
     if (!tokenData || !booking) return;
     setLoading(true);
 
+    const rutaOk = `/pago-compartido?token=${token}&pago=ok`;
     const rutaKo = `/pago-compartido?token=${token}&pago=error`;
-    let successUrl, failUrl;
-    try {
-      successUrl = urlVueltaRedsys(`/pago-compartido?token=${token}&pago=ok`);
-      failUrl    = urlVueltaRedsys(rutaKo);
-    } catch {
-      toast('Error al conectar con la pasarela de pago. Inténtalo de nuevo.', 'error');
-      setLoading(false);
-      return;
-    }
+    const { successUrl, failUrl } = urlsVueltaRedsys(rutaOk, rutaKo);
     const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify-split`;
 
     const rawRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-create`, {
@@ -86,8 +79,9 @@ const SharedPayment = () => {
     }
     // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
     try {
-      await enviarARedsys(data, rutaKo, {
-        rutaOk: `/pago-compartido?token=${token}&pago=ok`,
+      await enviarARedsys(data, {
+        rutaOk,
+        rutaKo,
         comprobarPagado: async () => {
           const { data: t } = await supabase.from('shared_payment_tokens').select('paid').eq('token', token).maybeSingle();
           return !!t?.paid;

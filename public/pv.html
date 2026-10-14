@@ -4,33 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Volviendo a Padel Medina</title>
+<title>Pago procesado · Padel Medina</title>
 <style>
   body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; box-sizing:border-box; background:#F8FAFC; color:#0F172A; font-family:-apple-system,system-ui,Segoe UI,Roboto,Arial,sans-serif; text-align:center; }
   p { font-size:16px; line-height:1.5; max-width:340px; margin:0 auto; }
-  a { display:inline-block; margin-top:16px; padding:14px 22px; border-radius:12px; background:#1B3A6E; color:#fff; font-size:16px; font-weight:700; text-decoration:none; }
-  .n { margin-top:12px; font-size:13px; color:#64748B; }
+  .n { margin-top:12px; font-size:13px; color:#64748B; visibility:hidden; }
 </style>
 </head>
 <body>
-<!-- Vuelta del pago en la app de iPhone: Redsys -> redsys-redirect -> aquí, con la
-     ruta interna de la app en el fragmento (#/mis-reservas?pago=ok). Saltamos a
-     la app por su esquema propio (ver src/native/capacitorBootstrap.js). -->
+<!-- Vuelta del pago en la app de iPhone: Redsys -> redsys-redirect -> aquí
+     (?r=ok o ?r=ko). La app detecta esta página, cierra su pantalla de pago y
+     sigue dentro de la app (ver src/utils/redsysPay.js). -->
 <div>
   <p>Pago procesado. Volviendo a Padel Medina…</p>
-  <a id="a" href="com.padelmedina.app://pago/">Volver a Padel Medina</a>
-  <p class="n">Si el iPhone te pregunta, pulsa «Abrir».</p>
+  <p class="n" id="n">Si no vuelves en unos segundos, pulsa «Cerrar» arriba.</p>
 </div>
 <script>
-(function () {
-  // Solo rutas internas: empieza por una única '/', sin esquema ni dominio.
-  var r = location.hash ? location.hash.slice(1) : '/';
-  if (!/^\/(?!\/)[A-Za-z0-9\/_-]*(\?[A-Za-z0-9=&%._-]*)?$/.test(r)) r = '/';
-  // Esquema y host FIJOS: esta página solo puede abrir nuestra app.
-  var destino = 'com.padelmedina.app://pago' + r;
-  document.getElementById('a').href = destino;
-  location.replace(destino);
-})();
+  setTimeout(function () { document.getElementById('n').style.visibility = 'visible'; }, 4000);
 </script>
 </body>
 </html>
