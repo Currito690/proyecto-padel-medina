@@ -8,8 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "ios:sync": "vite build && npx cap sync ios",
-    "ios:open": "vite build && npx cap sync ios && npx cap open ios"
+    "ios:sync": "vite build && npx cap sync ios && node scripts/preparar-ios.mjs",
+    "ios:open": "vite build && npx cap sync ios && node scripts/preparar-ios.mjs && npx cap open ios"
   },
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^7.1.0",
