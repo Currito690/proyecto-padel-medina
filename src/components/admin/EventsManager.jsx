@@ -225,13 +225,16 @@ export default function EventsManager() {
   const notifyPlayers = async (ev) => {
     setNotifying(ev.id);
     try {
-      await supabase.functions.invoke('send-push', {
+      const { error } = await supabase.functions.invoke('send-push', {
         body: {
           title: `Nuevo evento: ${ev.title}`,
           body: ev.description || '¡Hay un nuevo evento en Padel Medina!',
           url: ev.registration_url || '/perfil',
+          // Sin esto send-push solo avisa a los administradores.
+          audiencia: 'jugadores',
         },
       });
+      if (error) throw error;
       toast('Notificación push enviada a todos los jugadores suscritos.');
     } catch (err) {
       console.error(err);

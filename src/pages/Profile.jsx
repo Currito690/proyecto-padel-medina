@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
+import { FilaRecordatorios } from '../components/AvisoRecordatorios';
 
 const ChevronRight = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -233,6 +234,9 @@ const Profile = () => {
           </div>
         </div>
       )}
+
+      {/* Recordatorios de partidos (avisos al móvil) */}
+      <FilaRecordatorios />
 
       {/* Settings List */}
       <div style={{ backgroundColor: 'white', borderRadius: '1.25rem', border: '1px solid var(--color-border)', overflow: 'hidden', marginBottom: '1.5rem', boxShadow: 'var(--shadow-sm)' }}>

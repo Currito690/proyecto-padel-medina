@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
 import { origenPublico } from '../utils/origen';
+import AvisoRecordatorios from '../components/AvisoRecordatorios';
 
 // Fecha YYYY-MM-DD en hora LOCAL (toISOString es UTC: de 00:00 a 02:00 en
 // España devolvería el día anterior).
@@ -323,6 +324,9 @@ const MyBookings = () => {
           </button>
         </div>
       )}
+
+      {/* ── Invitación a activar los recordatorios (si tiene partido pendiente) ── */}
+      {upcomingList.length > 0 && <AvisoRecordatorios />}
 
       <header style={{ marginBottom: '2rem' }}>
         <h1 style={{ fontSize: '1.875rem', fontWeight: 900, letterSpacing: '-.03em', margin: '0 0 .25rem' }}>Tus Reservas</h1>

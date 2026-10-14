@@ -1,30 +1,47 @@
 // Supabase Edge Function: send-push
 // Deploy with: npx supabase functions deploy send-push
+//
+// Body: { title, body, url, audiencia? }
+// - audiencia 'admins' (por defecto): SOLO los dispositivos de los
+//   administradores (nueva reserva, cancelación, cobros de redsys-notify...).
+// - audiencia 'jugadores': todos los dispositivos (anuncio de un evento). Solo
+//   la puede pedir el backend (service role) o un usuario administrador.
+// Llega a la web/Android (web push) y al iPhone (APNs), y borra los
+// dispositivos caducados (ver _shared/envioPush.ts).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import webpush from 'npm:web-push';
+import { enviarAFilas, esCorreoAdmin, esPerfilAdmin, idsAdministradores, type FilaPush } from '../_shared/envioPush.ts';
 
-const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY')!;
-const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY')!;
-const VAPID_MAILTO = `mailto:${Deno.env.get('VAPID_EMAIL') || 'admin@padelmedina.com'}`;
-
-webpush.setVapidDetails(VAPID_MAILTO, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
 
 // Solo el propio backend (service role) o un usuario con sesión válida:
 // sin esto, cualquiera con la anon key podía mandar notificaciones push a
-// todos los móviles suscritos.
-type AuthResult = { ok: true } | { ok: false; status: number; error: string };
+// todos los móviles suscritos. Devolvemos también quién llama, para decidir
+// si puede avisar a todos los jugadores.
+type AuthResult =
+    | { ok: true; serviceRole: true; userId: null; email: null }
+    | { ok: true; serviceRole: false; userId: string; email: string | null }
+    | { ok: false; status: number; error: string };
 async function callerAutorizado(req: Request): Promise<AuthResult> {
     const url = Deno.env.get('SUPABASE_URL') || '';
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
     if (!token) return { ok: false, status: 401, error: 'No autenticado' };
-    if (serviceKey && token === serviceKey) return { ok: true };
+    if (serviceKey && token === serviceKey) return { ok: true, serviceRole: true, userId: null, email: null };
     if (!url || !serviceKey) return { ok: false, status: 500, error: 'Función mal configurada' };
     const meRes = await fetch(`${url}/auth/v1/user`, {
         headers: { apikey: serviceKey, Authorization: `Bearer ${token}` },
     });
     if (!meRes.ok) return { ok: false, status: 401, error: 'Sesión inválida' };
-    return { ok: true };
+    const me = await meRes.json().catch(() => null);
+    if (!me?.id) return { ok: false, status: 401, error: 'Sesión inválida' };
+    return { ok: true, serviceRole: false, userId: me.id, email: typeof me.email === 'string' ? me.email : null };
+}
+
+function json(datos: unknown, status = 200): Response {
+    return new Response(JSON.stringify(datos), {
+        status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
 }
 
 Deno.serve(async (req: Request) => {
@@ -43,10 +60,7 @@ Deno.serve(async (req: Request) => {
 
     const auth = await callerAutorizado(req);
     if (!auth.ok) {
-        return new Response(JSON.stringify({ error: auth.error }), {
-            status: auth.status,
-            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        });
+        return json({ error: auth.error }, auth.status);
     }
 
     const supabase = createClient(
@@ -57,55 +71,70 @@ Deno.serve(async (req: Request) => {
     try {
         const body = await req.json();
         const { title, body: message, url } = body;
+        const audiencia = body.audiencia ?? 'admins';
 
-        const { data: subs, error } = await supabase
-            .from('push_subscriptions')
-            .select('*');
+        if (audiencia !== 'admins' && audiencia !== 'jugadores') {
+            return json({ error: 'Audiencia no válida' }, 400);
+        }
 
-        if (error) {
-            console.error('Error fetching subscriptions:', error);
-            return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+        // Avisar a TODOS los jugadores es cosa del club: lo decide profiles.role
+        // (o el correo de admin histórico SEGÚN GoTrue, nunca el de profiles,
+        // que cada usuario puede cambiar) en el servidor, nunca el navegador.
+        if (audiencia === 'jugadores' && !auth.serviceRole) {
+            const { data: perfil } = await supabase
+                .from('profiles')
+                .select('role')
+                .eq('id', auth.userId)
+                .maybeSingle();
+            if (!esPerfilAdmin(perfil) && !esCorreoAdmin(auth.email)) {
+                return json({ error: 'Solo un administrador puede avisar a todos los jugadores' }, 403);
+            }
+        }
+
+        let subs: FilaPush[] | null;
+        if (audiencia === 'jugadores') {
+            const { data, error } = await supabase.from('push_subscriptions').select('*');
+            if (error) throw error;
+            subs = data;
+        } else {
+            const admins = await idsAdministradores(supabase);
+            subs = [];
+            if (admins.length > 0) {
+                const { data, error } = await supabase
+                    .from('push_subscriptions')
+                    .select('*')
+                    .in('user_id', admins);
+                if (error) throw error;
+                subs = data;
+            }
         }
 
         if (!subs || subs.length === 0) {
-            console.log('No subscriptions found');
-            return new Response(JSON.stringify({ sent: 0, message: 'No subscriptions found' }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-            });
+            console.log(`No subscriptions found (${audiencia})`);
+            return json({ sent: 0, message: 'No subscriptions found' });
         }
 
-        const payload = JSON.stringify({
+        const r = await enviarAFilas(supabase, subs, {
             title: title || 'Padel Medina',
             body: message || '',
-            url: url || '/'
+            url: url || '/',
         });
 
-        const results = await Promise.allSettled(
-            subs.map(async (sub) => {
-                const subscriptionObj = typeof sub.subscription === 'string'
-                    ? JSON.parse(sub.subscription)
-                    : sub.subscription;
-                return webpush.sendNotification(subscriptionObj, payload);
-            })
-        );
+        console.log(`Push (${audiencia}) enviado a ${r.enviados}/${r.total} dispositivos` +
+            (r.borrados ? `, ${r.borrados} caducados borrados` : '') +
+            (r.omitidos ? `, ${r.omitidos} omitidos` : ''));
 
-        const sent = results.filter(r => r.status === 'fulfilled').length;
-        const failed = results.filter(r => r.status === 'rejected');
-
-        console.log(`Push enviado a ${sent}/${subs.length} dispositivos`);
-        if (failed.length > 0) console.log('Failed pushes:', failed);
-
-        return new Response(JSON.stringify({ sent, total: subs.length }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        return json({
+            sent: r.enviados,
+            total: r.total,
+            failed: r.fallidos,
+            removed: r.borrados,
+            skipped: r.omitidos,
+            audiencia,
         });
 
     } catch (err) {
         console.error('send-push error:', err);
-        return new Response(JSON.stringify({ error: String(err) }), {
-            status: 500,
-            headers: { 'Access-Control-Allow-Origin': '*' }
-        });
+        return json({ error: String((err as { message?: string })?.message ?? err) }, 500);
     }
 });

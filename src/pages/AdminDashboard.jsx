@@ -1252,6 +1252,8 @@ const AdminDashboard = () => {
       date: moveTargetDate,
       time_slot: moveTargetTime,
       court_id: moveTargetCourtId,
+      // Nueva hora, nuevo recordatorio (send-reminders lo vuelve a planificar).
+      reminder_sent: false,
     }).eq('id', moveBooking.id);
     if (error) {
       toast('Error al mover la reserva: ' + error.message);

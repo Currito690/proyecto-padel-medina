@@ -3,7 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { supabase } from './services/supabase';
-import { subscribeAdminToPush } from './services/pushNotifications';
+import { subscribeAdminToPush, activarAvisos } from './services/pushNotifications';
 import MainLayout from './components/layout/MainLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import InstallPrompt from './components/InstallPrompt';
@@ -61,14 +61,26 @@ function App() {
   const [maintenanceShake, setMaintenanceShake] = useState(false);
 
   useEffect(() => {
-    if (user?.role !== 'admin') return;
+    if (!user?.id) return;
 
-    // Solo registramos/refrescamos la suscripción push del admin. El aviso
-    // "Nueva reserva" lo manda cada ruta de reserva por su cuenta; disparar
-    // aquí desde el canal Realtime duplicaba avisos (y avisaba de holds sin
-    // pagar y de las propias reservas del admin), así que se ha quitado.
-    subscribeAdminToPush(supabase, user.id);
-  }, [user?.id]);
+    // Admin en la web: registramos/refrescamos su suscripción push (pide permiso
+    // al cargar, como siempre). El aviso "Nueva reserva" lo manda cada ruta de
+    // reserva por su cuenta; disparar aquí desde el canal Realtime duplicaba
+    // avisos (y avisaba de holds sin pagar y de las propias reservas del admin),
+    // así que se ha quitado.
+    if (user.role === 'admin' && !Capacitor.isNativePlatform()) {
+      subscribeAdminToPush(supabase, user.id);
+      return;
+    }
+
+    // Admin en el iPhone: igual que en la web, se pide el permiso al entrar (no
+    // ve Mis reservas ni el perfil, donde está el botón "Activar avisos").
+    // Resto (jugadores en web/Android y en iPhone): refresco silencioso. Solo
+    // registra el dispositivo si ya dio permiso; nunca muestra el diálogo (eso
+    // lo hace el botón "Activar avisos" de Mis reservas o del perfil).
+    activarAvisos(supabase, user.id, { preguntar: user.role === 'admin' });
+    // El rol se afina en segundo plano (AuthContext): al cambiar, se repite.
+  }, [user?.id, user?.role]);
 
   // === MODO MANTENIMIENTO ===
   const MAINTENANCE_MODE = false;

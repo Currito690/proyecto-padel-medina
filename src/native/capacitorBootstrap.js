@@ -4,9 +4,9 @@
 // true (ver src/main.jsx). En la web y en la app Android (TWA, que es Chrome y
 // no Capacitor) no se ejecuta nada de aquí: cero impacto en lo que ya funciona.
 //
-// Pendiente (fase de servidor):
-//   - Push de Apple (APNs): aquí solo se registra y se obtiene el token; falta
-//     enviarlo al backend y mandar los avisos por APNs (hoy la web usa web-push).
+// Avisos de Apple (APNs): aquí solo se escucha el toque en un aviso. El permiso
+// y el registro del token los hace la app cuando hay usuario (activarAvisos en
+// src/services/pushNotifications.js): no se pregunta nada al arrancar.
 // El pago con Redsys se abre en una pantalla de pago propia de la app y vuelve
 // solo (ver src/utils/redsysPay.js); no necesita nada aquí.
 import { App } from '@capacitor/app';
@@ -71,31 +71,13 @@ function initEnlacesInternos() {
 
 async function initPush() {
   try {
-    const estado = await PushNotifications.checkPermissions();
-    let receive = estado.receive;
-    if (receive === 'prompt' || receive === 'prompt-with-rationale') {
-      receive = (await PushNotifications.requestPermissions()).receive;
-    }
-    if (receive !== 'granted') return;
-
-    // Token APNs: de momento solo lo registramos/logueamos. Enviarlo al backend
-    // y mandar los avisos por APNs queda para la fase de servidor (ver guía iOS).
-    PushNotifications.addListener('registration', (token) => {
-      try { console.log('[APNs] token de dispositivo:', token.value); } catch { /* nada */ }
-      // TODO(servidor APNs): guardar token.value asociado al usuario.
-    }).catch(() => {});
-
-    PushNotifications.addListener('registrationError', (err) => {
-      try { console.warn('[APNs] error de registro:', err); } catch { /* nada */ }
-    }).catch(() => {});
-
-    // Tocar un aviso abre la ruta que venga en los datos (data.url).
-    PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
+    // Tocar un aviso abre la ruta que venga en los datos (data.url). Si llega
+    // una URL completa (p. ej. el enlace de un torneo), nos quedamos con la ruta.
+    await PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
       const url = notification?.data?.url;
-      if (url) navegarSPA(url);
-    }).catch(() => {});
-
-    await PushNotifications.register();
+      if (!url) return;
+      navegarSPA(url.startsWith('/') ? url : rutaDeURL(url));
+    });
   } catch { /* nada */ }
 }
 

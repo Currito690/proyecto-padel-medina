@@ -84,7 +84,7 @@ function confirmationHtml(userName: string, courtName: string, date: string, tim
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;margin-bottom:28px">
         <tr><td style="padding:14px 16px">
           <p style="margin:0;font-size:13px;color:#15803D;line-height:1.6">
-            💡 <strong>Consejo:</strong> Recibirás un recordatorio 10 horas antes de tu partido. ¡Recuerda ser puntual!
+            💡 <strong>Consejo:</strong> Te lo recordaremos unas horas antes del partido (o la víspera si juegas temprano). ¡Recuerda ser puntual!
           </p>
         </td></tr>
       </table>

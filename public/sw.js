@@ -1,8 +1,9 @@
-// Version 2026-10-02b — modo offline: guarda la app para poder abrirla sin internet.
+// Version 2026-10-14 — tocar un aviso con la app abierta lleva a su pantalla.
+// (2026-10-02b: modo offline, guarda la app para poder abrirla sin internet.)
 // Las apps abiertas se recargan solas al detectar esta versión (lo controla main.jsx).
 // Service Worker — Padel Medina PWA
 
-const CACHE = 'padelmedina-2026-10-02b';
+const CACHE = 'padelmedina-2026-10-14';
 // Lo mínimo para que la app arranque sin conexión. Los JS/CSS (con hash en el
 // nombre) se van guardando solos según se usan, más abajo.
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/logo.png', '/offline.html'];
@@ -88,18 +89,28 @@ self.addEventListener('push', function (event) {
 
 self.addEventListener('notificationclick', function (event) {
     event.notification.close();
-    const url = event.notification.data?.url || '/';
+    let url = event.notification.data?.url || '/';
+    let destino;
+    try { destino = new URL(url, self.location.origin); } catch { url = '/'; destino = new URL(url, self.location.origin); }
+    const abrir = () => (self.clients.openWindow ? self.clients.openWindow(url) : undefined);
 
     event.waitUntil(
-        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
+            // Un enlace de fuera (p. ej. la inscripción de un evento) se abre
+            // aparte, sin sacar a la app de su pantalla.
+            if (destino.origin !== self.location.origin) return abrir();
             for (const client of clientList) {
                 if (client.url.includes(self.location.origin) && 'focus' in client) {
-                    return client.focus();
+                    // App ya abierta: al frente y a la pantalla del aviso (p. ej.
+                    // Mis reservas); antes solo se traía al frente.
+                    return client.focus()
+                        .then((c) => (c && 'navigate' in c && c.url !== destino.href
+                            ? c.navigate(destino.href).catch(() => c)
+                            : c))
+                        .catch(abrir);
                 }
             }
-            if (clients.openWindow) {
-                return clients.openWindow(url);
-            }
+            return abrir();
         })
     );
 });
