@@ -1,3 +1,4 @@
+/* global __APP_VERSION__ -- la pone vite.config.js (commit del build) */
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -398,6 +399,11 @@ const Profile = () => {
           {borrando ? 'Eliminando…' : 'Eliminar mi cuenta'}
         </button>
       </div>
+
+      {/* Versión instalada (commit del build), para soporte */}
+      <p style={{ margin: '1.25rem 0 0', textAlign: 'center', fontSize: '0.7rem', color: '#CBD5E1' }}>
+        Versión {typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'}
+      </p>
 
     </div>
   );

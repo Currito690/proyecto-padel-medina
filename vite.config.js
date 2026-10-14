@@ -1,9 +1,18 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import viteCompression from 'vite-plugin-compression'
+import { execSync } from 'node:child_process'
+
+// Versión que se ve al pie del perfil (commit del build): así se sabe qué
+// versión lleva instalada cada móvil, sobre todo la app de iPhone.
+let versionApp = 'dev'
+try { versionApp = execSync('git rev-parse --short HEAD').toString().trim() } catch { /* sin git */ }
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(versionApp),
+  },
   plugins: [
     react(),
     viteCompression({ algorithm: 'gzip' }),

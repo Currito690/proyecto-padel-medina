@@ -146,7 +146,9 @@ export const FilaRecordatorios = () => {
     };
   }, [user?.id, nativo]);
 
-  if (!user || !estado) return null;
+  // En el iPhone la fila sale desde el principio (mientras se lee el permiso,
+  // "Comprobando…"); en la web, solo cuando se sabe que hay avisos.
+  if (!user || (!estado && !nativo)) return null;
   if (estado === 'no-disponible' && !(nativo && fallo)) return null;
 
   const activar = async () => {
@@ -179,7 +181,7 @@ export const FilaRecordatorios = () => {
           )}
         </div>
       </div>
-      {estado === 'activos' && comprobando && !activando && (
+      {(!estado || (estado === 'activos' && comprobando && !activando)) && (
         <span style={{ flexShrink: 0, fontSize: '0.78rem', fontWeight: 600, color: '#94A3B8', whiteSpace: 'nowrap' }}>Comprobando…</span>
       )}
       {estado === 'activos' && fallo && !comprobando && (

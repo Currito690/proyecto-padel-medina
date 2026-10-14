@@ -168,8 +168,11 @@ async function tokenAPNs(PushNotifications, ms = 10000) {
 export async function estadoAvisos() {
   try {
     if (Capacitor.isNativePlatform()) {
-      const PushNotifications = await pluginPush();
-      return estadoNativo((await PushNotifications.checkPermissions()).receive);
+      // Con límite de tiempo: si el plugin no contesta, mejor decirlo que dejar
+      // la pantalla esperando para siempre.
+      const leer = (async () => (await (await pluginPush()).checkPermissions()).receive)();
+      const limite = new Promise((_, rechazar) => setTimeout(() => rechazar(new Error('el iPhone no responde')), 3000));
+      return estadoNativo(await Promise.race([leer, limite]));
     }
     if (!webPushDisponible()) return 'no-disponible';
     return ESTADO_WEB[Notification.permission] || 'pendiente';
