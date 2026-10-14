@@ -175,6 +175,7 @@ export async function estadoAvisos() {
     return ESTADO_WEB[Notification.permission] || 'pendiente';
   } catch (err) {
     console.warn('Push: no se pudo leer el permiso:', err);
+    if (Capacitor.isNativePlatform()) guardarFallo(`no se puede leer el permiso de avisos (${err?.message || err})`);
     return 'no-disponible';
   }
 }

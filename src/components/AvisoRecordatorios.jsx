@@ -99,14 +99,17 @@ const AvisoRecordatorios = () => {
   );
 };
 
-// Fila del perfil con el estado de los recordatorios. Si el dispositivo no
-// admite avisos no se muestra nada.
+// Fila del perfil con el estado de los recordatorios. En la web, si el
+// navegador no admite avisos no se muestra nada; en el iPhone sale siempre (si
+// algo falla, con el motivo).
 export const FilaRecordatorios = () => {
   const { user } = useAuth();
   const [estado, setEstado] = useState(null);
   const [activando, setActivando] = useState(false);
-  // iPhone: permiso concedido pero el dispositivo NO quedó registrado (sin esto
-  // ponía "Activados ✓" y los avisos no llegaban nunca).
+  // iPhone: con permiso concedido se comprueba que el dispositivo quede
+  // registrado; si no (sin token de Apple, error del servidor...), se enseña el
+  // motivo. Antes ponía "Activados ✓" y los avisos no llegaban nunca.
+  const [comprobando, setComprobando] = useState(false);
   const [fallo, setFallo] = useState(null);
   const nativo = Capacitor.isNativePlatform();
 
@@ -114,19 +117,24 @@ export const FilaRecordatorios = () => {
     if (!user?.id) return;
     let vivo = true;
     let ultimo = null;
-    // En el iPhone, al abrir el perfil con permiso se (re)registra el
-    // dispositivo y se enseña si algo falla. Y al volver de los ajustes del móvil
-    // el permiso puede haber cambiado: si acaba de concederse, también se registra.
-    const leer = (alVolverDeAjustes) => estadoAvisos().then(async (e) => {
+    // La fila sale en cuanto se conoce el permiso. En el iPhone, al abrir el
+    // perfil con permiso se (re)registra el dispositivo; en la web, solo al volver
+    // de los ajustes si el permiso se acaba de conceder.
+    const leer = async (alVolverDeAjustes) => {
+      const e = await estadoAvisos();
       if (!vivo) return;
-      if (e === 'activos' && (nativo ? ultimo !== 'activos' : alVolverDeAjustes && ultimo !== 'activos')) {
-        await activarAvisos(supabase, user.id, { preguntar: false });
-        if (!vivo) return;
-      }
-      if (nativo) setFallo(e === 'activos' ? falloAvisosNativo() : null);
+      const registrar = e === 'activos' && ultimo !== 'activos' && (nativo || alVolverDeAjustes);
       ultimo = e;
       setEstado(e);
-    });
+      if (nativo && e === 'no-disponible') setFallo(falloAvisosNativo() || 'este iPhone no permite avisos');
+      else if (nativo && e !== 'activos') setFallo(null);
+      if (!registrar) return;
+      setComprobando(true);
+      await activarAvisos(supabase, user.id, { preguntar: false });
+      if (!vivo) return;
+      if (nativo) setFallo(falloAvisosNativo());
+      setComprobando(false);
+    };
     leer(false);
     const alVolver = () => {
       if (document.visibilityState === 'visible') leer(true);
@@ -138,7 +146,8 @@ export const FilaRecordatorios = () => {
     };
   }, [user?.id, nativo]);
 
-  if (!user || !estado || estado === 'no-disponible') return null;
+  if (!user || !estado) return null;
+  if (estado === 'no-disponible' && !(nativo && fallo)) return null;
 
   const activar = async () => {
     setActivando(true);
@@ -170,12 +179,15 @@ export const FilaRecordatorios = () => {
           )}
         </div>
       </div>
-      {estado === 'activos' && fallo && (
+      {estado === 'activos' && comprobando && !activando && (
+        <span style={{ flexShrink: 0, fontSize: '0.78rem', fontWeight: 600, color: '#94A3B8', whiteSpace: 'nowrap' }}>Comprobando…</span>
+      )}
+      {estado === 'activos' && fallo && !comprobando && (
         <button onClick={activar} disabled={activando} style={{ ...botonVerde, flexShrink: 0, padding: '0.5rem 0.95rem', minHeight: '36px', opacity: activando ? 0.7 : 1, cursor: activando ? 'wait' : 'pointer' }}>
           {activando ? 'Probando…' : 'Reintentar'}
         </button>
       )}
-      {estado === 'activos' && !fallo && (
+      {estado === 'activos' && !fallo && !comprobando && (
         <span style={{ flexShrink: 0, fontSize: '0.8rem', fontWeight: 700, color: '#15803D', whiteSpace: 'nowrap' }}>Activados ✓</span>
       )}
       {estado === 'pendiente' && (
