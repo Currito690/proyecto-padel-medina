@@ -371,7 +371,11 @@ const BookingDashboard = () => {
     };
     evaluate();
     const id = setInterval(evaluate, 30 * 1000);
-    return () => { cancelled = true; clearInterval(id); };
+    // Al volver a la app/pestaña (en el móvil los temporizadores se paran en
+    // segundo plano): refrescar YA, sin esperar al siguiente ciclo de 30s.
+    const onVisible = () => { if (document.visibilityState === 'visible') evaluate(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, [siteSettings.slots_release_time]);
 
   const currentCourt = courts.find(c => c.id === selectedCourt);
