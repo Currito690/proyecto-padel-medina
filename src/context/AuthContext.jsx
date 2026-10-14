@@ -2,11 +2,12 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { Capacitor } from '@capacitor/core';
 import { origenPublico } from '../utils/origen';
+import { GOOGLE_IOS_CLIENT_ID } from '../utils/googleNativo';
 // Usuarios "monitor" (solo lectura de la agenda) reconocidos por email como
 // respaldo, además de profiles.role = 'monitor'.
 import { MONITOR_EMAILS } from '../utils/staff';
 
-// Hash SHA-256 en hex (para el nonce de "Iniciar sesión con Apple": Apple recibe
+// Hash SHA-256 en hex (para el nonce de Apple y Google en iPhone: el proveedor recibe
 // el hash y Supabase el valor crudo; así no se puede reutilizar el token).
 async function sha256Hex(str) {
   const data = new TextEncoder().encode(str);
@@ -123,8 +124,29 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  // Login con Google
+  // Login con Google. En la web y la app Android: OAuth de Supabase (redirige a
+  // Google y vuelve). En la app de iPhone: ventana nativa de Google (Google no
+  // deja iniciar sesión dentro de una pantalla web de la app) y el token se
+  // canjea en Supabase con signInWithIdToken, igual que con Apple.
   const loginWithGoogle = async () => {
+    if (Capacitor.isNativePlatform()) {
+      const { SocialLogin } = await import('@capgo/capacitor-social-login');
+      await SocialLogin.initialize({ google: { iOSClientId: GOOGLE_IOS_CLIENT_ID, mode: 'online' } });
+      const rawNonce = `${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}.${Date.now().toString(36)}`;
+      const hashedNonce = await sha256Hex(rawNonce);
+      // forcePrompt: muestra siempre el selector de cuentas (si no, reutiliza en
+      // silencio la última cuenta de Google y no se puede entrar con otra).
+      const res = await SocialLogin.login({ provider: 'google', options: { nonce: hashedNonce, forcePrompt: true } });
+      const idToken = res?.result?.idToken;
+      if (!idToken) throw new Error('Google no devolvió el token de identidad');
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: 'google',
+        token: idToken,
+        nonce: rawNonce,
+      });
+      if (error) throw error;
+      return;
+    }
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin },

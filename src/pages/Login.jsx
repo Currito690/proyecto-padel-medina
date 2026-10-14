@@ -4,15 +4,21 @@ import { useAuth } from '../context/AuthContext';
 import { sanitizeInput } from '../utils/sanitize';
 import { VERSION_TEXTOS_LEGALES } from '../utils/legal';
 import { Capacitor } from '@capacitor/core';
+import { googleNativoListo } from '../utils/googleNativo';
 
-// En la app de iPhone usamos "Iniciar sesión con Apple" (nativo, sin navegador)
-// y escondemos Google (su login abre el navegador). En web/Android, al revés.
+// En la app de iPhone: "Continuar con Apple" y "Continuar con Google", los dos
+// nativos (sin navegador). En web/Android: solo Google (OAuth normal).
 const ES_NATIVO = Capacitor.isNativePlatform();
 // El botón de Apple solo se muestra cuando su proveedor está activado en el
 // servidor de login (GoTrue) y la capacidad "Sign in with Apple" está puesta en
 // Xcode. Hasta entonces, en iPhone se entra con correo (sin navegador). Poner a
 // true cuando el servidor esté listo.
 const APPLE_LISTO = true;
+// Google en iPhone sale cuando hay ID de cliente iOS (ver utils/googleNativo.js).
+const GOOGLE_NATIVO = ES_NATIVO && googleNativoListo();
+const NOMBRE_SOCIAL = !ES_NATIVO ? 'Google'
+  : (APPLE_LISTO && GOOGLE_NATIVO) ? 'Apple o Google'
+  : APPLE_LISTO ? 'Apple' : 'Google';
 
 const MSG_ACEPTAR = 'Para registrarte tienes que aceptar la Política de Privacidad y el Aviso legal.';
 
@@ -120,13 +126,25 @@ const Login = () => {
   };
 
   // Google también crea cuentas: en la pestaña de registro exige la casilla
-  const handleGoogle = () => {
+  // En iPhone la ventana es nativa: si el usuario la cierra no mostramos error.
+  const handleGoogle = async () => {
     if (!isLogin && !aceptaLegal) {
       setAvisarLegal(true);
       setError(MSG_ACEPTAR);
       return;
     }
-    loginWithGoogle();
+    if (!ES_NATIVO) { loginWithGoogle(); return; }
+    setError(null);
+    setLoading(true);
+    try {
+      await loginWithGoogle();
+    } catch (err) {
+      const msg = (err?.message || '').toLowerCase();
+      const cancelado = msg.includes('cancel') || String(err?.code) === '-5';
+      if (!cancelado) setError(traduceError(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Iniciar sesión con Apple (nativo, solo iPhone). Si el usuario cancela el
@@ -388,6 +406,7 @@ const Login = () => {
         }
         .login-apple:hover { opacity: 0.88; }
         .login-apple:disabled { opacity: 0.6; cursor: default; }
+        .login-apple + .login-google { margin-top: 0.625rem; }
 
         /* Aceptación de textos legales */
         .login-consent {
@@ -637,31 +656,22 @@ const Login = () => {
               </form>
             )}
 
-            {step === 1 && !forgotMode && (ES_NATIVO ? APPLE_LISTO : true) && (
+            {step === 1 && !forgotMode && (ES_NATIVO ? (APPLE_LISTO || GOOGLE_NATIVO) : true) && (
               <>
                 <div className="login-divider">
                   <hr /><span>o</span><hr />
                 </div>
 
-                {ES_NATIVO ? (
-                  <>
+                {ES_NATIVO && APPLE_LISTO && (
                     <button type="button" onClick={handleApple} disabled={loading} className="login-apple">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                         <path d="M16.37 1.43c.06 1.06-.33 2.08-1 2.84-.69.78-1.82 1.38-2.9 1.29-.09-1.03.4-2.1 1.04-2.82.71-.8 1.95-1.4 2.86-1.31zM19.6 17.3c-.52 1.2-.77 1.74-1.44 2.8-.94 1.48-2.26 3.32-3.9 3.33-1.46.02-1.83-.95-3.81-.94-1.98.01-2.39.96-3.85.94-1.64-.02-2.89-1.68-3.83-3.16C-.1 15.9-.37 10.86 1.3 8.18 2.49 6.28 4.36 5.17 6.12 5.17c1.79 0 2.92 1.08 4.38 1.08 1.42 0 2.28-1.08 4.34-1.08 1.56 0 3.21.85 4.39 2.32-3.86 2.12-3.23 7.63.37 9.81z"/>
                       </svg>
                       Continuar con Apple
                     </button>
-                    {isLogin && (
-                      <p className="login-legal-hint">
-                        Al continuar con Apple aceptas la{' '}
-                        <a href="/privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</a>
-                        {' '}y el{' '}
-                        <a href="/aviso-legal" target="_blank" rel="noopener noreferrer">Aviso legal</a>.
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <>
+                )}
+
+                {(!ES_NATIVO || GOOGLE_NATIVO) && (
                     <button type="button" onClick={handleGoogle} disabled={loading} className="login-google">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -671,15 +681,15 @@ const Login = () => {
                       </svg>
                       Continuar con Google
                     </button>
-                    {isLogin && (
-                      <p className="login-legal-hint">
-                        Si aún no tienes cuenta, al continuar con Google se creará una y aceptas la{' '}
-                        <a href="/privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</a>
-                        {' '}y el{' '}
-                        <a href="/aviso-legal" target="_blank" rel="noopener noreferrer">Aviso legal</a>.
-                      </p>
-                    )}
-                  </>
+                )}
+
+                {isLogin && (
+                  <p className="login-legal-hint">
+                    Si aún no tienes cuenta, al continuar con {NOMBRE_SOCIAL} se creará una y aceptas la{' '}
+                    <a href="/privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</a>
+                    {' '}y el{' '}
+                    <a href="/aviso-legal" target="_blank" rel="noopener noreferrer">Aviso legal</a>.
+                  </p>
                 )}
               </>
             )}
