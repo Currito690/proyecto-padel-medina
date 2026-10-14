@@ -1,5 +1,6 @@
 import { useEffect, Suspense, lazy, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { supabase } from './services/supabase';
 import { subscribeAdminToPush } from './services/pushNotifications';
@@ -23,6 +24,27 @@ const DeleteAccount = lazy(() => import('./pages/DeleteAccount'));
 const Tournaments = lazy(() => import('./pages/Tournaments'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const MonitorView = lazy(() => import('./pages/MonitorView'));
+
+// Pantallas sueltas (sin la cabecera de MainLayout): en la app de iPhone la web
+// llega hasta el borde de arriba, así que les damos el margen de la zona de la
+// hora/batería para que nada quede tapado. En web/Android env() vale 0.
+const SafeTop = ({ children }) => (
+  <div style={{ paddingTop: 'env(safe-area-inset-top)' }}>{children}</div>
+);
+
+// Color de los iconos de la barra de estado (hora/batería) en la app nativa:
+// blancos sobre la cabecera azul del login; oscuros sobre las cabeceras blancas
+// del resto de la app.
+const StatusBarSync = () => {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    import('@capacitor/status-bar')
+      .then(({ StatusBar, Style }) => StatusBar.setStyle({ style: pathname === '/login' ? Style.Dark : Style.Light }))
+      .catch(() => {});
+  }, [pathname]);
+  return null;
+};
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -225,18 +247,19 @@ function App() {
 
   return (
     <div className="app-container">
+      <StatusBarSync />
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={!user ? <Login /> : <Navigate to="/" replace />} />
-          <Route path="/torneos/:id" element={<TournamentRegistration />} />
-          <Route path="/torneos/:id/cuadro" element={<TournamentBracket />} />
-          <Route path="/pago-compartido" element={<SharedPayment />} />
-          <Route path="/privacidad" element={<PrivacyPolicy />} />
-          <Route path="/aviso-legal" element={<LegalNotice />} />
-          <Route path="/eliminar-cuenta" element={<DeleteAccount />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/torneos/:id" element={<SafeTop><TournamentRegistration /></SafeTop>} />
+          <Route path="/torneos/:id/cuadro" element={<SafeTop><TournamentBracket /></SafeTop>} />
+          <Route path="/pago-compartido" element={<SafeTop><SharedPayment /></SafeTop>} />
+          <Route path="/privacidad" element={<SafeTop><PrivacyPolicy /></SafeTop>} />
+          <Route path="/aviso-legal" element={<SafeTop><LegalNotice /></SafeTop>} />
+          <Route path="/eliminar-cuenta" element={<SafeTop><DeleteAccount /></SafeTop>} />
+          <Route path="/reset-password" element={<SafeTop><ResetPassword /></SafeTop>} />
 
           {/* Admin Routes */}
           {user?.role === 'admin' && (
@@ -250,7 +273,7 @@ function App() {
 
           {/* Client Routes - No Layout */}
           {user?.role === 'client' && (
-            <Route path="/checkout" element={<PaymentGateway />} />
+            <Route path="/checkout" element={<SafeTop><PaymentGateway /></SafeTop>} />
           )}
 
           {/* Client Routes - With Layout */}

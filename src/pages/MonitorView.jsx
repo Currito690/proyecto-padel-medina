@@ -1051,7 +1051,7 @@ export default function MonitorView() {
       `}</style>
 
       {/* Cabecera */}
-      <header style={{ background: '#fff', borderBottom: '1px solid #E8EDF3', padding: '0.8rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
+      <header style={{ background: '#fff', borderBottom: '1px solid #E8EDF3', padding: 'calc(0.8rem + env(safe-area-inset-top)) 1rem 0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <img src="/logo.png" alt="Padel Medina" style={{ height: 30 }} />
           <span style={{ fontWeight: 800, color: '#1B3A6E', fontSize: '1.02rem' }}>Agenda</span>

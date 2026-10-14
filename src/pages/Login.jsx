@@ -205,7 +205,8 @@ const Login = () => {
         /* Brand panel (hero) */
         .login-brand {
           background: linear-gradient(150deg, #1B3A6E 0%, #15326A 55%, #0F2550 100%);
-          padding: 2.5rem 1.5rem 3rem;
+          /* + zona de la hora/batería en iPhone (la cabecera azul llega al borde) */
+          padding: calc(2.5rem + env(safe-area-inset-top)) 1.5rem 3rem;
           text-align: center;
           position: relative;
           overflow: hidden;

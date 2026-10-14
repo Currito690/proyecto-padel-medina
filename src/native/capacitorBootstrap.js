@@ -10,7 +10,6 @@
 //   - Enlaces profundos (vuelta de Redsys y enlaces del correo): el enrutado
 //     básico está puesto; hay que verificar el flujo de pago en el dispositivo.
 import { App } from '@capacitor/app';
-import { StatusBar, Style } from '@capacitor/status-bar';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { PushNotifications } from '@capacitor/push-notifications';
 
@@ -34,13 +33,9 @@ function rutaDeURL(url) {
 }
 
 async function initStatusBarYSplash() {
-  try {
-    // La web ocupa TODA la pantalla, también bajo la barra de estado (así el azul
-    // de la cabecera llega hasta arriba y no queda una franja negra). Los iconos
-    // de la barra (hora/batería) van en blanco, que es lo que se ve sobre el azul.
-    await StatusBar.setOverlaysWebView({ overlay: true });
-    await StatusBar.setStyle({ style: Style.Dark });
-  } catch { /* algunos dispositivos no lo soportan */ }
+  // La pantalla completa la da capacitor.config (ios.contentInset "never") y el
+  // CSS con env(safe-area-inset-top). El color de los iconos de la barra de
+  // estado lo pone cada pantalla (StatusBarSync en App.jsx).
   try {
     // La web ya está pintada: quitamos el splash nativo.
     await SplashScreen.hide();

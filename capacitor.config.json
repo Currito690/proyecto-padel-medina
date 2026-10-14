@@ -3,7 +3,7 @@
   "appName": "Padel Medina",
   "webDir": "dist",
   "ios": {
-    "contentInset": "always",
+    "contentInset": "never",
     "backgroundColor": "#F8FAFC"
   },
   "server": {
