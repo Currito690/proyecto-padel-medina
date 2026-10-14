@@ -20,7 +20,7 @@ export const TITULAR = {
 // Versión de los textos legales que el usuario acepta al registrarse. Se
 // guarda en su cuenta junto a la fecha de aceptación (prueba del art. 7.1 RGPD).
 // Súbela cuando cambie la Política de Privacidad o el Aviso legal.
-export const VERSION_TEXTOS_LEGALES = '2026-09';
+export const VERSION_TEXTOS_LEGALES = '2026-10';
 
 // Filas de identificación del titular, omitiendo las que aún no se conocen.
 export const filasTitular = () => [

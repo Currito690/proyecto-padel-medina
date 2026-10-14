@@ -234,9 +234,10 @@ Casos dudosos, decididos así:
 
 ### Coherencia con la política de privacidad
 
-La etiqueta de arriba describe lo que la app recoge de verdad. La política
-publicada en `/privacidad` **no menciona** varias cosas. Están listadas en el
-apartado 11 y conviene corregirlas antes de enviar.
+La etiqueta de arriba describe lo que la app recoge de verdad. La política de
+`src/pages/PrivacyPolicy.jsx` (versión de octubre de 2026) ya recoge todo lo de
+esta tabla. **Ojo**: Apple lee la de `https://padelmedina.com/privacidad`, así que
+hay que desplegar esa versión en producción antes de enviar (ver apartado 11).
 
 ---
 
@@ -515,21 +516,25 @@ con el cable: ese usa los avisos de pruebas de Apple y otra firma):
 - «Eliminar mi cuenta» con una cuenta de usar y tirar.
 - No sale el aviso «Instala Padel Medina».
 
-**Política de privacidad** (`src/pages/PrivacyPolicy.jsx`). Faltan estas cosas
-para que cuadre con la etiqueta del apartado 6:
+**Política de privacidad** (`src/pages/PrivacyPolicy.jsx`). Ya cuadra con la
+etiqueta del apartado 6: inicio de sesión con Apple (y el correo de reenvío
+privado) y con Google, avisos por APNs en el iPhone y web push en la web y
+Android, datos del personal del club (ubicación al fichar, firma, registro
+horario, tarifas y horas), datos de torneos (compañero, talla, disponibilidad y
+cuadro público), Google Maps y Google Fonts, y pagos en Redsys sin ver la
+tarjeta. Queda pendiente:
 
-1. **Iniciar sesión con Apple**: solo habla de Google. Hay que añadir que Apple
-   facilita el nombre y el correo, que puede ser el de reenvío privado.
-2. **Avisos en el iPhone**: habla del «identificador que su navegador nos facilita»
-   y de retirarlo «desde su navegador». En el iPhone es el token de Apple (APNs) y
-   se retira en Ajustes. Añadir Apple como proveedor que entrega los avisos.
-3. **Personal del club**: no dice nada de la ubicación al fichar, la firma, el
-   registro horario ni las tarifas y horas para el sueldo.
-4. **Torneos**: no dice que se piden datos del compañero (nombre, teléfono y
-   correo), la talla de camiseta y la disponibilidad, ni que los nombres de las
-   parejas salen en el cuadro público.
-5. **Google Maps**: el mapa insertado de la portada carga contenido de Google. La
-   política dice que no hay cookies de terceros, y ese mapa puede ponerlas.
+1. **Desplegarla en producción** antes de enviar: Apple lee la de
+   `https://padelmedina.com/privacidad`, no la del repositorio.
+2. **Bases legales a confirmar** con quien lleve lo legal: consentimiento para la
+   ubicación del monitor (si es empleado, quizá mejor el art. 90 de la LOPD-GDD)
+   y si es contrato de trabajo o de servicios; interés legítimo para el cuadro
+   público y para cargar Google Maps y Google Fonts sin preguntar.
+3. **Correo de reenvío privado de Apple**: para que lleguen los códigos, las
+   confirmaciones y los recordatorios a quien oculta su correo, el dominio que
+   envía con Resend tiene que estar dado de alta en Apple Developer →
+   Certificates, Identifiers & Profiles → Services → Sign in with Apple for Email
+   Communication. Si no, esos correos rebotan.
 
 **Servidor y cuenta**:
 
