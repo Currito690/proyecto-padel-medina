@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverNow } from '../utils/serverTime';
+import { urlVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
 
 // Pago compartido temporalmente DESACTIVADO (oculta la pestaña "Compartido").
 // Cambiar a true para reactivarlo cuando esté probado.
@@ -226,9 +227,9 @@ const PaymentGateway = () => {
       }
       holdId = holdRow.id;
 
-      const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
-      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok`)}`;
-      const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
+      const rutaKo     = '/?pago=cancelado';
+      const successUrl = urlVueltaRedsys('/mis-reservas?pago=ok');
+      const failUrl    = urlVueltaRedsys(rutaKo);
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {
@@ -262,23 +263,6 @@ const PaymentGateway = () => {
       // Limpiamos el carrito antes de redirigir al banco
       clearCart();
 
-      // Crear formulario dinámico y enviarlo a Redsys
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = data.redsysUrl;
-
-      [
-        ['Ds_SignatureVersion',    'HMAC_SHA256_V1'],
-        ['Ds_MerchantParameters', data.Ds_MerchantParameters],
-        ['Ds_Signature',          data.Ds_Signature],
-      ].forEach(([name, value]) => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-        form.appendChild(input);
-      });
-
       // Guardar datos antes del redirect para fallback y email de confirmación.
       // En sessionStorage Y localStorage: en móviles el navegador puede matar la
       // pestaña durante el pago y sessionStorage se pierde → sin este respaldo,
@@ -297,12 +281,21 @@ const PaymentGateway = () => {
       sessionStorage.setItem('pendingBooking', pendingData);
       try { localStorage.setItem('pendingBooking', pendingData); } catch { /* storage lleno */ }
 
-      document.body.appendChild(form);
-      form.submit();
+      // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
+      await enviarARedsys(data, rutaKo, {
+        rutaOk: '/mis-reservas?pago=ok',
+        // El hueco retenido pasa a 'confirmed' cuando llega el aviso de Redsys.
+        comprobarPagado: async () => {
+          const { data: b } = await supabase.from('bookings').select('status').eq('id', holdId).maybeSingle();
+          return b?.status === 'confirmed';
+        },
+      });
     } catch (err) {
       console.error('Error Redsys:', err);
       // Liberar el hueco retenido si no llegamos al banco
       if (holdId) supabase.from('bookings').update({ status: 'cancelled' }).eq('id', holdId).then(() => {}, () => {});
+      sessionStorage.removeItem('pendingBooking');
+      try { localStorage.removeItem('pendingBooking'); } catch { /* nada */ }
       setError(`Error: ${err.message}`);
       setLoading(false);
       payLockRef.current = false; // permitir reintento si la pasarela falló
@@ -393,9 +386,9 @@ const PaymentGateway = () => {
     setError(null);
     try {
       const myShare = Math.round((item.price / 4) * 100) / 100;
-      const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
-      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok&compartido=1`)}`;
-      const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
+      const rutaKo     = '/?pago=cancelado';
+      const successUrl = urlVueltaRedsys('/mis-reservas?pago=ok&compartido=1');
+      const failUrl    = urlVueltaRedsys(rutaKo);
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {
@@ -434,22 +427,17 @@ const PaymentGateway = () => {
       });
       sessionStorage.setItem('pendingBooking', pendingSplit);
       try { localStorage.setItem('pendingBooking', pendingSplit); } catch { /* storage lleno */ }
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = data.redsysUrl;
-      [
-        ['Ds_SignatureVersion', 'HMAC_SHA256_V1'],
-        ['Ds_MerchantParameters', data.Ds_MerchantParameters],
-        ['Ds_Signature', data.Ds_Signature],
-      ].forEach(([name, value]) => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-        form.appendChild(input);
+      // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
+      await enviarARedsys(data, rutaKo, {
+        rutaOk: '/mis-reservas?pago=ok&compartido=1',
+        // En el pago compartido la reserva la crea el aviso de Redsys al cobrar.
+        comprobarPagado: async () => {
+          const { data: rows } = await supabase.from('bookings').select('id')
+            .eq('user_id', user.id).eq('court_id', item.courtId).eq('date', item.date)
+            .eq('time_slot', item.timeSlot).eq('status', 'confirmed').limit(1);
+          return !!rows?.length;
+        },
       });
-      document.body.appendChild(form);
-      form.submit();
     } catch (err) {
       console.error('Error pago compartido:', err);
       setError(`Error: ${err.message}`);

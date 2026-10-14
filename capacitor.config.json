@@ -6,9 +6,6 @@
     "contentInset": "never",
     "backgroundColor": "#F8FAFC"
   },
-  "server": {
-    "iosScheme": "https"
-  },
   "plugins": {
     "SplashScreen": {
       "launchAutoHide": false,

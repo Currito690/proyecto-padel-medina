@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
+import { origenPublico } from '../utils/origen';
 
 // Fecha YYYY-MM-DD en hora LOCAL (toISOString es UTC: de 00:00 a 02:00 en
 // España devolvería el día anterior).
@@ -19,7 +20,7 @@ function SplitInfo({ booking, tokens }) {
   const waLink = (t) => {
     let p = (t.phone || '').replace(/\D/g, '');
     if (p.length === 9) p = '34' + p; // móvil español sin prefijo
-    const payUrl = `${window.location.origin}/pago-compartido?token=${t.token}`;
+    const payUrl = `${origenPublico()}/pago-compartido?token=${t.token}`;
     const msg = `¡Hola! Te toca pagar tu parte de la pista de pádel (${courtName} · ${dateStr} · ${booking.time_slot}): ${Number(t.amount).toFixed(2).replace('.', ',')} €. Paga aquí 👉 ${payUrl}`;
     return `https://wa.me/${p}?text=${encodeURIComponent(msg)}`;
   };

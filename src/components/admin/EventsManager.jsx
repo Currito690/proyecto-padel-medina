@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
 import { toast, confirmDialog } from '../../utils/notify';
+import { origenPublico } from '../../utils/origen';
 
 const fmt = (dateStr) => {
   if (!dateStr) return null;
@@ -443,7 +444,7 @@ export default function EventsManager() {
                 )}
                 {registrationUrl && (
                   <p style={{ margin: '0.35rem 0 0', fontSize: '0.72rem', color: '#16A34A', fontWeight: 600 }}>
-                    ✓ Link: {window.location.origin}{registrationUrl}
+                    ✓ Link: {origenPublico()}{registrationUrl}
                   </p>
                 )}
               </div>

@@ -6,6 +6,7 @@ import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { toast, confirmDialog } from '../../utils/notify';
 import { toTitleCase, normalizeForCompare } from '../../utils/names';
+import { origenPublico } from '../../utils/origen';
 import { useServerTime, formatNowShort, isServerTimeSynced, serverNowMs } from '../../utils/serverTime';
 
 const HOURS = [
@@ -280,7 +281,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Usa la lib qrcode local — no depende de servicios externos.
   useEffect(() => {
     if (!publishedId) { setQrDataUrl(''); return; }
-    const url = `${window.location.origin}/torneos/${publishedId}`;
+    const url = `${origenPublico()}/torneos/${publishedId}`;
     QRCode.toDataURL(url, { width: 320, margin: 2, errorCorrectionLevel: 'M' })
       .then(setQrDataUrl)
       .catch((e) => { console.error('QR generation failed:', e); setQrDataUrl(''); });
@@ -1016,7 +1017,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
     setRecipientPickerSending(true);
     try {
-      const tournamentUrl = `${window.location.origin}/torneos/${publishedId}/cuadro`;
+      const tournamentUrl = `${origenPublico()}/torneos/${publishedId}/cuadro`;
       const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bracket-published', {
         body: {
           emails,
@@ -5523,11 +5524,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
               <div style={{ flex: 1, overflow: 'hidden' }}>
                 <p style={{ margin: '0 0 0.25rem', fontSize: '0.75rem', fontWeight: 700, color: '#0369A1', textTransform: 'uppercase' }}>Enlace para jugadores:</p>
-                <a href={`${window.location.origin}/torneos/${publishedId}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.9rem', color: '#2563EB', fontWeight: 600, textDecoration: 'none', wordBreak: 'break-all' }}>
-                  {window.location.host}/torneos/{publishedId}
+                <a href={`${origenPublico()}/torneos/${publishedId}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.9rem', color: '#2563EB', fontWeight: 600, textDecoration: 'none', wordBreak: 'break-all' }}>
+                  {new URL(origenPublico()).host}/torneos/{publishedId}
                 </a>
               </div>
-              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/torneos/${publishedId}`); toast('¡Enlace copiado al portapapeles!', 'success'); }} style={{ marginLeft: '0.75rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#334155', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              <button onClick={() => { navigator.clipboard.writeText(`${origenPublico()}/torneos/${publishedId}`); toast('¡Enlace copiado al portapapeles!', 'success'); }} style={{ marginLeft: '0.75rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#334155', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Copiar
               </button>
             </div>

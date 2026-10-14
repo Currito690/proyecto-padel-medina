@@ -4,12 +4,14 @@
 // true (ver src/main.jsx). En la web y en la app Android (TWA, que es Chrome y
 // no Capacitor) no se ejecuta nada de aquí: cero impacto en lo que ya funciona.
 //
-// Pendiente de ajustar/probar EN EL MAC (Xcode + dispositivo real):
+// Pendiente (fase de servidor):
 //   - Push de Apple (APNs): aquí solo se registra y se obtiene el token; falta
 //     enviarlo al backend y mandar los avisos por APNs (hoy la web usa web-push).
-//   - Enlaces profundos (vuelta de Redsys y enlaces del correo): el enrutado
-//     básico está puesto; hay que verificar el flujo de pago en el dispositivo.
+// Vuelta del pago: Redsys vuelve a https://padelmedina.com/pv.html, que salta a
+// com.padelmedina.app://pago/<ruta> (ver src/utils/redsysPay.js). Necesita el
+// esquema com.padelmedina.app registrado en Xcode (Info > URL Types).
 import { App } from '@capacitor/app';
+import { Browser } from '@capacitor/browser';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { PushNotifications } from '@capacitor/push-notifications';
 
@@ -43,9 +45,24 @@ async function initStatusBarYSplash() {
 }
 
 function initEnlacesProfundos() {
-  // Redsys vuelve a https://padelmedina.com/... y los correos abren rutas de la
-  // app: Capacitor entrega la URL aquí y la enrutamos dentro de la SPA.
-  App.addListener('appUrlOpen', ({ url }) => {
+  // Capacitor entrega aquí las URLs que abren la app.
+  App.addListener('appUrlOpen', async ({ url }) => {
+    let u;
+    try { u = new URL(url); } catch { return; }
+
+    // Vuelta del pago: com.padelmedina.app://pago/<ruta interna>
+    if (u.protocol === 'com.padelmedina.app:' && u.host === 'pago') {
+      const ruta = (u.pathname || '/') + (u.search || '');
+      if (!ruta.startsWith('/') || ruta.startsWith('//')) return;
+      window.__pmVueltaPago = true; // que cerrar la hoja no se tome como cancelación
+      try { await Browser.close(); } catch { /* ya estaba cerrada */ }
+      // Recarga completa en capacitor://localhost (mismo localStorage = misma
+      // sesión), igual que la vuelta del banco en la web. Hace falta recargar
+      // para que pantallas como /torneos/:id relean ?inscripcion en la misma ruta.
+      window.location.replace(ruta);
+      return;
+    }
+
     const ruta = rutaDeURL(url);
     if (ruta) navegarSPA(ruta);
   }).catch(() => {});

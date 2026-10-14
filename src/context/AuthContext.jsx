@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { Capacitor } from '@capacitor/core';
+import { origenPublico } from '../utils/origen';
 // Usuarios "monitor" (solo lectura de la agenda) reconocidos por email como
 // respaldo, además de profiles.role = 'monitor'.
 import { MONITOR_EMAILS } from '../utils/staff';
@@ -178,7 +179,7 @@ export function AuthProvider({ children }) {
             legal_version: consentimiento.version,
           } : {}),
         },
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: origenPublico(), // en iPhone, el dominio público (no capacitor://)
       },
     });
     if (error) throw error;
@@ -212,7 +213,8 @@ export function AuthProvider({ children }) {
   // Recuperar contraseña: envía un email con enlace a /reset-password
   const resetPassword = async (email) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      // En iPhone, el enlace del correo abre la web pública /reset-password.
+      redirectTo: `${origenPublico()}/reset-password`,
     });
     if (error) throw error;
   };
