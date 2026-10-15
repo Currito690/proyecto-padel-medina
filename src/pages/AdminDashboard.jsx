@@ -10,47 +10,85 @@ import DateSelector from '../components/booking/DateSelector';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverToday, serverNow } from '../utils/serverTime';
 import { DEFAULT_SCHEDULE_CONFIG, normalizeScheduleConfig, buildScheduleTimes, rebuildAvailableTimes, parseSlot, toMin } from '../utils/schedule';
-import { entrenoPagado as entrenoEstaPagado, reservaPagada } from '../utils/entrenos';
+import {
+  reservaPagada, resumenPagoReserva, resumenPagoEntreno, agregarClasesMonitor,
+  pagoCaducado, estadoFilaReserva,
+} from '../utils/entrenos';
 
 const formatDate = (dateStr) => {
   const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 };
 
-// Solo DOS colores de cobro: verde = pagado, rojo = sin pagar. Valen igual
-// para una RESERVA de pista y para un ENTRENO. Libre = neutro; bloqueada = gris.
+// Cuenta fija a la que pasan las reservas de quien borra su cuenta
+// (migración borrado_cuenta_usuario): sale como "Cliente eliminado".
+const CLIENTE_ELIMINADO_ID = '00000000-0000-4000-8000-000000000001';
+
+// Colores de la rejilla del HORARIO (solo panel del admin; la agenda del
+// monitor tiene los suyos):
+//   libre = VERDE · entreno = ROSA (esté cobrado o no) · reserva pagada = AZUL ·
+//   reserva sin pagar = ROJO (también el pago en curso, que lleva ⏳) ·
+//   bloqueada = GRIS. Fondo suave + borde + texto oscuro del mismo tono.
 const slotColors = {
-  available: { borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', color: '#94A3B8' }, // hueco libre (neutro)
-  pagado:    { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' }, // cobrado (verde)
-  impago:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#DC2626' }, // sin cobrar (rojo)
-  blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#94A3B8' }, // bloqueada (gris)
+  available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' }, // libre (verde)
+  entreno:   { borderColor: '#F9A8D4', backgroundColor: '#FCE7F3', color: '#BE185D' }, // entreno (rosa: más vivo que el fondo rojo)
+  pagado:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#1D4ED8' }, // reserva pagada (azul)
+  impago:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#B91C1C' }, // reserva sin pagar (rojo)
+  blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#475569' }, // bloqueada (gris)
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
-// Color pagado/sin pagar (vale para reserva y entreno)
-const colorPago = (pagado) => pagado ? slotColors.pagado : slotColors.impago;
-const etiquetaEntreno = (pagado) => pagado ? '🏋️ Pagado' : '🏋️ Sin pagar';
-const textoEntrenoDetalle = (s) => {
-  const inf = s.entrenoInfo;
-  const estado = s.entrenoPagado ? 'Pagado' : 'Sin pagar';
-  if (!inf || inf.personas == null) return `🏋️ Entreno · ${estado}`;
-  return `🏋️ Entreno · ${estado} (${inf.pagados}/${inf.personas} alumnos)`;
+// Color de una celda del Horario según lo que hay en ella.
+const colorCelda = (slot) => {
+  if (slot?.status === 'booked') return reservaPagada(slot) ? slotColors.pagado : slotColors.impago;
+  if (slot?.status === 'blocked') return slot.tipo === 'entreno' ? slotColors.entreno : slotColors.blocked;
+  return slotColors.available;
 };
 
-// Etiqueta del método de pago de una reserva (con fallback para reservas antiguas).
-const METODO_PAGO_LABELS = {
-  club: '🏪 Pago en el club',
-  tarjeta: '💳 Tarjeta',
-  bizum: '📱 Bizum',
-  gratis: '🎾 Gratis',
-  manual: '✍️ Reserva manual',
+// Texto corto de la celda de un entreno (el color ya dice "entreno"; aquí, el cobro).
+const etiquetaEntreno = (s) => {
+  const r = resumenPagoEntreno(s.entrenoInfo);
+  if (!r.confirmado) return '🏋️ Entreno';
+  if (r.pagados >= r.personas) return '🏋️ Pagado';
+  if (r.pagados === 0) return '🏋️ Sin pagar';
+  return `🏋️ ${r.pagados}/${r.personas}`;
 };
-const formatMetodoPago = (metodo, isFree) =>
-  METODO_PAGO_LABELS[metodo] || (isFree ? '🎾 Gratis' : '—');
+
+// Emoji de cada método de pago (reservas y entrenos).
+const EMOJI_METODO = { tarjeta: '💳', bizum: '📱', club: '🏪', mano: '💶', manual: '✍️', gratis: '🎾' };
+
+// Etiqueta "Pagada / Sin pagar" con color Y texto (no solo color).
+function ChipPago({ pagada, children }) {
+  const t = pagada ? slotColors.pagado : slotColors.impago;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 800, color: 'white', background: t.color, borderRadius: 999, padding: '0.25rem 0.65rem', whiteSpace: 'nowrap' }}>
+      {children}
+    </span>
+  );
+}
+
+// Una línea "Jugador N / Alumno N → método o Sin pagar" (con hueco opcional
+// a la derecha para los botones de marcar el pago). En móvil, si no caben al
+// lado, los botones bajan a una segunda línea.
+function FilaPago({ etiqueta, pagado, texto, metodo, children }) {
+  const t = pagado ? slotColors.pagado : slotColors.impago;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.3rem 0.45rem', padding: '0.4rem 0', borderTop: '1px solid #F1F5F9' }}>
+      <div style={{ flex: '1 1 7.5rem', minWidth: 0 }}>
+        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B' }}>{etiqueta}</div>
+        <div style={{ fontSize: '0.78rem', fontWeight: 800, color: t.color, lineHeight: 1.25 }}>
+          {pagado ? `✓ ${EMOJI_METODO[metodo] ? EMOJI_METODO[metodo] + ' ' : ''}${texto}` : '✕ Sin pagar'}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 // Gestión del pago compartido por el admin: ver el estado X/4 y marcar pagada la
 // parte de un jugador (p.ej. si paga en el club en vez de por su enlace).
-function SplitAdmin({ bookingId }) {
+// onPaidChange(n) avisa del nuevo split_paid para refrescar el resumen de pago.
+function SplitAdmin({ bookingId, onPaidChange }) {
   const [tokens, setTokens] = useState([]);
   const [paid, setPaid] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -62,9 +100,11 @@ function SplitAdmin({ bookingId }) {
       supabase.from('bookings').select('split_paid').eq('id', bookingId).single(),
       supabase.from('shared_payment_tokens').select('id, phone, amount, paid').eq('booking_id', bookingId).order('created_at'),
     ]);
-    setPaid(b?.split_paid || 1);
+    const v = b?.split_paid || 1;
+    setPaid(v);
     setTokens(toks || []);
     setLoading(false);
+    return v;
   }, [bookingId]);
 
   useEffect(() => { if (bookingId) load(); }, [bookingId, load]);
@@ -79,14 +119,14 @@ function SplitAdmin({ bookingId }) {
     setBusy(true);
     await supabase.from('shared_payment_tokens').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', tok.id);
     await bumpPaid(1);
-    await load();
+    onPaidChange?.(await load());
     setBusy(false);
   };
 
   const markClub = async () => {
     setBusy(true);
     await bumpPaid(1);
-    await load();
+    onPaidChange?.(await load());
     setBusy(false);
   };
 
@@ -96,7 +136,7 @@ function SplitAdmin({ bookingId }) {
     <div style={{ marginTop: '0.6rem', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.6rem', padding: '0.7rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tokens.length ? '0.5rem' : 0 }}>
         <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>👥 Pago compartido</span>
-        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: paid >= 4 ? '#15803D' : '#B45309', background: paid >= 4 ? '#F0FDF4' : '#FFFBEB', border: `1px solid ${paid >= 4 ? '#BBF7D0' : '#FDE68A'}`, padding: '0.15rem 0.5rem', borderRadius: 999 }}>
+        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: paid >= 4 ? slotColors.pagado.color : '#B45309', background: paid >= 4 ? slotColors.pagado.backgroundColor : '#FFFBEB', border: `1px solid ${paid >= 4 ? slotColors.pagado.borderColor : '#FDE68A'}`, padding: '0.15rem 0.5rem', borderRadius: 999 }}>
           {paid >= 4 ? '✓ Todo pagado' : `${paid}/4`}
         </span>
       </div>
@@ -104,9 +144,9 @@ function SplitAdmin({ bookingId }) {
         <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', padding: '0.35rem 0', borderTop: '1px solid #F1F5F9' }}>
           <span style={{ fontSize: '0.78rem', color: '#0F172A', fontWeight: 600 }}>📱 {t.phone} · {Number(t.amount).toFixed(2).replace('.', ',')}€</span>
           {t.paid ? (
-            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#15803D', whiteSpace: 'nowrap' }}>✓ Pagado</span>
+            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: slotColors.pagado.color, whiteSpace: 'nowrap' }}>✓ Pagado</span>
           ) : (
-            <button onClick={() => markToken(t)} disabled={busy} style={{ fontSize: '0.7rem', fontWeight: 800, color: 'white', background: '#16A34A', border: 'none', borderRadius: '0.45rem', padding: '0.35rem 0.55rem', cursor: busy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>Marcar pagado</button>
+            <button onClick={() => markToken(t)} disabled={busy} style={{ fontSize: '0.7rem', fontWeight: 800, color: 'white', background: '#1D4ED8', border: 'none', borderRadius: '0.45rem', padding: '0.35rem 0.55rem', cursor: busy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>Marcar pagado</button>
           )}
         </div>
       ))}
@@ -119,31 +159,73 @@ function SplitAdmin({ bookingId }) {
   );
 }
 
-// Cómo ha pagado CADA JUGADOR de la reserva (lo marca el admin al pulsar la
-// reserva en su Horario): 💳 tarjeta / 📱 bizum / 🏪 club por jugador, o el
-// atajo "✓ Pista pagada" (= cobro_confirmado, el mismo check que usa Finanzas).
-function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMetodo, onSaved }) {
-  const norm = (arr) => {
-    const a = Array.isArray(arr) ? [...arr] : [];
-    while (a.length < 4) a.push(null);
-    return a.slice(0, 4);
-  };
-  const [pagos, setPagos] = useState(() => norm(initPagos));
-  const [cobro, setCobro] = useState(!!initCobro);
-  const [isFree, setIsFree] = useState(!!initIsFree);
-  const [metodo, setMetodo] = useState(initMetodo || null);
+// Los 4 huecos de pagos_jugadores (null = jugador sin marcar).
+const normPagos = (arr) => {
+  const a = Array.isArray(arr) ? [...arr] : [];
+  while (a.length < 4) a.push(null);
+  return a.slice(0, 4);
+};
+
+// Campos de pago de una fila de bookings, con la forma de la celda del Horario.
+// Lo que no esté 'confirmed' nunca cuenta como pagado (esHold = sin pagar).
+const pagoDesdeFila = (b) => ({
+  metodo: b.metodo_pago || null,
+  isFree: !!b.is_free,
+  cobroConfirmado: !!b.cobro_confirmado,
+  esHold: b.status !== 'confirmed',
+  paymentType: b.payment_type || null,
+  splitPaid: b.split_paid,
+  pagosJugadores: normPagos(b.pagos_jugadores),
+  importe: b.importe ?? null,
+});
+
+// PAGO de una reserva, lo primero al pulsarla en el Horario: "Pagada / Sin
+// pagar" (color y texto), método, importe y "X de 4 jugadores han pagado" con
+// la lista de jugadores. En esa MISMA lista el admin marca cómo pagó cada uno
+// (💳 tarjeta / 📱 bizum / 🏪 club, repetir = desmarcar) y debajo está el atajo
+// "Marcar pista pagada" (= cobro_confirmado, el mismo check que usa Finanzas).
+// En pago compartido, los pagos de cada jugador se marcan SOLO en la gestión
+// de los enlaces (SplitAdmin, que sube split_paid).
+// onGone: la reserva ya no está viva al releerla (cancelada o pago no
+// completado); el padre cierra el panel y recarga la rejilla.
+function PagoReservaAdmin({ reserva, onSaved, onGone }) {
+  const bookingId = reserva.bookingId;
+  const [datos, setDatos] = useState(() => ({
+    metodo: reserva.metodo || null,
+    isFree: !!reserva.isFree,
+    cobroConfirmado: !!reserva.cobroConfirmado,
+    esHold: !!reserva.esHold,
+    paymentType: reserva.paymentType || null,
+    splitPaid: reserva.splitPaid,
+    pagosJugadores: normPagos(reserva.pagosJugadores),
+    importe: reserva.importe ?? null,
+  }));
   const [busy, setBusy] = useState(false);
+  const { pagosJugadores: pagos, cobroConfirmado: cobro, isFree, metodo } = datos;
+
+  // Cambio local + aviso al padre (para que el color de la celda cuadre).
+  const actualizar = (patch) => {
+    setDatos(d => ({ ...d, ...patch }));
+    onSaved?.(patch);
+  };
 
   // Releer SIEMPRE de BD al abrir: el mapa de slots del padre solo se recarga
   // al cambiar de día — partir de su copia vieja machacaría pagos ya guardados.
+  // Lo leído también se pasa al padre: así la celda se pinta con lo de verdad.
   useEffect(() => {
     let alive = true;
     supabase.from('bookings').select('*').eq('id', bookingId).single().then(({ data }) => {
       if (!alive || !data) return;
-      setPagos(norm(data.pagos_jugadores));
-      setCobro(!!data.cobro_confirmado);
-      setIsFree(!!data.is_free);
-      setMetodo(data.metodo_pago || null);
+      // Ya no es una reserva (se canceló, o el pago con el banco falló o
+      // caducó mientras la rejilla seguía sin recargar): no se pinta como
+      // pago (saldría "Pagada" con el método del intento) ni se pasa a la celda.
+      if (data.status !== 'confirmed' && (data.status !== 'pendiente_pago' || pagoCaducado(data))) {
+        onGone?.();
+        return;
+      }
+      const fresco = pagoDesdeFila(data);
+      setDatos(fresco);
+      onSaved?.(fresco);
     });
     return () => { alive = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -162,22 +244,17 @@ function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMeto
         : 'Error: ' + error.message, 'error');
       return;
     }
-    setPagos(next);
     // Con los 4 pagos marcados, la BD confirma el cobro sola (trigger
     // bookings_autoconfirma_por_pagos) y lo deshace al desmarcar uno:
     // reflejarlo aquí sin tener que reabrir la reserva.
     const antes = pagos.filter(Boolean).length;
     const despues = next.filter(Boolean).length;
     if (despues >= 4 && antes < 4) {
-      setCobro(true);
-      if (metodo === 'manual') setIsFree(false);
-      onSaved?.({ pagosJugadores: next, cobroConfirmado: true });
+      actualizar({ pagosJugadores: next, cobroConfirmado: true, ...(metodo === 'manual' ? { isFree: false } : {}) });
     } else if (antes >= 4 && despues < 4 && cobro) {
-      setCobro(false);
-      if (metodo === 'manual') setIsFree(true);
-      onSaved?.({ pagosJugadores: next, cobroConfirmado: false });
+      actualizar({ pagosJugadores: next, cobroConfirmado: false, ...(metodo === 'manual' ? { isFree: true } : {}) });
     } else {
-      onSaved?.({ pagosJugadores: next });
+      actualizar({ pagosJugadores: next });
     }
   };
 
@@ -198,41 +275,148 @@ function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMeto
     const { error } = await supabase.from('bookings').update(patch).eq('id', bookingId);
     setBusy(false);
     if (error) { toast('Error: ' + error.message, 'error'); return; }
-    setCobro(next);
-    setIsFree(nextFree);
-    onSaved?.({ cobroConfirmado: next, isFree: nextFree });
+    actualizar({ cobroConfirmado: next, isFree: nextFree });
     toast(next ? '✓ Pista marcada como pagada (también en Finanzas)' : 'Pista marcada como pendiente de cobro', 'success');
   };
 
-  const METODOS_PISTA = [['tarjeta', '💳 Tarjeta'], ['bizum', '📱 Bizum'], ['club', '🏪 Club']];
+  const r = resumenPagoReserva(datos);
+  const tono = r.pagada ? slotColors.pagado : slotColors.impago;
+  const esSplit = datos.paymentType === 'split';
+  const online = metodo === 'tarjeta' || metodo === 'bizum';
+  // "Marcar pista pagada" solo donde el cobro se confirma a mano (club, manual,
+  // pago compartido…). Lo pagado entero online o de cortesía ya está pagado, y
+  // un pago en curso se resuelve solo con el banco.
+  const conAtajoPagada = !datos.esHold && metodo !== 'gratis' && (esSplit || !online);
+  // Botones por jugador: igual que en la agenda del monitor, no se ofrecen si
+  // la pista se pagó entera online o es de cortesía (no hay nada que marcar).
+  // Tampoco en pago compartido: ahí cada pago se apunta en SplitAdmin (sube
+  // split_paid); con los dos controles el mismo pago se contaba dos veces o
+  // ninguna.
+  const conBotonesJugador = conAtajoPagada && !esSplit;
+  const METODOS_PISTA = [['tarjeta', '💳', 'Tarjeta'], ['bizum', '📱', 'Bizum'], ['club', '🏪', 'Club']];
+
   return (
-    <div style={{ marginTop: '0.6rem', marginBottom: '0.6rem', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.6rem', padding: '0.7rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>💰 Cómo han pagado los jugadores</span>
-        <button onClick={togglePagada} disabled={busy}
-          style={{ fontSize: '0.72rem', fontWeight: 800, padding: '0.3rem 0.7rem', borderRadius: 999, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-            border: `1.5px solid ${cobro ? '#16A34A' : '#CBD5E1'}`, background: cobro ? '#16A34A' : 'white', color: cobro ? 'white' : '#475569' }}>
-          {cobro ? '✓ Pista pagada' : 'Marcar pista pagada'}
-        </button>
+    <div style={{ marginBottom: '0.75rem', background: 'white', border: `1.5px solid ${tono.borderColor}`, borderRadius: '0.75rem', overflow: 'hidden' }}>
+      {/* Estado (+ importe a la derecha) y, debajo, el método */}
+      <div style={{ background: tono.backgroundColor, padding: '0.6rem 0.75rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
+          <ChipPago pagada={r.pagada}>{r.pagada ? '✓' : r.estado === 'en_curso' ? '⏳' : '✕'} {r.etiqueta}</ChipPago>
+          {r.importeTexto && (
+            <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A', background: 'white', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0.2rem 0.55rem', whiteSpace: 'nowrap' }}>
+              {r.importeTexto}
+            </span>
+          )}
+        </div>
+        <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', fontWeight: 800, color: '#0F172A' }}>
+          {esSplit ? '👥' : (EMOJI_METODO[metodo] || '💰')} {r.metodoTexto}
+        </p>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-        {[0, 1, 2, 3].map(i => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', minWidth: 68 }}>👤 Jugador {i + 1}</span>
-            {METODOS_PISTA.map(([mk, ml]) => (
-              <button key={mk} disabled={busy} onClick={() => marcar(i, mk)}
-                style={{ padding: '0.28rem 0.55rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 800, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-                  border: `1.5px solid ${pagos[i] === mk ? '#1D4ED8' : '#E2E8F0'}`,
-                  background: pagos[i] === mk ? '#1D4ED8' : 'white',
-                  color: pagos[i] === mk ? 'white' : '#64748B' }}>
-                {ml}
-              </button>
+
+      <div style={{ padding: '0.6rem 0.75rem 0.7rem' }}>
+        <p style={{ margin: 0, fontSize: '0.84rem', fontWeight: 800, color: tono.color }}>{r.textoPagados}</p>
+        {r.nota && <p style={{ margin: '0.2rem 0 0', fontSize: '0.74rem', color: '#64748B', lineHeight: 1.4 }}>{r.nota}</p>}
+
+        {/* Jugador 1..4: estado + botones para marcar cómo pagó. Un pago en
+            curso con el banco no se marca (se resuelve solo) y no se lista;
+            en una de cortesía tampoco, salvo que alguien esté marcado. */}
+        {!datos.esHold && !(r.nadaQueCobrar && !pagos.some(Boolean)) && (
+          <div style={{ marginTop: '0.45rem' }}>
+            {r.jugadores.map((j, i) => (
+              <FilaPago key={j.n} etiqueta={`👤 Jugador ${j.n}`} pagado={j.estado !== 'sin_pagar'} texto={j.texto} metodo={j.metodo}>
+                {conBotonesJugador && <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+                  {METODOS_PISTA.map(([mk, emoji, nombre]) => {
+                    const on = pagos[i] === mk;
+                    return (
+                      <button key={mk} disabled={busy} onClick={() => marcar(i, mk)}
+                        title={on ? `Desmarcar (${nombre})` : `Jugador ${j.n} pagó: ${nombre}`} aria-pressed={on}
+                        style={{ padding: '0.32rem 0.5rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 800, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                          border: `1.5px solid ${on ? '#1D4ED8' : '#E2E8F0'}`,
+                          background: on ? '#1D4ED8' : 'white',
+                          color: on ? 'white' : '#64748B' }}>
+                        {emoji} {nombre}
+                      </button>
+                    );
+                  })}
+                </div>}
+              </FilaPago>
             ))}
           </div>
-        ))}
+        )}
+
+        {conAtajoPagada && (
+          <button onClick={togglePagada} disabled={busy}
+            style={{ marginTop: '0.55rem', width: '100%', fontSize: '0.76rem', fontWeight: 800, padding: '0.5rem 0.7rem', borderRadius: '0.6rem', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              border: `1.5px solid ${cobro ? '#1D4ED8' : '#CBD5E1'}`, background: cobro ? '#1D4ED8' : 'white', color: cobro ? 'white' : '#475569' }}>
+            {cobro ? '✓ Pista pagada · pulsa para deshacer' : 'Marcar pista pagada'}
+          </button>
+        )}
+
+        {esSplit && !datos.esHold && (
+          <SplitAdmin bookingId={bookingId} onPaidChange={(n) => actualizar({ splitPaid: n })} />
+        )}
       </div>
     </div>
   );
+}
+
+// Cobro de un ENTRENO al pulsarlo en el Horario: lo marca el monitor alumno por
+// alumno (clases_monitor); aquí el admin solo lo ve. Si en esa pista y hora hay
+// varios monitores, se suman sus alumnos.
+function ResumenEntreno({ info }) {
+  const r = resumenPagoEntreno(info);
+  const todo = r.confirmado && r.pagados >= r.personas;
+  const tono = !r.confirmado ? slotColors.entreno : todo ? slotColors.pagado : slotColors.impago;
+  return (
+    <div style={{ marginBottom: '0.75rem', background: 'white', border: `1.5px solid ${tono.borderColor}`, borderRadius: '0.75rem', overflow: 'hidden' }}>
+      <div style={{ background: tono.backgroundColor, padding: '0.6rem 0.75rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.4rem 0.6rem' }}>
+        {r.confirmado ? (
+          <>
+            <ChipPago pagada={todo}>{todo ? '✓ Pagado' : r.pagados > 0 ? '◐ Pago parcial' : '✕ Sin pagar'}</ChipPago>
+            <span style={{ fontSize: '0.84rem', fontWeight: 800, color: tono.color }}>{r.texto}</span>
+          </>
+        ) : (
+          <span style={{ fontSize: '0.84rem', fontWeight: 800, color: tono.color }}>⏳ {r.texto}</span>
+        )}
+      </div>
+      <div style={{ padding: '0.35rem 0.75rem 0.6rem' }}>
+        {r.confirmado ? (
+          r.alumnos.map(a => (
+            <FilaPago key={a.n} etiqueta={`🎾 Alumno ${a.n}`} pagado={a.pagado} texto={a.texto} metodo={a.metodo} />
+          ))
+        ) : (
+          <p style={{ margin: '0.25rem 0 0', fontSize: '0.74rem', color: '#64748B', lineHeight: 1.4 }}>
+            Cuando el monitor confirme cuántos alumnos vinieron y cómo pagó cada uno, lo verás aquí.
+          </p>
+        )}
+        {info?.monitores > 1 && (
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.72rem', color: '#64748B' }}>Suma de {info.monitores} monitores en esta pista y hora.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Filas de bookings de UN día para la pestaña "Reservas", con el perfil de cada
+// jugador (profiles NO se puede incrustar desde bookings: no hay FK, se carga
+// aparte). Trae todos los estados. Devuelve null si la consulta falla.
+async function cargarReservasDia(date) {
+  const { data: bookings, error } = await supabase
+    .from('bookings')
+    // '*' y no una lista: así trae importe y cobro_confirmado si existen en
+    // este servidor (pedir una columna que no exista tumbaría toda la lista).
+    .select('*, courts(name, sport, gradient)')
+    .eq('date', date)
+    .order('time_slot', { ascending: true });
+  if (error) { console.error('Error cargando reservas:', error); return null; }
+  const rows = bookings || [];
+  if (rows.length === 0) return [];
+  const userIds = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
+  const profileMap = {};
+  if (userIds.length) {
+    const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
+    (profiles || []).forEach(p => { profileMap[p.id] = p; });
+  }
+  return rows.map(b => ({ ...b, profiles: profileMap[b.user_id] || null }));
 }
 
 const editLabel = { display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.04em' };
@@ -504,6 +688,12 @@ const AdminDashboard = () => {
   const [allDbBookings, setAllDbBookings] = useState([]);
   const [loadingAllBookings, setLoadingAllBookings] = useState(false);
   const [bookingsDate, setBookingsDate] = useState(serverToday());
+  // Pestaña Reservas: hora con la que se decide si un 'pendiente_pago' sigue en
+  // curso (< 15 min) o ya no se completó (= la hora de la última lectura de la
+  // lista: solo avanza al volver a leerla), y si se ven
+  // los intentos de pago no completados (por defecto, ocultos tras un aviso).
+  const [relojReservas, setRelojReservas] = useState(() => Date.now());
+  const [verPagosNoCompletados, setVerPagosNoCompletados] = useState(false);
 
   // Cambio de día a MEDIANOCHE: si el admin estaba mirando "hoy" y la fecha
   // cambia (deja la web abierta o entra a las 00:0x), saltar al día nuevo solo.
@@ -896,7 +1086,7 @@ const AdminDashboard = () => {
       supabase.from('custom_slots').select('*').eq('date', date),
       // Cobro de los entrenos: lo marca el monitor en clases_monitor (el admin,
       // por RLS, ve todas las filas). Si la tabla no existe aún, data va vacío y
-      // los entrenos se pintan como "sin confirmar" (morado), como hasta ahora.
+      // los entrenos salen como "el monitor aún no ha confirmado la clase".
       supabase.from('clases_monitor').select('court_id, time_slot, personas, pagos').eq('date', date),
     ]);
 
@@ -905,25 +1095,14 @@ const AdminDashboard = () => {
       toast('Error cargando reservas de BD: ' + resBookings.error.message);
     }
 
-    // Holds 'pendiente_pago': bloquean el hueco 15 min (jugador pagando en el banco)
-    const HOLD_MS = 15 * 60 * 1000;
-    let bookings = (resBookings.data || []).filter(b =>
-      b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS
-    );
+    // Holds 'pendiente_pago': bloquean el hueco 15 min (jugador pagando en el
+    // banco); pasado ese tiempo no son reservas y el hueco está libre.
+    let bookings = (resBookings.data || []).filter(b => b.status === 'confirmed' || !pagoCaducado(b));
     const blocked = resBlocked.data || [];
 
-    // Resumen de cobro por entreno (clave court_id|time_slot). Si hubiera varios
-    // monitores en la misma pista/hora, se suman sus alumnos y sus pagos.
-    const clasesEntreno = {};
-    (resClases.data || []).forEach(c => {
-      const key = `${c.court_id}|${c.time_slot}`;
-      const personas = Number(c.personas) || 0;
-      const pagados = Array.isArray(c.pagos) ? c.pagos.filter(Boolean).length : 0;
-      const prev = clasesEntreno[key];
-      clasesEntreno[key] = prev
-        ? { personas: prev.personas + personas, pagados: prev.pagados + pagados }
-        : { personas, pagados };
-    });
+    // Cobro por entreno (clave court_id|time_slot), con el método de cada
+    // alumno. Si hubiera varios monitores en la misma pista/hora, se suman.
+    const clasesEntreno = agregarClasesMonitor(resClases.data);
 
     if (bookings.length > 0) {
       const userIds = [...new Set(bookings.map(b => b.user_id))];
@@ -958,6 +1137,8 @@ const AdminDashboard = () => {
           pagosJugadores: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
           cobroConfirmado: !!b.cobro_confirmado,
           esHold: b.status === 'pendiente_pago',
+          importe: b.importe ?? null,
+          userId: b.user_id,
         };
       }
     });
@@ -971,11 +1152,10 @@ const AdminDashboard = () => {
         return;
       }
       const cell = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
-      // Entreno: le colgamos si está pagado (todos los alumnos) para el color.
+      // Entreno: le colgamos lo que ha confirmado el monitor (alumnos y cómo
+      // pagó cada uno). null = el monitor aún no ha confirmado la clase.
       if (cell.tipo === 'entreno') {
-        const conf = clasesEntreno[`${b.court_id}|${b.time_slot}`] || null;
-        cell.entrenoPagado = entrenoEstaPagado(conf);
-        cell.entrenoInfo = conf;
+        cell.entrenoInfo = clasesEntreno[`${b.court_id}|${b.time_slot}`] || null;
       }
       newSlots[b.court_id][b.time_slot] = cell;
     });
@@ -1118,30 +1298,47 @@ const AdminDashboard = () => {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [selectedDate, loadSlots]);
 
-  // Carga TODAS las reservas cuando se activa la pestaña Reservas
+  // Carga TODAS las filas del día cuando se activa la pestaña Reservas
+  // (la lista decide cómo pintar cada una: reserva, pago en curso, pago no
+  // completado o cancelada). Si se cambia de día rápido, solo vale la última.
   useEffect(() => {
     if (activeTab !== 'bookings') return;
+    let alive = true;
     setLoadingAllBookings(true);
-    (async () => {
-      const { data: bookings, error } = await supabase
-        .from('bookings')
-        .select('id, date, time_slot, status, is_free, metodo_pago, court_id, user_id, courts(name, sport, gradient)')
-        .eq('date', bookingsDate)
-        .order('time_slot', { ascending: true });
-      if (error) { console.error('Error cargando reservas:', error); setLoadingAllBookings(false); return; }
-      const rows = bookings || [];
-      if (rows.length > 0) {
-        const userIds = [...new Set(rows.map(b => b.user_id))];
-        const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
-        const profileMap = {};
-        (profiles || []).forEach(p => { profileMap[p.id] = p; });
-        setAllDbBookings(rows.map(b => ({ ...b, profiles: profileMap[b.user_id] || null })));
-      } else {
-        setAllDbBookings([]);
-      }
+    cargarReservasDia(bookingsDate).then(rows => {
+      if (!alive) return;
+      if (rows) setAllDbBookings(rows);
+      setRelojReservas(Date.now());
       setLoadingAllBookings(false);
-    })();
+    });
+    return () => { alive = false; };
   }, [activeTab, bookingsDate]);
+
+  // Con la pestaña Reservas abierta, un "pago en curso" cambia solo: se
+  // confirma (redsys-notify), se cancela o caduca a los 15 min. NO basta con
+  // mover la hora sobre la copia que ya hay (una reserva ya pagada saldría como
+  // "pago no completado"): mientras haya alguno en curso, cada 30 s se vuelve
+  // a leer el día y solo entonces se mueve la hora. Al volver la app a primer
+  // plano también se relee (han podido entrar o cancelarse reservas).
+  const hayPagoEnCurso = allDbBookings.some(b => estadoFilaReserva(b, relojReservas) === 'pago_en_curso');
+  useEffect(() => {
+    if (activeTab !== 'bookings') return;
+    let alive = true;
+    const releer = async () => {
+      const rows = await cargarReservasDia(bookingsDate);
+      if (!alive || !rows) return; // si falla, mejor no reclasificar con datos viejos
+      setAllDbBookings(rows);
+      setRelojReservas(Date.now());
+    };
+    const id = hayPagoEnCurso ? setInterval(releer, 30 * 1000) : null;
+    const onVisible = () => { if (document.visibilityState === 'visible') releer(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      if (id) clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [activeTab, bookingsDate, hayPagoEnCurso]);
 
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -1261,19 +1458,10 @@ const AdminDashboard = () => {
       setMoveBooking(null);
       await loadSlots(selectedDate);
       if (activeTab === 'bookings') {
-        const today = serverToday();
-        // profiles NO se puede incrustar desde bookings (no hay FK): se cargan aparte.
-        const { data } = await supabase.from('bookings')
-          .select('id, date, time_slot, status, is_free, metodo_pago, court_id, user_id, courts(name, sport, gradient)')
-          .eq('status', 'confirmed').gte('date', today).order('date').order('time_slot');
-        const rows = data || [];
-        const uids = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
-        let pmap = {};
-        if (uids.length) {
-          const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', uids);
-          (profs || []).forEach(p => { pmap[p.id] = p; });
-        }
-        setAllDbBookings(rows.map(b => ({ ...b, profiles: pmap[b.user_id] || null })));
+        // Recargar el MISMO día que se está viendo en la pestaña Reservas
+        // (antes se cambiaba la lista por todas las confirmadas desde hoy).
+        const rows = await cargarReservasDia(bookingsDate);
+        if (rows) { setAllDbBookings(rows); setRelojReservas(Date.now()); }
       }
     }
     setIsProcessing(false);
@@ -1571,7 +1759,7 @@ const AdminDashboard = () => {
       {entrenoModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
           <div style={{ background: 'white', borderRadius: '1.1rem', width: '100%', maxWidth: 380, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#7E22CE' }}>🏋️ Entreno — {entrenoModal.courtName}</h3>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#BE185D' }}>🏋️ Entreno — {entrenoModal.courtName}</h3>
             <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B' }}>
               Marca el horario real de la clase (ej.: de 20:00 a 21:00). Ese tramo queda ocupado para los jugadores. De cuántas personas es lo confirma el monitor al acabar el día.
             </p>
@@ -1585,7 +1773,7 @@ const AdminDashboard = () => {
             </div>
             <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1.1rem' }}>
               <button onClick={() => setEntrenoModal(null)} style={{ flex: 1, padding: '0.7rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Cancelar</button>
-              <button onClick={confirmarEntreno} style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: '#9333EA', color: 'white', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Marcar entreno</button>
+              <button onClick={confirmarEntreno} style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: '#DB2777', color: 'white', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Marcar entreno</button>
             </div>
           </div>
         </div>
@@ -1739,7 +1927,7 @@ const AdminDashboard = () => {
               { label: 'Reservas hoy', value: allBookings.length, color: '#16A34A', bg: '#F0FDF4', border: '#86EFAC' },
               { label: 'Pistas activas', value: activeCourts, color: '#0EA5E9', bg: '#F0F9FF', border: '#BAE6FD' },
               { label: '🔒 Bloqueadas', value: bloqueadasDia.length, color: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
-              { label: '🏋️ Entrenos', value: entrenosDia.length, color: '#9333EA', bg: '#FAF5FF', border: '#D8B4FE' },
+              { label: '🏋️ Entrenos', value: entrenosDia.length, color: '#BE185D', bg: '#FDF2F8', border: '#F9A8D4' },
             ].map(s => (
               <div key={s.label} style={{ backgroundColor: s.bg, border: `1px solid ${s.border}`, borderRadius: '0.875rem', padding: '0.875rem 0.625rem', textAlign: 'center' }}>
                 <p style={{ margin: 0, fontSize: '1.75rem', fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</p>
@@ -1756,7 +1944,7 @@ const AdminDashboard = () => {
                 </span>
               ))}
               {entrenosDia.map((s, i) => (
-                <span key={`e-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9333EA', background: '#FAF5FF', border: '1px solid #D8B4FE', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
+                <span key={`e-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#BE185D', background: '#FDF2F8', border: '1px solid #F9A8D4', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
                   🏋️ {s.courtName} · {s.time}
                 </span>
               ))}
@@ -1875,18 +2063,21 @@ const AdminDashboard = () => {
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+                  {/* Leyenda de la rejilla: un color por estado */}
+                  <div style={{ display: 'flex', gap: '0.45rem 0.9rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '1.25rem' }}>
                     {[
-                      { label: '🟢 Pagado', s: slotColors.pagado },
-                      { label: '🔴 Sin pagar', s: slotColors.impago },
-                      { label: '🔒 Bloqueada', s: slotColors.blocked },
                       { label: 'Libre', s: slotColors.available },
+                      { label: 'Entreno', s: slotColors.entreno },
+                      { label: '✓ Reserva pagada', s: slotColors.pagado },
+                      { label: '✕ Reserva sin pagar', s: slotColors.impago },
+                      { label: 'Bloqueada', s: slotColors.blocked },
                     ].map(({ label, s }) => (
-                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                        <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: s.backgroundColor, border: `1.5px solid ${s.borderColor}` }} />
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569' }}>{label}</span>
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <div style={{ width: '14px', height: '14px', borderRadius: '4px', backgroundColor: s.backgroundColor, border: `1.5px solid ${s.borderColor}`, flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: s.color }}>{label}</span>
                       </div>
                     ))}
+                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B' }}>⏳ = pago en curso</span>
                   </div>
 
                   <div className="courts-list">
@@ -1922,18 +2113,20 @@ const AdminDashboard = () => {
                                 const slot = slots[court.id]?.[time];
                                 const esCustom = (customByCourt[court.id] || []).some(cs => cs.time === time);
                                 const isSelected = activeSlot?.courtId === court.id && activeSlot?.time === time;
-                                const c = isSelected ? slotColors.selected
-                                  : slot?.status === 'booked' ? colorPago(reservaPagada(slot))
-                                  : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? colorPago(slot.entrenoPagado) : slotColors.blocked)
-                                  : slotColors[slot?.status] || slotColors.available;
+                                // Seleccionada: oscura (se distingue de los 5 colores de estado)
+                                const c = isSelected ? slotColors.selected : colorCelda(slot);
                                 return (
-                                  <button key={time} disabled={!court.active}
+                                  <button key={time} disabled={!court.active} aria-pressed={isSelected}
                                     onClick={() => setActiveSlot(prev => prev?.courtId === court.id && prev?.time === time ? null : { courtId: court.id, time })}
-                                    style={{ padding: '0.5rem 0.2rem', borderRadius: '0.5rem', border: `1.5px ${esCustom ? 'dashed' : 'solid'} ${c.borderColor}`, backgroundColor: c.backgroundColor, color: c.color, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', textAlign: 'center', cursor: court.active ? 'pointer' : 'not-allowed', transition: 'all 0.15s', lineHeight: 1.3 }}
+                                    style={{ padding: '0.5rem 0.2rem', borderRadius: '0.5rem', border: `1.5px ${esCustom ? 'dashed' : 'solid'} ${c.borderColor}`, backgroundColor: c.backgroundColor, color: c.color, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', textAlign: 'center', cursor: court.active ? 'pointer' : 'not-allowed', transition: 'all 0.15s', lineHeight: 1.3, boxShadow: isSelected ? '0 0 0 2px #FFFFFF, 0 0 0 4px #0F172A' : 'none' }}
                                   >
                                     <div>{slot?.conflicto ? '⚠️ ' : ''}{esCustom ? '🕐 ' : ''}{time.split(' - ')[0]}</div>
-                                    <div style={{ fontSize: '0.58rem', fontWeight: 500, marginTop: '0.15rem', opacity: 0.85 }}>
-                                      {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? etiquetaEntreno(slot.entrenoPagado) : '🔒 Bloqueada') : 'Libre'}
+                                    {/* Pagada/sin pagar también con símbolo, no solo color
+                                        (el pago en curso ya lleva ⏳ en el nombre) */}
+                                    <div style={{ fontSize: '0.58rem', fontWeight: 600, marginTop: '0.15rem' }}>
+                                      {slot?.status === 'booked'
+                                        ? (slot.esHold ? '' : reservaPagada(slot) ? '✓ ' : '✕ ') + slot.client.split(' ')[0]
+                                        : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? etiquetaEntreno(slot) : '🔒 Bloqueada') : 'Libre'}
                                     </div>
                                   </button>
                                 );
@@ -1943,16 +2136,12 @@ const AdminDashboard = () => {
                             {isCourtActive && selectedSlotData && (
                               <div style={{ backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1.5px solid #E2E8F0', padding: '0.875rem', marginTop: '0.5rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                                  <div>
+                                  <div style={{ minWidth: 0 }}>
                                     <p style={{ margin: 0, fontWeight: 800, color: '#0F172A', fontSize: '0.875rem' }}>{activeSlot.time}</p>
                                     <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
-                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? textoEntrenoDetalle(selectedSlotData) : '🔒 Bloqueada por administrador') : 'Franja disponible'}
+                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Entreno' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
+                                      {selectedSlotData.status === 'booked' && selectedSlotData.userId === CLIENTE_ELIMINADO_ID && ' (borró su cuenta)'}
                                     </p>
-                                    {selectedSlotData.status === 'booked' && (
-                                      <p style={{ margin: '0.2rem 0 0', fontSize: '0.775rem', fontWeight: 700, color: '#1B3A6E' }}>
-                                        Pago: {formatMetodoPago(selectedSlotData.metodo, selectedSlotData.isFree)}
-                                      </p>
-                                    )}
                                     {selectedSlotData.conflicto && (
                                       <p style={{ margin: '0.3rem 0 0', fontSize: '0.74rem', fontWeight: 800, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.5rem', padding: '0.3rem 0.5rem' }}>
                                         ⚠️ Hay un bloqueo o entreno a esta misma hora. Revísalo: la reserva manda.
@@ -1961,25 +2150,30 @@ const AdminDashboard = () => {
                                   </div>
                                   <button onClick={() => { setActiveSlot(null); setBookObs(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem', fontSize: '1rem', lineHeight: 1 }}>✕</button>
                                 </div>
-                                {selectedSlotData.status === 'booked' && selectedSlotData.paymentType === 'split' && (
-                                  <SplitAdmin bookingId={selectedSlotData.bookingId} />
+                                {/* Resumen del pago (reserva) o del cobro (entreno), antes de las acciones */}
+                                {selectedSlotData.status === 'blocked' && selectedSlotData.tipo === 'entreno' && (
+                                  <ResumenEntreno info={selectedSlotData.entrenoInfo} />
                                 )}
                                 {selectedSlotData.status === 'booked' && (
-                                  <PagosPistaAdmin
+                                  <PagoReservaAdmin
                                     key={selectedSlotData.bookingId}
-                                    bookingId={selectedSlotData.bookingId}
-                                    initPagos={selectedSlotData.pagosJugadores}
-                                    initCobro={selectedSlotData.cobroConfirmado}
-                                    initIsFree={selectedSlotData.isFree}
-                                    initMetodo={selectedSlotData.metodo}
+                                    reserva={selectedSlotData}
                                     onSaved={(patch) => {
                                       // Mantener fresco el mapa de slots del padre
                                       const { courtId, time } = activeSlot;
+                                      // Un pago en curso que ya se confirmó: recargar la rejilla
+                                      // para quitar el ⏳ y poner el nombre de la reserva.
+                                      if (slots[courtId]?.[time]?.esHold && patch.esHold === false) loadSlots(selectedDate);
                                       setSlots(prev => {
                                         const c = prev[courtId];
                                         if (!c?.[time]) return prev;
                                         return { ...prev, [courtId]: { ...c, [time]: { ...c[time], ...patch } } };
                                       });
+                                    }}
+                                    onGone={() => {
+                                      toast('Esta reserva ya no está activa: se canceló o el pago no se completó. Horario actualizado.', 'warning');
+                                      setActiveSlot(null);
+                                      loadSlots(selectedDate);
                                     }}
                                   />
                                 )}
@@ -2047,7 +2241,7 @@ const AdminDashboard = () => {
                                               setEntrenoStart(ini);
                                               setEntrenoEnd(fin);
                                             }}
-                                            style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                            style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #F9A8D4', backgroundColor: '#FDF2F8', color: '#BE185D', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             🏋️ Entreno
                                           </button>
                                           {/* Editar hora: mueve este hueco a otra hora SOLO este día */}
@@ -2144,6 +2338,77 @@ const AdminDashboard = () => {
                     }).catch(() => {});
                   }
                 };
+                // Cada fila según su estado. Un 'pendiente_pago' de más de 15 min,
+                // o un intento online que acabó cancelado sin pagarse, NO es una
+                // reserva (el jugador no terminó de pagar y el hueco quedó libre):
+                // va aparte, atenuado y oculto tras un aviso.
+                const filas = allDbBookings.map(b => ({ b, est: estadoFilaReserva(b, relojReservas) }));
+                const noCompletados = filas.filter(f => f.est === 'pago_no_completado');
+                const visibles = filas.filter(f => f.est !== 'pago_no_completado');
+                const nCanceladas = visibles.filter(f => f.est === 'cancelada').length;
+                const nReservas = visibles.length - nCanceladas;
+                const ESTILO_FILA = {
+                  confirmada:         { bg: 'white',   border: '1px solid #E2E8F0',  opacity: 1 },
+                  pago_en_curso:      { bg: '#FFFBEB', border: '1px solid #FDE68A',  opacity: 1 },
+                  cancelada:          { bg: '#FFF7F7', border: '1px solid #FECACA',  opacity: 0.75 },
+                  pago_no_completado: { bg: '#F8FAFC', border: '1px dashed #CBD5E1', opacity: 0.6 },
+                  otro:               { bg: 'white',   border: '1px solid #E2E8F0',  opacity: 1 },
+                };
+                const ETIQUETA_ESTADO = {
+                  pago_en_curso:      { texto: '⏳ PAGO EN CURSO', bg: '#FEF3C7', color: '#92400E', detalle: 'Pagando en el banco: si no termina en 15 min, se libera el hueco.' },
+                  cancelada:          { texto: '✕ CANCELADA', bg: '#FEE2E2', color: '#B91C1C', detalle: null },
+                  pago_no_completado: { texto: 'PAGO NO COMPLETADO', bg: '#E2E8F0', color: '#475569', detalle: 'No es una reserva: no terminó de pagar y el hueco quedó libre.' },
+                };
+                const renderFila = ({ b, est }) => {
+                  const st = ESTILO_FILA[est] || ESTILO_FILA.otro;
+                  const tag = ETIQUETA_ESTADO[est] || (est === 'otro' ? { texto: String(b.status || '—').toUpperCase(), bg: '#F1F5F9', color: '#475569', detalle: null } : null);
+                  const tachada = est === 'cancelada' || est === 'pago_no_completado';
+                  const conAcciones = est === 'confirmada' || est === 'pago_en_curso' || est === 'otro';
+                  const nombre = b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente';
+                  // Mismo criterio que Finanzas: GRATIS solo la cortesía (una manual
+                  // nace is_free=true pero SIN cobrar) y club/manual sin cobro
+                  // confirmado = pendiente de cobro (como en el Horario).
+                  const esGratis = !tachada && (b.metodo_pago === 'gratis' || (b.is_free && !b.metodo_pago));
+                  const pendienteCobro = !tachada && (b.metodo_pago === 'club' || b.metodo_pago === 'manual') && !b.cobro_confirmado;
+                  return (
+                    <div key={b.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem 0.875rem', backgroundColor: st.bg, borderRadius: '0.875rem', padding: '0.875rem', border: st.border, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: st.opacity }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '0.625rem', background: b.courts?.gradient || 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, filter: est === 'pago_no_completado' ? 'grayscale(1)' : 'none' }}>
+                        <span style={{ fontSize: '1rem' }}>{b.courts?.sport === 'Pádel' ? '🎾' : '🏓'}</span>
+                      </div>
+                      {/* Texto: ocupa lo que pueda; en móvil los botones bajan a otra línea */}
+                      <div style={{ flex: '1 1 10rem', minWidth: 0 }}>
+                        <p style={{ margin: 0, fontWeight: 700, color: '#0F172A', fontSize: '0.875rem' }}>{b.courts?.name || 'Pista'}</p>
+                        <p style={{ margin: '0.1rem 0 0', fontSize: '0.775rem', color: '#64748B', textDecoration: tachada ? 'line-through' : 'none' }}>
+                          {b.time_slot} · {nombre}
+                        </p>
+                        {(tag || esGratis || pendienteCobro || b.user_id === CLIENTE_ELIMINADO_ID) && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.3rem', marginTop: '0.3rem' }}>
+                            {tag && <span style={{ backgroundColor: tag.bg, color: tag.color, padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 800 }}>{tag.texto}</span>}
+                            {esGratis && <span style={{ backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>GRATIS</span>}
+                            {pendienteCobro && <span style={{ backgroundColor: slotColors.impago.backgroundColor, color: slotColors.impago.color, padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>PENDIENTE DE COBRO</span>}
+                            {b.user_id === CLIENTE_ELIMINADO_ID && <span style={{ fontSize: '0.7rem', color: '#64748B' }}>(borró su cuenta)</span>}
+                          </div>
+                        )}
+                        {tag?.detalle && <p style={{ margin: '0.25rem 0 0', fontSize: '0.72rem', color: tag.color, fontWeight: 600, lineHeight: 1.35 }}>{tag.detalle}</p>}
+                      </div>
+                      {conAcciones && <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto', flexShrink: 0 }}>
+                        <button onClick={() => {
+                          setMoveBooking({ id: b.id, courtId: b.court_id, courtName: b.courts?.name || 'Pista', date: b.date, time: b.time_slot, client: nombre });
+                          setMoveTargetDate(b.date);
+                          setMoveTargetCourtId(b.court_id);
+                          setMoveTargetTime(b.time_slot);
+                          setMoveSlotInfo(null);
+                        }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
+                          Mover
+                        </button>
+                        <button onClick={() => cancelDbBooking(b)}
+                          style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
+                          Cancelar
+                        </button>
+                      </div>}
+                    </div>
+                  );
+                };
                 return (
                   <div>
                     <div style={{ marginBottom: '1.25rem' }}>
@@ -2153,54 +2418,49 @@ const AdminDashboard = () => {
                         startDate={startDateStr}
                         onSelectDate={setBookingsDate}
                       />
-                      <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#94A3B8', textTransform: 'capitalize', textAlign: 'center' }}>
-                        {fmtDate(bookingsDate)} · {allDbBookings.length} reserva{allDbBookings.length !== 1 ? 's' : ''}
+                      <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#94A3B8', textAlign: 'center' }}>
+                        <span style={{ textTransform: 'capitalize' }}>{fmtDate(bookingsDate)}</span>
+                        {' · '}{nReservas} reserva{nReservas !== 1 ? 's' : ''}
+                        {nCanceladas > 0 && ` · ${nCanceladas} cancelada${nCanceladas !== 1 ? 's' : ''}`}
                       </p>
                     </div>
                     {loadingAllBookings ? (
                       <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>
                         <div style={{ width: '28px', height: '28px', border: '3px solid #DCFCE7', borderTopColor: '#16A34A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
                       </div>
-                    ) : allDbBookings.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: '#94A3B8' }}>
-                        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 0.875rem', display: 'block' }}>
-                          <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
-                        </svg>
-                        <p style={{ fontWeight: 700, margin: 0, color: '#64748B' }}>No hay reservas este día</p>
-                      </div>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        {allDbBookings.map(b => (
-                                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', backgroundColor: b.status === 'cancelled' ? '#FFF7F7' : 'white', borderRadius: '0.875rem', padding: '0.875rem', border: `1px solid ${b.status === 'cancelled' ? '#FECACA' : '#E2E8F0'}`, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: b.status === 'cancelled' ? 0.7 : 1 }}>
-                                  <div style={{ width: '40px', height: '40px', borderRadius: '0.625rem', background: b.courts?.gradient || 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                    <span style={{ fontSize: '1rem' }}>{b.courts?.sport === 'Pádel' ? '🎾' : '🏓'}</span>
-                                  </div>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <p style={{ margin: 0, fontWeight: 700, color: '#0F172A', fontSize: '0.875rem' }}>{b.courts?.name || 'Pista'}</p>
-                                    <p style={{ margin: '0.1rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
-                                      {b.time_slot} · {b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente'}
-                                      {b.is_free && <span style={{ marginLeft: '0.4rem', backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>GRATIS</span>}
-                                      {b.status === 'cancelled' && <span style={{ marginLeft: '0.4rem', backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>CANCELADA</span>}
-                                    </p>
-                                  </div>
-                                  {b.status !== 'cancelled' && <>
-                                    <button onClick={() => {
-                                      setMoveBooking({ id: b.id, courtId: b.court_id, courtName: b.courts?.name || 'Pista', date: b.date, time: b.time_slot, client: b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente' });
-                                      setMoveTargetDate(b.date);
-                                      setMoveTargetCourtId(b.court_id);
-                                      setMoveTargetTime(b.time_slot);
-                                      setMoveSlotInfo(null);
-                                    }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
-                                      Mover
-                                    </button>
-                                    <button onClick={() => cancelDbBooking(b)}
-                                      style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
-                                      Cancelar
-                                    </button>
-                                  </>}
-                                </div>
-                        ))}
-                      </div>
+                      <>
+                        {visibles.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: '#94A3B8' }}>
+                            <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 0.875rem', display: 'block' }}>
+                              <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+                            </svg>
+                            <p style={{ fontWeight: 700, margin: 0, color: '#64748B' }}>No hay reservas este día</p>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            {visibles.map(renderFila)}
+                          </div>
+                        )}
+                        {noCompletados.length > 0 && (
+                          <div style={{ marginTop: '0.875rem' }}>
+                            <button onClick={() => setVerPagosNoCompletados(v => !v)} aria-expanded={verPagosNoCompletados}
+                              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.6rem', textAlign: 'left', background: '#F8FAFC', border: '1px dashed #CBD5E1', borderRadius: '0.75rem', padding: '0.7rem 0.875rem', cursor: 'pointer', fontFamily: 'inherit', color: '#475569' }}>
+                              <span style={{ fontSize: '1rem', flexShrink: 0 }}>ℹ️</span>
+                              <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', lineHeight: 1.4 }}>
+                                <strong>{noCompletados.length === 1 ? '1 intento de pago no completado' : `${noCompletados.length} intentos de pago no completados`}</strong>
+                                {' '}— no {noCompletados.length === 1 ? 'es una reserva' : 'son reservas'}: el jugador no terminó de pagar y el hueco quedó libre.
+                              </span>
+                              <span style={{ fontSize: '0.75rem', fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0 }}>{verPagosNoCompletados ? 'Ocultar ▲' : 'Ver ▼'}</span>
+                            </button>
+                            {verPagosNoCompletados && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                {noCompletados.map(renderFila)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );
