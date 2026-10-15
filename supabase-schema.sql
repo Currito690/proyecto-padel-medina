@@ -71,7 +71,6 @@ BEGIN
     NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'name', SPLIT_PART(NEW.email, '@', 1)),
     CASE
-      WHEN NEW.email ILIKE '%admin%' THEN 'admin'
       WHEN NEW.email = 'admin@padelmedina.com' THEN 'admin'
       ELSE 'client'
     END

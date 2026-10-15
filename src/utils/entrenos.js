@@ -1,6 +1,7 @@
 // Estado de cobro de un ENTRENO (clase del monitor), derivado de clases_monitor.
-// Lo marca el monitor (Lolo) alumno por alumno; aquí lo resumimos para pintar
-// la celda del entreno en las parrillas de pistas (admin y monitor).
+// Lo marcan alumno por alumno el monitor (Lolo, desde su agenda) y el admin
+// (desde su Horario, con la RPC admin_marcar_pago_alumno); aquí lo resumimos
+// para pintar la celda del entreno en las parrillas de pistas (admin y monitor).
 //
 // Acepta la fila tal cual la usa la agenda del monitor ({ personas, pagos:[...] })
 // o la forma agregada del panel del admin ({ personas, pagados }).
@@ -279,6 +280,104 @@ export function agregarClasesMonitor(filas) {
     };
   });
   return out;
+}
+
+// Filas de clases_monitor agrupadas por pista y hora (misma clave que
+// agregarClasesMonitor): { "court_id|time_slot": [fila, …] }, en el orden en
+// que llegan. Sirve para que el admin marque los pagos MONITOR A MONITOR.
+export function filasPorClase(filas) {
+  const out = {};
+  (Array.isArray(filas) ? filas : []).forEach(c => {
+    const key = `${c.court_id}|${c.time_slot}`;
+    (out[key] = out[key] || []).push(c);
+  });
+  return out;
+}
+
+// ¿Es la misma fila de clases_monitor? (un monitor, un día, una hora, una pista)
+const mismaClase = (a, b) => !!a && !!b
+  && a.user_id === b.user_id && a.date === b.date
+  && a.time_slot === b.time_slot && a.court_id === b.court_id;
+
+// Tras marcar un pago: las mismas filas con los pagos de ESA fila cambiados.
+// Si la fila ya no está (p. ej. el Horario cambió de día mientras se
+// guardaba) devuelve el MISMO array, para que quien llama no toque nada.
+export function filasConPagos(filas, fila, pagos) {
+  if (!Array.isArray(filas) || !filas.some(f => mismaClase(f, fila))) return filas;
+  return filas.map(f => (mismaClase(f, fila) ? { ...f, pagos: Array.isArray(pagos) ? [...pagos] : [] } : f));
+}
+
+// ── Pagos MUTUOS monitor ⇄ admin ──────────────────────────────────────────
+
+// Pulsar el método YA marcado lo desmarca: devuelve lo que hay que guardar
+// (null = sin pagar). Igual en la agenda del monitor y en el Horario del admin.
+export function metodoTrasPulsar(actual, metodo) {
+  const m = metodo || null;
+  return (actual || null) === m ? null : m;
+}
+
+// Pagos de una clase con exactamente `personas` huecos (null = sin pagar) y,
+// si se indica, el alumno idx puesto a `metodo`. Así guarda el monitor un
+// pago ENCIMA de lo que hay en la base de datos (lo que el admin haya
+// marcado mientras tanto no se pierde). Fuera de rango no cambia a nadie.
+export function pagosConAlumno(pagos, personas, idx = -1, metodo = null) {
+  const n = Math.max(0, Math.trunc(Number(personas)) || 0);
+  const out = Array.from({ length: n }, (_, i) => (Array.isArray(pagos) && pagos[i]) || null);
+  if (Number.isInteger(idx) && idx >= 0 && idx < n) out[idx] = metodo || null;
+  return out;
+}
+
+// ¿supabase.rpc falló porque esa función aún NO existe en el servidor (falta
+// aplicar su migración)? PostgREST responde PGRST202 y Postgres 42883.
+export function faltaFuncionRpc(error) {
+  if (!error) return false;
+  if (error.code === 'PGRST202' || error.code === '42883') return true;
+  return /could not find the function|function .* does not exist/i.test(error.message || '');
+}
+
+// Cada cuánto se releen solas las pantallas de pagos (Horario del admin y
+// agenda del monitor) mientras están visibles.
+export const REFRESCO_AUTO_MS = 15 * 1000;
+
+// Evita que el refresco automático "rebote" un pago recién marcado: si una
+// lectura sale ANTES de guardar y llega DESPUÉS, traería el estado viejo y
+// desharía en pantalla lo que se acaba de marcar.
+//   guardando() → marca el inicio de un guardado y devuelve la función que
+//                 lo da por terminado (llamarla más de una vez no hace nada).
+//   pedir()     → la "foto" con la que se pide un refresco; null si hay un
+//                 guardado en curso (entonces mejor no pedirlo).
+//   vale(foto)  → ¿se puede aplicar lo que trajo ese refresco? Solo si no hay
+//                 guardados en curso y no ha empezado ni acabado ninguno
+//                 desde que se pidió.
+export function crearGuardiaRefresco() {
+  let version = 0;
+  let enCurso = 0;
+  return {
+    guardando() {
+      version += 1;
+      enCurso += 1;
+      let terminado = false;
+      return () => {
+        if (terminado) return;
+        terminado = true;
+        enCurso -= 1;
+        version += 1;
+      };
+    },
+    pedir() { return enCurso > 0 ? null : version; },
+    vale(foto) { return foto != null && enCurso === 0 && foto === version; },
+  };
+}
+
+// Ejecuta un guardado (fn, síncrona o asíncrona) avisando a la guardia del
+// refresco; pase lo que pase, al acabar lo da por terminado.
+export async function conGuardia(guardia, fn) {
+  const fin = guardia ? guardia.guardando() : () => {};
+  try {
+    return await fn();
+  } finally {
+    fin();
+  }
 }
 
 // Resumen del cobro de un ENTRENO para el admin al pulsarlo en su Horario.

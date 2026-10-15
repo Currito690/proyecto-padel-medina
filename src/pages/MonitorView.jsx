@@ -4,7 +4,10 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
 import { hayGpsNativo, pedirUbicacionNativa, leerVueltaNativa } from '../utils/gpsNativo';
-import { entrenoPagado, pagadosDeEntreno, reservaPagada } from '../utils/entrenos';
+import {
+  entrenoPagado, pagadosDeEntreno, reservaPagada,
+  crearGuardiaRefresco, conGuardia, metodoTrasPulsar, pagosConAlumno, faltaFuncionRpc, REFRESCO_AUTO_MS,
+} from '../utils/entrenos';
 
 const horaDe = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
@@ -80,6 +83,76 @@ const METODO = {
 
 const AVISO_GPS_KEY = 'monitor_aviso_gps';
 
+// Agenda de un día por pistas: reservas (con su cobro y los pagos de cada
+// jugador), bloqueos y entrenos. completa = false si falló alguna lectura (el
+// refresco automático entonces no la aplica y se queda con lo que había).
+async function leerAgendaDia(d) {
+  const [bk, bl, ct] = await Promise.all([
+    supabase.from('bookings').select('id, court_id, time_slot, observaciones, status, user_id, metodo_pago, cobro_confirmado, pagos_jugadores, payment_type, split_paid, created_at').eq('date', d),
+    supabase.from('blocked_slots').select('court_id, time_slot, tipo, entreno_grupo').eq('date', d),
+    supabase.from('courts').select('id, name'),
+  ]);
+  let completa = !bk.error && !bl.error && !ct.error;
+
+  // Nombres de quienes reservaron (para mostrárselos al monitor).
+  const userIds = [...new Set((bk.data || []).map((b) => b.user_id).filter(Boolean))];
+  let nameById = {};
+  if (userIds.length) {
+    const { data: profs, error } = await supabase.from('profiles').select('id, name').in('id', userIds);
+    if (error) completa = false;
+    nameById = Object.fromEntries((profs || []).map((p) => [p.id, p.name]));
+  }
+
+  const byCourt = {};
+  (ct.data || []).forEach((c) => { byCourt[c.id] = { id: c.id, name: c.name, slots: [] }; });
+  const ensure = (cid) => byCourt[cid] || (byCourt[cid] = { id: cid, name: 'Pista', slots: [] });
+  (bk.data || []).forEach((b) => {
+    if (b.status === 'cancelled') return;
+    // Holds 'pendiente_pago' solo cuentan 15 min (jugador pagando en el banco)
+    if (b.status === 'pendiente_pago' && (Date.now() - new Date(b.created_at).getTime()) > 15 * 60 * 1000) return;
+    const who = b.status === 'pendiente_pago' ? '⏳ Pago en curso' : (b.observaciones || nameById[b.user_id] || '');
+    ensure(b.court_id).slots.push({
+      time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago,
+      bookingId: b.id, cobro: !!b.cobro_confirmado, esHold: b.status === 'pendiente_pago',
+      paymentType: b.payment_type, splitPaid: b.split_paid,
+      pagos: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
+      pagada: reservaPagada({ metodo: b.metodo_pago, cobroConfirmado: b.cobro_confirmado, esHold: b.status === 'pendiente_pago', paymentType: b.payment_type, splitPaid: b.split_paid }),
+    });
+  });
+  (bl.data || []).forEach((s) => {
+    const GRUPO = { individual: 'Individual', grupo2: 'Grupo 2', grupo3: 'Grupo 3', grupo4: 'Grupo 4' };
+    ensure(s.court_id).slots.push({
+      time: s.time_slot,
+      tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo',
+      note: s.tipo === 'entreno' ? (GRUPO[s.entreno_grupo] || '') : '',
+      grupo: s.entreno_grupo || null,
+    });
+  });
+  const lista = Object.values(byCourt).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
+  lista.forEach((c) => c.slots.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
+  return { lista, completa };
+}
+
+// Clases que el monitor ha confirmado ese día ("courtId|time" → { personas,
+// precio, pagos }). Los pagos los marcan él y el admin. null si falla la lectura.
+async function leerClasesDia(userId, d) {
+  const { data, error } = await supabase
+    .from('clases_monitor')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('date', d);
+  if (error) return null;
+  const m = {};
+  (data || []).forEach(c => {
+    m[`${c.court_id}|${c.time_slot}`] = {
+      personas: c.personas,
+      precio: c.precio != null ? Number(c.precio) : null,
+      pagos: Array.isArray(c.pagos) ? c.pagos : [],
+    };
+  });
+  return m;
+}
+
 // Dentro de la app de Android (o de la PWA instalada) no hay barra de
 // direcciones ni ajustes de navegador a los que mandar al trabajador.
 const enApp = typeof window !== 'undefined'
@@ -94,48 +167,8 @@ export default function MonitorView() {
   const load = useCallback(async (d) => {
     setLoading(true);
     try {
-      const [bk, bl, ct] = await Promise.all([
-        supabase.from('bookings').select('id, court_id, time_slot, observaciones, status, user_id, metodo_pago, cobro_confirmado, pagos_jugadores, payment_type, split_paid, created_at').eq('date', d),
-        supabase.from('blocked_slots').select('court_id, time_slot, tipo, entreno_grupo').eq('date', d),
-        supabase.from('courts').select('id, name'),
-      ]);
-
-      // Nombres de quienes reservaron (para mostrárselos al monitor).
-      const userIds = [...new Set((bk.data || []).map((b) => b.user_id).filter(Boolean))];
-      let nameById = {};
-      if (userIds.length) {
-        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', userIds);
-        nameById = Object.fromEntries((profs || []).map((p) => [p.id, p.name]));
-      }
-
-      const byCourt = {};
-      (ct.data || []).forEach((c) => { byCourt[c.id] = { id: c.id, name: c.name, slots: [] }; });
-      const ensure = (cid) => byCourt[cid] || (byCourt[cid] = { id: cid, name: 'Pista', slots: [] });
-      (bk.data || []).forEach((b) => {
-        if (b.status === 'cancelled') return;
-        // Holds 'pendiente_pago' solo cuentan 15 min (jugador pagando en el banco)
-        if (b.status === 'pendiente_pago' && (Date.now() - new Date(b.created_at).getTime()) > 15 * 60 * 1000) return;
-        const who = b.status === 'pendiente_pago' ? '⏳ Pago en curso' : (b.observaciones || nameById[b.user_id] || '');
-        ensure(b.court_id).slots.push({
-          time: b.time_slot, tipo: 'reserva', note: who, metodo: b.metodo_pago,
-          bookingId: b.id, cobro: !!b.cobro_confirmado, esHold: b.status === 'pendiente_pago',
-          paymentType: b.payment_type, splitPaid: b.split_paid,
-          pagos: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
-          pagada: reservaPagada({ metodo: b.metodo_pago, cobroConfirmado: b.cobro_confirmado, esHold: b.status === 'pendiente_pago', paymentType: b.payment_type, splitPaid: b.split_paid }),
-        });
-      });
-      (bl.data || []).forEach((s) => {
-        const GRUPO = { individual: 'Individual', grupo2: 'Grupo 2', grupo3: 'Grupo 3', grupo4: 'Grupo 4' };
-        ensure(s.court_id).slots.push({
-          time: s.time_slot,
-          tipo: s.tipo === 'entreno' ? 'entreno' : 'bloqueo',
-          note: s.tipo === 'entreno' ? (GRUPO[s.entreno_grupo] || '') : '',
-          grupo: s.entreno_grupo || null,
-        });
-      });
-      const list = Object.values(byCourt).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
-      list.forEach((c) => c.slots.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
-      setCourts(list);
+      const { lista } = await leerAgendaDia(d);
+      setCourts(lista);
     } catch {
       setCourts([]);
     } finally {
@@ -580,51 +613,124 @@ export default function MonitorView() {
   const loadClasesConf = useCallback(async (d) => {
     setClasesConfReady(false);
     if (!user?.id) { setClasesConfReady(true); return; }
-    const { data } = await supabase
-      .from('clases_monitor')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('date', d);
+    const m = await leerClasesDia(user.id, d);
     if (dateRef.current !== d) return; // respuesta de un día que ya no se ve (otra carga en curso marcará listo)
-    const m = {};
-    (data || []).forEach(c => {
-      m[`${c.court_id}|${c.time_slot}`] = {
-        personas: c.personas,
-        precio: c.precio != null ? Number(c.precio) : null,
-        pagos: Array.isArray(c.pagos) ? c.pagos : [],
-      };
-    });
-    setClasesConf(m);
+    setClasesConf(m || {});
     setPrecioEdits({});
     setClasesConfReady(true); // ya podemos pintar los entrenos con su color de cobro
   }, [user?.id]);
   useEffect(() => { loadClasesConf(date); }, [date, loadClasesConf]);
 
+  // ── Refresco AUTOMÁTICO: los pagos son MUTUOS con el admin (lo que él
+  // marque en su Horario —pagos de alumnos, de jugadores y cobros en club—
+  // sale aquí con los mismos botones, y al revés). Mientras la agenda está
+  // visible se releen solas las reservas y las clases del día cada
+  // REFRESCO_AUTO_MS, y en el momento al volver a la app. Sin "Cargando" y
+  // sin tocar un precio a medio escribir. Cada guardado pasa por
+  // conGuardado: una lectura pedida antes o durante un guardado no se aplica
+  // (desharía en pantalla lo que se acaba de marcar).
+  const [guardia] = useState(crearGuardiaRefresco);
+  const conGuardado = (fn) => conGuardia(guardia, fn);
+  const refrescoSeqRef = useRef(0);
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    const refrescar = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const foto = guardia.pedir();
+      if (foto == null) return; // guardando: ya tocará en la siguiente vuelta
+      const seq = ++refrescoSeqRef.current;
+      const [agenda, clases] = await Promise.all([leerAgendaDia(date), leerClasesDia(user.id, date)]);
+      if (seq !== refrescoSeqRef.current || dateRef.current !== date || !guardia.vale(foto)) return;
+      if (agenda.completa) setCourts(agenda.lista);
+      if (clases) setClasesConf(clases);
+    };
+    const id = setInterval(refrescar, REFRESCO_AUTO_MS);
+    document.addEventListener('visibilitychange', refrescar);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', refrescar);
+    };
+  }, [date, user?.id, guardia]);
+
+  // BD sin la migración clases_monitor_pagos (sin columnas precio/pagos)
+  const faltanColumnasPagos = (error) => /precio|pagos/i.test(error?.message || '');
+
+  // La clase tal cual está AHORA en la base de datos: { fila } (fila = null si
+  // no está confirmada) o { error } si no se pudo leer. El admin también marca
+  // pagos de alumnos desde su Horario: partir de la copia de pantalla (que
+  // puede ir atrasada) le borraría lo que haya marcado.
+  const leerClaseActual = async (e) => {
+    const { data, error } = await supabase.from('clases_monitor').select('personas, precio, pagos, updated_at')
+      .eq('user_id', user.id).eq('date', date).eq('time_slot', e.time).eq('court_id', e.courtId)
+      .maybeSingle();
+    if (error) return { error };
+    if (!data) return { fila: null };
+    return {
+      fila: {
+        personas: data.personas,
+        precio: data.precio != null ? Number(data.precio) : null,
+        pagos: Array.isArray(data.pagos) ? data.pagos : [],
+        updatedAt: data.updated_at ?? null,
+      },
+    };
+  };
+
   // Guarda la clase FUSIONANDO lo que ya hay (personas, precio y pagos van
-  // juntos en la misma fila; cada botón solo cambia su parte)
+  // juntos en la misma fila; cada botón solo cambia su parte). Lo que hay se
+  // relee de la BD justo antes; patch.pagoAlumno = { idx, metodo } cambia SOLO
+  // ese alumno. Si la fila ya existe, solo se guarda si nadie la ha tocado
+  // desde esa lectura (mismo updated_at); si el admin marcó algo entre medias,
+  // se relee y se vuelve a intentar, así su pago no se pierde.
   const upsertClase = async (e, patch, okMsg) => {
     const key = `${e.courtId}|${e.time}`;
-    const cur = clasesConf[key] || {};
-    const personas = patch.personas ?? cur.personas ?? GRUPO_PERSONAS[e.grupo] ?? 1;
-    let pagos = [...(patch.pagos ?? cur.pagos ?? [])].slice(0, personas);
-    while (pagos.length < personas) pagos.push(null);
-    const precio = patch.precio !== undefined ? patch.precio : (cur.precio ?? null);
     setConfGuardando(key);
-    let { error } = await supabase.from('clases_monitor').upsert(
-      { user_id: user.id, date, time_slot: e.time, court_id: e.courtId, personas, precio, pagos, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,date,time_slot,court_id' }
-    );
-    // BD sin migrar (sin columnas precio/pagos): guardar al menos las personas
-    if (error && /precio|pagos/i.test(error.message || '')) {
-      toast('Falta aplicar la migración clases_monitor_pagos en Supabase (precio y pagos aún no se guardan)', 'error');
-      ({ error } = await supabase.from('clases_monitor').upsert(
-        { user_id: user.id, date, time_slot: e.time, court_id: e.courtId, personas, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id,date,time_slot,court_id' }
-      ));
+    let res;
+    try {
+      res = await conGuardado(async () => {
+        for (let intento = 0; intento < 3; intento++) {
+          const leida = await leerClaseActual(e);
+          // Sin saber cómo está la clase NO se guarda (nunca desde la copia de pantalla)
+          if (leida.error && !faltanColumnasPagos(leida.error)) {
+            return { error: { message: 'no se pudo comprobar cómo está la clase (¿sin conexión?). Inténtalo de nuevo' } };
+          }
+          const actual = leida.fila; // null = sin confirmar (clase nueva); undefined = BD sin migrar
+          const cur = actual || clasesConf[key] || {};
+          const personas = patch.personas ?? cur.personas ?? GRUPO_PERSONAS[e.grupo] ?? 1;
+          const pa = patch.pagoAlumno;
+          const pagos = pagosConAlumno(cur.pagos, personas, pa ? pa.idx : -1, pa ? pa.metodo : null);
+          const precio = patch.precio !== undefined ? patch.precio : (cur.precio ?? null);
+          const cambios = { personas, precio, pagos, updated_at: new Date().toISOString() };
+          let error;
+          if (actual) {
+            let q = supabase.from('clases_monitor').update(cambios)
+              .eq('user_id', user.id).eq('date', date).eq('time_slot', e.time).eq('court_id', e.courtId);
+            q = actual.updatedAt == null ? q.is('updated_at', null) : q.eq('updated_at', actual.updatedAt);
+            const r = await q.select('id');
+            if (!r.error && !r.data?.length) continue; // cambió entre medias: releer y reintentar
+            error = r.error;
+          } else {
+            ({ error } = await supabase.from('clases_monitor').upsert(
+              { user_id: user.id, date, time_slot: e.time, court_id: e.courtId, ...cambios },
+              { onConflict: 'user_id,date,time_slot,court_id' }
+            ));
+          }
+          // BD sin migrar (sin columnas precio/pagos): guardar al menos las personas
+          if (error && faltanColumnasPagos(error)) {
+            toast('Falta aplicar la migración clases_monitor_pagos en Supabase (precio y pagos aún no se guardan)', 'error');
+            ({ error } = await supabase.from('clases_monitor').upsert(
+              { user_id: user.id, date, time_slot: e.time, court_id: e.courtId, personas, updated_at: new Date().toISOString() },
+              { onConflict: 'user_id,date,time_slot,court_id' }
+            ));
+          }
+          return { error, conf: { personas, precio, pagos } };
+        }
+        return { error: { message: 'la clase ha cambiado mientras se guardaba. Inténtalo de nuevo' } };
+      });
+    } finally {
+      setConfGuardando(null);
     }
-    setConfGuardando(null);
-    if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return false; }
-    setClasesConf(prev => ({ ...prev, [key]: { personas, precio, pagos } }));
+    if (res.error) { toast('No se pudo guardar: ' + res.error.message, 'error'); return false; }
+    if (dateRef.current === date) setClasesConf(prev => ({ ...prev, [key]: res.conf }));
     if (okMsg) toast(okMsg, 'success');
     return true;
   };
@@ -648,7 +754,16 @@ export default function MonitorView() {
     const key = `${e.courtId}|${e.time}`;
     const cur = clasesConf[key];
     if (!cur) return false;
-    if ((cur.pagos || []).some(Boolean)) {
+    // Los pagos, como estén AHORA en la BD (el admin ha podido apuntar alguno
+    // que aquí aún no se ve): si hay alguno, se avisa antes de borrarlos. Si
+    // no se puede leer, no se borra a ciegas.
+    const leida = await leerClaseActual(e);
+    if (leida.error && !faltanColumnasPagos(leida.error)) {
+      toast('No se pudo comprobar los pagos de la clase (¿sin conexión?). Inténtalo de nuevo', 'error');
+      return false;
+    }
+    const pagosBd = leida.fila?.pagos ?? [];
+    if (pagosBd.some(Boolean)) {
       const ok = await confirmDialog(
         'Esta clase tiene pagos apuntados. ¿Quitar la confirmación? La clase dejará de contar y se borrarán sus pagos.',
         { title: 'Quitar confirmación', okText: 'Quitar' }
@@ -657,9 +772,9 @@ export default function MonitorView() {
     }
     setConfGuardando(key);
     // .select() confirma que de verdad se borró (RLS filtra en silencio)
-    const { data, error } = await supabase.from('clases_monitor').delete()
+    const { data, error } = await conGuardado(() => supabase.from('clases_monitor').delete()
       .eq('user_id', user.id).eq('date', date).eq('time_slot', e.time).eq('court_id', e.courtId)
-      .select('id');
+      .select('id'));
     setConfGuardando(null);
     if (error || !data?.length) {
       toast(error
@@ -704,17 +819,40 @@ export default function MonitorView() {
   };
 
   // Cómo pagó el alumno idx: volver a pulsar el mismo botón = desmarcar.
-  // Solo en clases confirmadas (ver guardarPrecio).
+  // Solo en clases confirmadas (ver guardarPrecio). Lo que se ve decide si es
+  // marcar o desmarcar; se guarda SOLO ese alumno, en el servidor y con la
+  // fila bloqueada (RPC monitor_marcar_pago_alumno), así que lo que marque el
+  // admin a la vez no se pierde. Un precio a medio escribir va aparte.
   const marcarPago = async (e, idx, metodo) => {
     const key = `${e.courtId}|${e.time}`;
     const cur = clasesConf[key];
     if (cur?.personas == null) { toast('Confirma primero cuántas personas tuvo la clase (botones 1-4)', 'error'); return; }
-    const pagos = [...(cur.pagos || [])].slice(0, cur.personas);
-    while (pagos.length < cur.personas) pagos.push(null);
-    pagos[idx] = pagos[idx] === metodo ? null : metodo;
+    const nuevo = metodoTrasPulsar((cur.pagos || [])[idx], metodo);
     const extra = precioPendiente(key);
-    const ok = await upsertClase(e, { pagos, ...extra });
-    if (ok && extra.precio !== undefined) limpiarEdicionPrecio(key);
+    setConfGuardando(key);
+    let r;
+    try {
+      r = await conGuardado(() => supabase.rpc('monitor_marcar_pago_alumno', {
+        p_date: date, p_time_slot: e.time, p_court_id: e.courtId, p_idx: idx, p_metodo: nuevo,
+      }));
+    } finally {
+      setConfGuardando(null);
+    }
+    // Servidor sin la migración admin_marca_pagos_entreno: como antes (releer
+    // y guardar la fila solo si nadie la ha tocado entre medias)
+    if (faltaFuncionRpc(r.error)) {
+      const ok = await upsertClase(e, { pagoAlumno: { idx, metodo: nuevo }, ...extra });
+      if (ok && extra.precio !== undefined) limpiarEdicionPrecio(key);
+      return ok;
+    }
+    if (r.error) { toast('No se pudo guardar: ' + r.error.message, 'error'); return false; }
+    const pagos = Array.isArray(r.data) ? r.data : [];
+    if (dateRef.current === date) {
+      setClasesConf(prev => (prev[key] ? { ...prev, [key]: { ...prev[key], pagos } } : prev));
+    }
+    if (extra.precio === undefined) return true;
+    const ok = await upsertClase(e, { precio: extra.precio });
+    if (ok) limpiarEdicionPrecio(key);
     return ok;
   };
 
@@ -730,10 +868,10 @@ export default function MonitorView() {
       if (!ok) return;
     }
     setCobroGuardando(s.bookingId);
-    const { error } = await supabase.rpc('monitor_confirmar_cobro', {
+    const { error } = await conGuardado(() => supabase.rpc('monitor_confirmar_cobro', {
       p_booking_id: s.bookingId,
       p_confirmado: !s.cobro,
-    });
+    }));
     setCobroGuardando(null);
     if (error) {
       toast(/monitor_confirmar_cobro/i.test(error.message || '')
@@ -760,11 +898,11 @@ export default function MonitorView() {
     const actual = (Array.isArray(s.pagos) ? s.pagos : [])[idx] || null;
     const nuevo = actual === metodo ? null : metodo; // repetir el mismo = desmarcar
     setPagoJugadorGuardando(`${s.bookingId}|${idx}`);
-    const { data, error } = await supabase.rpc('monitor_marcar_pago_jugador', {
+    const { data, error } = await conGuardado(() => supabase.rpc('monitor_marcar_pago_jugador', {
       p_booking_id: s.bookingId,
       p_idx: idx,
       p_metodo: nuevo,
-    });
+    }));
     setPagoJugadorGuardando(null);
     if (error) {
       toast(/monitor_marcar_pago_jugador/i.test(error.message || '')
