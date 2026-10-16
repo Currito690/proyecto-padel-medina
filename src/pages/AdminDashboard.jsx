@@ -32,7 +32,7 @@ const CLIENTE_ELIMINADO_ID = '00000000-0000-4000-8000-000000000001';
 //   bloqueada = GRIS. Fondo suave + borde + texto oscuro del mismo tono.
 const slotColors = {
   available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' }, // libre (verde)
-  entreno:   { borderColor: '#F9A8D4', backgroundColor: '#FCE7F3', color: '#BE185D' }, // entreno (rosa: más vivo que el fondo rojo)
+  entreno:   { borderColor: '#DB2777', backgroundColor: '#F472B6', color: '#500724' }, // entreno (rosa INTENSO: el club lo quería bien distinto del rojo claro de "sin pagar")
   pagado:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#1D4ED8' }, // reserva pagada (azul)
   impago:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#B91C1C' }, // reserva sin pagar (rojo)
   blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#475569' }, // bloqueada (gris)
@@ -2087,7 +2087,7 @@ const AdminDashboard = () => {
               { label: 'Reservas hoy', value: allBookings.length, color: '#16A34A', bg: '#F0FDF4', border: '#86EFAC' },
               { label: 'Pistas activas', value: activeCourts, color: '#0EA5E9', bg: '#F0F9FF', border: '#BAE6FD' },
               { label: '🔒 Bloqueadas', value: bloqueadasDia.length, color: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
-              { label: '🏋️ Entrenos', value: entrenosDia.length, color: '#BE185D', bg: '#FDF2F8', border: '#F9A8D4' },
+              { label: '🏋️ Entrenos', value: entrenosDia.length, color: '#9D174D', bg: '#FBCFE8', border: '#EC4899' },
             ].map(s => (
               <div key={s.label} style={{ backgroundColor: s.bg, border: `1px solid ${s.border}`, borderRadius: '0.875rem', padding: '0.875rem 0.625rem', textAlign: 'center' }}>
                 <p style={{ margin: 0, fontSize: '1.75rem', fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</p>
@@ -2104,7 +2104,7 @@ const AdminDashboard = () => {
                 </span>
               ))}
               {entrenosDia.map((s, i) => (
-                <span key={`e-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#BE185D', background: '#FDF2F8', border: '1px solid #F9A8D4', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
+                <span key={`e-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9D174D', background: '#FBCFE8', border: '1px solid #EC4899', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
                   🏋️ {s.courtName} · {s.time}
                 </span>
               ))}
