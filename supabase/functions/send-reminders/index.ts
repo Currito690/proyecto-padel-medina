@@ -39,6 +39,7 @@ import {
 import {
     enviarAFilas,
     esCorreoAdmin,
+    esFilaAndroid,
     esFilaIos,
     esPerfilAdmin,
     resultadoVacio,
@@ -172,7 +173,7 @@ async function avisoDePrueba(supabase: Cliente, prueba: Record<string, unknown>)
         userId,
         ...r,
         dispositivos: filas.map((f: FilaPush & { created_at?: string; updated_at?: string }) => ({
-            plataforma: esFilaIos(f) ? 'ios' : 'web',
+            plataforma: esFilaIos(f) ? 'ios' : esFilaAndroid(f) ? 'android' : 'web',
             registrado: f.updated_at ?? f.created_at ?? null,
         })),
     });
