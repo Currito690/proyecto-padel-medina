@@ -10,7 +10,7 @@ const CLAVE_TOKEN_APNS = 'pm-apns-token';
 // Android: los avisos van por Firebase Cloud Messaging (FCM). Hasta que estén
 // android-app/app/google-services.json y el envío por FCM en el servidor, la app
 // de Android NO ofrece activarlos (sin Firebase el registro no funciona).
-const FCM_LISTO = false;
+const FCM_LISTO = true;
 const esAndroid = () => Capacitor.getPlatform() === 'android';
 const avisosNativosDisponibles = () => !esAndroid() || FCM_LISTO;
 // Cómo se guarda el dispositivo en push_subscriptions según la plataforma.

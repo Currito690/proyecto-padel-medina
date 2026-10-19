@@ -52,7 +52,9 @@ BEGIN
     END IF;
   ELSIF p_plataforma = 'android' THEN
     -- Los tokens de FCM: letras, números, ":", "-" y "_" (unos 150-250 caracteres).
-    IF p_endpoint !~ '^fcm:[A-Za-z0-9:_-]{20,1024}$'
+    -- (Postgres no admite repeticiones {n,m} de más de 255: la longitud va aparte.)
+    IF p_endpoint !~ '^fcm:[A-Za-z0-9:_-]+$'
+       OR length(p_endpoint) NOT BETWEEN 24 AND 1028
        OR (p_subscription->>'token') IS DISTINCT FROM substr(p_endpoint, 5) THEN
       RAISE EXCEPTION 'Token de Android no válido';
     END IF;

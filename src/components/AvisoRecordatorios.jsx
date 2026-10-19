@@ -30,7 +30,7 @@ async function activarDesdeBoton(userId) {
   const estado = await activarAvisos(supabase, userId, { preguntar: true });
   const fallo = estado === 'activos' && Capacitor.isNativePlatform() ? falloAvisosNativo() : null;
   if (fallo) {
-    toast(`No se han podido activar los avisos en este iPhone: ${fallo}`, 'error', 8000);
+    toast(`No se han podido activar los avisos en este móvil: ${fallo}`, 'error', 8000);
   } else if (estado === 'activos') {
     toast('¡Listo! Te avisaremos antes de tus partidos.', 'success');
   } else if (estado === 'bloqueados') {
@@ -126,7 +126,7 @@ export const FilaRecordatorios = () => {
       const registrar = e === 'activos' && ultimo !== 'activos' && (nativo || alVolverDeAjustes);
       ultimo = e;
       setEstado(e);
-      if (nativo && e === 'no-disponible') setFallo(falloAvisosNativo() || 'este iPhone no permite avisos');
+      if (nativo && e === 'no-disponible') setFallo(falloAvisosNativo() || 'este móvil no permite avisos');
       else if (nativo && e !== 'activos') setFallo(null);
       if (!registrar) return;
       setComprobando(true);
@@ -157,7 +157,7 @@ export const FilaRecordatorios = () => {
       ? await activarAvisos(supabase, user.id, { preguntar: false }) // reintento
       : await activarDesdeBoton(user.id);
     const f = nativo && e === 'activos' ? falloAvisosNativo() : null;
-    if (estado === 'activos' && !f) toast('¡Listo! Este iPhone ya recibe los avisos.', 'success');
+    if (estado === 'activos' && !f) toast('¡Listo! Este móvil ya recibe los avisos.', 'success');
     setFallo(f);
     setEstado(e);
     setActivando(false);
@@ -175,7 +175,7 @@ export const FilaRecordatorios = () => {
         <div style={{ minWidth: 0 }}>
           <span style={{ display: 'block', fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-text-primary)' }}>Recordatorios de partidos</span>
           {fallo ? (
-            <span style={{ display: 'block', fontSize: '0.72rem', color: '#B45309', lineHeight: 1.4 }}>⚠️ No se ha podido activar en este iPhone: {fallo}</span>
+            <span style={{ display: 'block', fontSize: '0.72rem', color: '#B45309', lineHeight: 1.4 }}>⚠️ No se ha podido activar en este móvil: {fallo}</span>
           ) : (
             <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>Un aviso unas horas antes de tu pista</span>
           )}
