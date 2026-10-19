@@ -8,11 +8,17 @@
 //
 // La app se identifica al arrancar con ?gpsnativo=1 en su URL de inicio; la web
 // lo recuerda y, a partir de ahí, pide la ubicación a la app y no a Chrome.
+//
+// Solo vale para la app ANTIGUA de Android (la web dentro de Chrome). La app
+// nueva (Capacitor) lleva la web dentro de su propio WebView, que pide el permiso
+// de ubicación y da el GPS directamente: ahí este puente no se usa.
+import { Capacitor } from '@capacitor/core';
 
 const CLAVE = 'gps_nativo';
 const PAQUETE = 'com.padelmedina.app';
 
 export function registrarDesdeUrl() {
+  if (Capacitor.isNativePlatform()) return;
   try {
     if (new URLSearchParams(window.location.search).get('gpsnativo') === '1') {
       localStorage.setItem(CLAVE, '1');
@@ -21,6 +27,7 @@ export function registrarDesdeUrl() {
 }
 
 export function hayGpsNativo() {
+  if (Capacitor.isNativePlatform()) return false;
   if (!/android/i.test(navigator.userAgent || '')) return false;
   try { return localStorage.getItem(CLAVE) === '1'; } catch { return false; }
 }

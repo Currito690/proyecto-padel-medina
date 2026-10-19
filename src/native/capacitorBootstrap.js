@@ -1,14 +1,15 @@
-// Arranque NATIVO (solo app de iPhone/iPad vía Capacitor).
+// Arranque NATIVO (apps de iPhone y de Android vía Capacitor).
 //
 // IMPORTANTE: este módulo SOLO se carga cuando Capacitor.isNativePlatform() es
-// true (ver src/main.jsx). En la web y en la app Android (TWA, que es Chrome y
-// no Capacitor) no se ejecuta nada de aquí: cero impacto en lo que ya funciona.
+// true (ver src/main.jsx). En la web (y en la app Android antigua, que era la web
+// dentro de Chrome) no se ejecuta nada de aquí.
 //
-// Avisos de Apple (APNs): aquí solo se escucha el toque en un aviso. El permiso
+// Avisos (APNs / FCM): aquí solo se escucha el toque en un aviso. El permiso
 // y el registro del token los hace la app cuando hay usuario (activarAvisos en
 // src/services/pushNotifications.js): no se pregunta nada al arrancar.
 // El pago con Redsys se abre en una pantalla de pago propia de la app y vuelve
 // solo (ver src/utils/redsysPay.js); no necesita nada aquí.
+import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { PushNotifications } from '@capacitor/push-notifications';
@@ -34,7 +35,7 @@ function rutaDeURL(url) {
 
 async function initStatusBarYSplash() {
   // La pantalla completa la da capacitor.config (ios.contentInset "never") y el
-  // CSS con env(safe-area-inset-top). El color de los iconos de la barra de
+  // CSS con var(--sa-top). El color de los iconos de la barra de
   // estado lo pone cada pantalla (StatusBarSync en App.jsx).
   try {
     // La web ya está pintada: quitamos el splash nativo.
@@ -81,9 +82,22 @@ async function initPush() {
   } catch { /* nada */ }
 }
 
+// Android: botón (o gesto) de atrás. Vuelve a la pantalla anterior de la app,
+// como cualquier app; en la pantalla principal (o sin nada detrás) la minimiza.
+// Sin esto, en la pantalla principal "atrás" no hacía nada.
+function initBotonAtras() {
+  if (Capacitor.getPlatform() !== 'android') return;
+  App.addListener('backButton', ({ canGoBack }) => {
+    const enPrincipal = ['/', '/login'].includes(window.location.pathname);
+    if (canGoBack && !enPrincipal) window.history.back();
+    else App.minimizeApp().catch(() => {});
+  }).catch(() => {});
+}
+
 // Punto de entrada. Llamado SOLO en plataforma nativa.
 export async function initNative() {
   await initStatusBarYSplash();
+  initBotonAtras();
   initEnlacesProfundos();
   initEnlacesInternos();
   await initPush();

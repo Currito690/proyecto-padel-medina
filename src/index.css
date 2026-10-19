@@ -1,4 +1,14 @@
 :root {
+  /* Márgenes de seguridad (barra de la hora, muesca, barra de botones de abajo).
+     iPhone y navegadores: env(safe-area-inset-*). App de Android: además
+     --pm-safe-*, que pone MainActivity.java (los WebView anteriores a la v140
+     dan env() = 0). Se usa el mayor de los dos. Usar SIEMPRE var(--sa-*) en vez
+     de env(safe-area-inset-*). */
+  --sa-top: max(env(safe-area-inset-top, 0px), var(--pm-safe-top, 0px));
+  --sa-right: max(env(safe-area-inset-right, 0px), var(--pm-safe-right, 0px));
+  --sa-bottom: max(env(safe-area-inset-bottom, 0px), var(--pm-safe-bottom, 0px));
+  --sa-left: max(env(safe-area-inset-left, 0px), var(--pm-safe-left, 0px));
+
   /* Brand Colors - Padel Medina (Logo: navy + green) */
   --color-accent: #1B3A6E;
   --color-accent-hover: #152D57;
@@ -234,7 +244,7 @@ textarea {
 
 /* Dashboard Layout */
 .dashboard-container {
-  padding: 1.25rem 1rem 5.5rem;
+  padding: 1.25rem 1rem calc(5.5rem + var(--sa-bottom));
   max-width: 900px;
   margin: 0 auto;
   width: 100%;
@@ -249,26 +259,26 @@ textarea {
 
 @media (max-width: 380px) {
   .dashboard-container {
-    padding: 1rem 0.75rem 5.5rem;
+    padding: 1rem 0.75rem calc(5.5rem + var(--sa-bottom));
   }
 }
 
 @media (min-width: 640px) {
   .dashboard-container {
-    padding: 1.75rem 1.5rem 5.5rem;
+    padding: 1.75rem 1.5rem calc(5.5rem + var(--sa-bottom));
   }
 }
 
 @media (min-width: 768px) {
   .dashboard-container {
-    padding: 2rem 2rem 5.5rem;
+    padding: 2rem 2rem calc(5.5rem + var(--sa-bottom));
   }
 }
 
 @media (min-width: 1024px) {
   .dashboard-container {
     max-width: 1100px;
-    padding: 2.5rem 3rem 5.5rem;
+    padding: 2.5rem 3rem calc(5.5rem + var(--sa-bottom));
   }
   .dashboard-layout {
     flex-direction: row;
@@ -298,8 +308,8 @@ table {
 /* Admin body padding on small screens */
 @media (max-width: 480px) {
   .admin-body {
-    padding-left: calc(0.875rem + env(safe-area-inset-left)) !important;
-    padding-right: calc(0.875rem + env(safe-area-inset-right)) !important;
+    padding-left: calc(0.875rem + var(--sa-left)) !important;
+    padding-right: calc(0.875rem + var(--sa-right)) !important;
     padding-top: 1rem !important;
     padding-bottom: 1rem !important;
   }

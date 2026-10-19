@@ -1823,8 +1823,8 @@ const AdminDashboard = () => {
         .admin-sidebar {
           width: min(280px, 85vw); background: white; border-right: 1px solid var(--color-border);
           display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
-          padding-top: env(safe-area-inset-top);
-          padding-bottom: env(safe-area-inset-bottom);
+          padding-top: var(--sa-top);
+          padding-bottom: var(--sa-bottom);
           transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
           overflow-y: auto;
         }
@@ -1839,13 +1839,13 @@ const AdminDashboard = () => {
         .admin-header {
           background: white; border-bottom: 1px solid var(--color-border);
           padding: 0.75rem 1rem;
-          padding-top: calc(0.75rem + env(safe-area-inset-top));
-          padding-left: calc(1rem + env(safe-area-inset-left));
-          padding-right: calc(1rem + env(safe-area-inset-right));
+          padding-top: calc(0.75rem + var(--sa-top));
+          padding-left: calc(1rem + var(--sa-left));
+          padding-right: calc(1rem + var(--sa-right));
           display: flex; align-items: center; justify-content: space-between;
           gap: 0.75rem;
           position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm);
-          min-height: calc(56px + env(safe-area-inset-top));
+          min-height: calc(56px + var(--sa-top));
         }
         .admin-header-title {
           flex: 1;
@@ -1894,7 +1894,7 @@ const AdminDashboard = () => {
           background: linear-gradient(180deg, #16A34A, #4ADE80);
         }
         .admin-logout:hover { border-color: #FECACA !important; color: #DC2626 !important; background: #FEF2F2 !important; }
-        .admin-body { flex: 1; padding: 1.5rem 1rem; max-width: 100%; width: 100%; padding-left: calc(1rem + env(safe-area-inset-left)); padding-right: calc(1rem + env(safe-area-inset-right)); }
+        .admin-body { flex: 1; padding: 1.5rem 1rem; max-width: 100%; width: 100%; padding-left: calc(1rem + var(--sa-left)); padding-right: calc(1rem + var(--sa-right)); }
 
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
         .slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }

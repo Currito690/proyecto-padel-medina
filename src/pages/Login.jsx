@@ -7,14 +7,13 @@ import { Capacitor } from '@capacitor/core';
 import { googleNativoListo } from '../utils/googleNativo';
 
 // En la app de iPhone: "Continuar con Apple" y "Continuar con Google", los dos
-// nativos (sin navegador). En web/Android: solo Google (OAuth normal).
+// nativos (sin navegador). En la app de Android: Google nativo. En la web: solo
+// Google (OAuth normal).
 const ES_NATIVO = Capacitor.isNativePlatform();
-// El botón de Apple solo se muestra cuando su proveedor está activado en el
-// servidor de login (GoTrue) y la capacidad "Sign in with Apple" está puesta en
-// Xcode. Hasta entonces, en iPhone se entra con correo (sin navegador). Poner a
-// true cuando el servidor esté listo.
-const APPLE_LISTO = true;
-// Google en iPhone sale cuando hay ID de cliente iOS (ver utils/googleNativo.js).
+// "Continuar con Apple" solo en el iPhone (en Android no hay inicio de sesión
+// nativo de Apple, y Apple solo lo exige en sus dispositivos).
+const APPLE_LISTO = Capacitor.getPlatform() === 'ios';
+// Google en las apps sale cuando su ID de cliente está puesto (ver utils/googleNativo.js).
 const GOOGLE_NATIVO = ES_NATIVO && googleNativoListo();
 const NOMBRE_SOCIAL = !ES_NATIVO ? 'Google'
   : (APPLE_LISTO && GOOGLE_NATIVO) ? 'Apple o Google'
@@ -229,7 +228,7 @@ const Login = () => {
         .login-brand {
           background: linear-gradient(150deg, #1B3A6E 0%, #15326A 55%, #0F2550 100%);
           /* + zona de la hora/batería en iPhone (la cabecera azul llega al borde) */
-          padding: calc(2.5rem + env(safe-area-inset-top)) 1.5rem 3rem;
+          padding: calc(2.5rem + var(--sa-top)) 1.5rem 3rem;
           text-align: center;
           position: relative;
           overflow: hidden;

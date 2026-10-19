@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { Capacitor } from '@capacitor/core';
 import { origenPublico } from '../utils/origen';
-import { GOOGLE_IOS_CLIENT_ID } from '../utils/googleNativo';
+import { GOOGLE_IOS_CLIENT_ID, GOOGLE_WEB_CLIENT_ID } from '../utils/googleNativo';
 // Usuarios "monitor" (solo lectura de la agenda) reconocidos por email como
 // respaldo, además de profiles.role = 'monitor'.
 import { MONITOR_EMAILS } from '../utils/staff';
@@ -131,7 +131,10 @@ export function AuthProvider({ children }) {
   const loginWithGoogle = async () => {
     if (Capacitor.isNativePlatform()) {
       const { SocialLogin } = await import('@capgo/capacitor-social-login');
-      await SocialLogin.initialize({ google: { iOSClientId: GOOGLE_IOS_CLIENT_ID, mode: 'online' } });
+      // iPhone usa su cliente iOS; Android, el cliente WEB (así lo exige Google).
+      await SocialLogin.initialize({
+        google: { iOSClientId: GOOGLE_IOS_CLIENT_ID, webClientId: GOOGLE_WEB_CLIENT_ID, mode: 'online' },
+      });
       const rawNonce = `${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}.${Date.now().toString(36)}`;
       const hashedNonce = await sha256Hex(rawNonce);
       // forcePrompt: muestra siempre el selector de cuentas (si no, reutiliza en

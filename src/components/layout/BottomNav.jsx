@@ -84,8 +84,10 @@ export default function BottomNav() {
           display: flex;
           justify-content: space-around;
           align-items: stretch;
-          height: 72px;
-          padding-bottom: env(safe-area-inset-bottom);
+          /* 72px de pestañas + el margen de los botones/rayita del móvil (si no,
+             el margen se comía la altura y cortaba los textos) */
+          height: calc(72px + var(--sa-bottom));
+          padding-bottom: var(--sa-bottom);
           box-shadow: 0 -2px 16px rgba(0,0,0,0.06);
           z-index: 100;
         }

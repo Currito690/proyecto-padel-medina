@@ -1,11 +1,13 @@
 // Envío de un aviso a una lista de dispositivos (filas de push_subscriptions):
 // - plataforma 'web': web push con VAPID (navegador y app Android, que es la web).
 // - plataforma 'ios': APNs (app de iPhone; allí no hay web push).
+// - plataforma 'android': FCM (app de Android de Capacitor; tampoco hay web push).
 // Las filas de dispositivos que ya no existen (web 404/410, APNs dado de baja)
 // se borran para no reintentarlas en cada aviso.
 // Lo usan send-push (avisos al club / a todos) y send-reminders (recordatorios).
 import webpush from 'npm:web-push';
 import { configApns, enviarApns } from './apns.ts';
+import { configFcm, enviarFcm } from './fcm.ts';
 
 export interface FilaPush {
   id: string;
@@ -57,10 +59,14 @@ export function esFilaIos(fila: FilaPush): boolean {
   return fila.plataforma === 'ios' || String(fila.endpoint || '').startsWith('apns:');
 }
 
+export function esFilaAndroid(fila: FilaPush): boolean {
+  return fila.plataforma === 'android' || String(fila.endpoint || '').startsWith('fcm:');
+}
+
 function tokenIos(fila: FilaPush): string {
   const sub = typeof fila.subscription === 'string' ? safeJson(fila.subscription) : fila.subscription;
   const token = (sub as { token?: unknown } | null)?.token;
-  return typeof token === 'string' && token ? token : String(fila.endpoint || '').replace(/^apns:/, '');
+  return typeof token === 'string' && token ? token : String(fila.endpoint || '').replace(/^(apns|fcm):/, '');
 }
 
 function safeJson(texto: string): unknown {
@@ -129,10 +135,31 @@ export async function enviarAFilas(
   if (nIos > 0 && !apns) {
     console.warn(`Faltan los secretos APNS_KEY_ID / APNS_TEAM_ID / APNS_PRIVATE_KEY: se omiten ${nIos} iPhone.`);
   }
-  const vapid = filas.length > nIos ? prepararVapid() : false;
+  const nAndroid = filas.filter(esFilaAndroid).length;
+  const fcm = nAndroid > 0 ? configFcm((k) => Deno.env.get(k)) : null;
+  if (nAndroid > 0 && !fcm) {
+    console.warn(`Falta el secreto FCM_SERVICE_ACCOUNT: se omiten ${nAndroid} Android.`);
+  }
+  const vapid = filas.length > nIos + nAndroid ? prepararVapid() : false;
 
   const muertas: string[] = [];
   await Promise.all(filas.map(async (fila) => {
+    if (esFilaAndroid(fila)) {
+      if (!fcm) {
+        res.omitidos++;
+        return;
+      }
+      const r = await enviarFcm(fcm, tokenIos(fila), aviso, { caducaEn });
+      if (r.ok) {
+        res.enviados++;
+      } else {
+        res.fallidos++;
+        if (r.borrar) muertas.push(fila.id);
+        else console.warn(`Aviso Android fallido (${r.status} ${r.reason ?? ''}) fila ${fila.id}`);
+      }
+      return;
+    }
+
     if (esFilaIos(fila)) {
       if (!apns) {
         res.omitidos++;

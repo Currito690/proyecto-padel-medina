@@ -29,7 +29,7 @@ const MonitorView = lazy(() => import('./pages/MonitorView'));
 // llega hasta el borde de arriba, así que les damos el margen de la zona de la
 // hora/batería para que nada quede tapado. En web/Android env() vale 0.
 const SafeTop = ({ children }) => (
-  <div style={{ paddingTop: 'env(safe-area-inset-top)' }}>{children}</div>
+  <div style={{ paddingTop: 'var(--sa-top)' }}>{children}</div>
 );
 
 // Color de los iconos de la barra de estado (hora/batería) en la app nativa:

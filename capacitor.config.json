@@ -13,7 +13,11 @@
       "showSpinner": false
     },
     "PushNotifications": {
-      "presentationOptions": ["badge", "sound", "alert"]
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
     },
     "SocialLogin": {
       "providers": {
@@ -22,6 +26,13 @@
         "apple": false,
         "twitter": false
       }
+    },
+    "SystemBars": {
+      "insetsHandling": "disable"
     }
+  },
+  "android": {
+    "path": "android-app",
+    "backgroundColor": "#F8FAFC"
   }
 }

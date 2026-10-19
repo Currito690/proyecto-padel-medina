@@ -3,8 +3,20 @@ import { supabase as defaultSupabase } from './supabase';
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
-// Token APNs de este iPhone (para poder borrar su fila al cerrar sesión).
+// Token del dispositivo (APNs en el iPhone, FCM en Android), para poder borrar
+// su fila al cerrar sesión. La clave conserva el nombre de cuando solo había iPhone.
 const CLAVE_TOKEN_APNS = 'pm-apns-token';
+
+// Android: los avisos van por Firebase Cloud Messaging (FCM). Hasta que estén
+// android-app/app/google-services.json y el envío por FCM en el servidor, la app
+// de Android NO ofrece activarlos (sin Firebase el registro no funciona).
+const FCM_LISTO = false;
+const esAndroid = () => Capacitor.getPlatform() === 'android';
+const avisosNativosDisponibles = () => !esAndroid() || FCM_LISTO;
+// Cómo se guarda el dispositivo en push_subscriptions según la plataforma.
+const dispositivoNativo = () => (esAndroid()
+  ? { prefijo: 'fcm:', plataforma: 'android' }
+  : { prefijo: 'apns:', plataforma: 'ios' });
 // Último motivo por el que el iPhone NO quedó registrado (lo enseña el perfil:
 // con permiso concedido pero sin registro, los avisos no llegan).
 const CLAVE_FALLO = 'pm-avisos-fallo';
@@ -173,6 +185,7 @@ async function tokenAPNs(PushNotifications, ms = 10000) {
 export async function estadoAvisos() {
   try {
     if (Capacitor.isNativePlatform()) {
+      if (!avisosNativosDisponibles()) return 'no-disponible';
       // Con límite de tiempo: si el plugin no contesta, mejor decirlo que dejar
       // la pantalla esperando para siempre.
       const leer = (async () => {
@@ -199,6 +212,7 @@ export async function estadoAvisos() {
 export async function activarAvisos(supabase, userId, { preguntar = false } = {}) {
   if (Capacitor.isNativePlatform()) {
     let estado = 'no-disponible';
+    if (!avisosNativosDisponibles()) return estado;
     try {
       const { PushNotifications } = await moduloPush();
       let { receive } = await PushNotifications.checkPermissions();
@@ -213,8 +227,9 @@ export async function activarAvisos(supabase, userId, { preguntar = false } = {}
         guardarFallo(error);
         return estado;
       }
-      const fallo = await registrarDispositivo(supabase, userId, `apns:${token}`, { token }, 'ios');
-      guardarFallo(fallo ? `el servidor no ha guardado este iPhone (${fallo})` : null);
+      const { prefijo, plataforma } = dispositivoNativo();
+      const fallo = await registrarDispositivo(supabase, userId, `${prefijo}${token}`, { token }, plataforma);
+      guardarFallo(fallo ? `el servidor no ha guardado este dispositivo (${fallo})` : null);
       if (!fallo) {
         try { localStorage.setItem(CLAVE_TOKEN_APNS, token); } catch { /* sin almacenamiento */ }
       }
@@ -255,7 +270,7 @@ export async function unsubscribeFromPush(client) {
     if (!token) return;
     let borrada = false;
     try {
-      const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', `apns:${token}`);
+      const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', `${dispositivoNativo().prefijo}${token}`);
       if (error) console.warn('Push unsubscribe error:', error.message);
       else borrada = true;
     } catch (err) {
