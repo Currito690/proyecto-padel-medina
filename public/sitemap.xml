@@ -1,41 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd"
         xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://padelmedina.com/</loc>
-    <lastmod>2026-04-13</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>1.0</priority>
+    <lastmod>2026-10-22</lastmod>
     <image:image>
-      <image:loc>https://padelmedina.com/logo.png</image:loc>
-      <image:title>Padel Medina - Club de Pádel en Medina Sidonia</image:title>
-      <image:caption>Club oficial de pádel en Medina Sidonia, Cádiz</image:caption>
+      <image:loc>https://padelmedina.com/og-padelmedina.png</image:loc>
     </image:image>
-  </url>
-  <url>
-    <loc>https://padelmedina.com/login</loc>
-    <lastmod>2026-04-13</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://padelmedina.com/aviso-legal</loc>
     <lastmod>2026-09-22</lastmod>
-    <changefreq>yearly</changefreq>
-    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://padelmedina.com/privacidad</loc>
+    <lastmod>2026-10-14</lastmod>
   </url>
   <url>
     <loc>https://padelmedina.com/eliminar-cuenta</loc>
     <lastmod>2026-09-28</lastmod>
-    <changefreq>yearly</changefreq>
-    <priority>0.3</priority>
-  </url>
-  <url>
-    <loc>https://padelmedina.com/privacidad</loc>
-    <lastmod>2026-09-22</lastmod>
-    <changefreq>yearly</changefreq>
-    <priority>0.3</priority>
   </url>
 </urlset>

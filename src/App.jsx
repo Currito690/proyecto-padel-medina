@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { supabase } from './services/supabase';
 import { subscribeAdminToPush, activarAvisos } from './services/pushNotifications';
+import { metaDeRuta, aplicarMeta } from './utils/metaRuta';
 import MainLayout from './components/layout/MainLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import InstallPrompt from './components/InstallPrompt';
@@ -24,6 +25,7 @@ const DeleteAccount = lazy(() => import('./pages/DeleteAccount'));
 const Tournaments = lazy(() => import('./pages/Tournaments'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const MonitorView = lazy(() => import('./pages/MonitorView'));
+const Inicio = lazy(() => import('./pages/Inicio'));
 
 // Pantallas sueltas (sin la cabecera de MainLayout): en la app de iPhone la web
 // llega hasta el borde de arriba, así que les damos el margen de la zona de la
@@ -43,6 +45,13 @@ const StatusBarSync = () => {
       .then(({ StatusBar, Style }) => StatusBar.setStyle({ style: pathname === '/login' ? Style.Dark : Style.Light }))
       .catch(() => {});
   }, [pathname]);
+  return null;
+};
+
+// Título, descripción y canónica de cada página (lo que lee Google).
+const MetaRuta = () => {
+  const { pathname } = useLocation();
+  useEffect(() => { aplicarMeta(metaDeRuta(pathname)); }, [pathname]);
   return null;
 };
 
@@ -260,6 +269,7 @@ function App() {
   return (
     <div className="app-container">
       <StatusBarSync />
+      <MetaRuta />
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
@@ -298,6 +308,12 @@ function App() {
               <Route path="/perfil" element={<Profile />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
+          )}
+
+          {/* Portada pública del club (solo en la web: es lo que ve Google). En
+              las apps, sin sesión se va directo a /login como siempre. */}
+          {!user && !Capacitor.isNativePlatform() && (
+            <Route path="/" element={<Inicio />} />
           )}
 
           {/* Catch-all fallback */}

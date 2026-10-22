@@ -36,7 +36,8 @@ const traduceError = (err) => {
 
 const Login = () => {
   const { loginWithGoogle, loginWithApple, loginWithPassword, signupWithEmail, verifySignupOtp, resendSignupCode, resetPassword } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
+  // /login?registro (botón "Reservar pista" de la portada) abre directamente el registro.
+  const [isLogin, setIsLogin] = useState(() => !new URLSearchParams(window.location.search).has('registro'));
   const [step, setStep] = useState(1); // 1 = formulario, 2 = código OTP (solo registro)
   const [forgotMode, setForgotMode] = useState(false); // recuperar contraseña
   const [name, setName] = useState('');
