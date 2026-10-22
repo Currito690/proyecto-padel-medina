@@ -27,12 +27,12 @@ const CLIENTE_ELIMINADO_ID = '00000000-0000-4000-8000-000000000001';
 
 // Colores de la rejilla del HORARIO (solo panel del admin; la agenda del
 // monitor tiene los suyos):
-//   libre = VERDE · entreno = ROSA (esté cobrado o no) · reserva pagada = AZUL ·
+//   libre = VERDE · entreno = LILA (esté cobrado o no) · reserva pagada = AZUL ·
 //   reserva sin pagar = ROJO (también el pago en curso, que lleva ⏳) ·
 //   bloqueada = GRIS. Fondo suave + borde + texto oscuro del mismo tono.
 const slotColors = {
   available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' }, // libre (verde)
-  entreno:   { borderColor: '#DB2777', backgroundColor: '#F472B6', color: '#500724' }, // entreno (rosa INTENSO: el club lo quería bien distinto del rojo claro de "sin pagar")
+  entreno:   { borderColor: '#D8B4FE', backgroundColor: '#FAF5FF', color: '#9333EA' }, // entreno (LILA, el de siempre: el club lo pidió de vuelta tras probar el rosa)
   pagado:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#1D4ED8' }, // reserva pagada (azul)
   impago:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#B91C1C' }, // reserva sin pagar (rojo)
   blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#475569' }, // bloqueada (gris)
@@ -1919,7 +1919,7 @@ const AdminDashboard = () => {
       {entrenoModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
           <div style={{ background: 'white', borderRadius: '1.1rem', width: '100%', maxWidth: 380, padding: '1.4rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#BE185D' }}>🏋️ Entreno — {entrenoModal.courtName}</h3>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#7E22CE' }}>🏋️ Entreno — {entrenoModal.courtName}</h3>
             <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748B' }}>
               Marca el horario real de la clase (ej.: de 20:00 a 21:00). Ese tramo queda ocupado para los jugadores. De cuántas personas es lo confirma el monitor al acabar el día.
             </p>
@@ -1933,7 +1933,7 @@ const AdminDashboard = () => {
             </div>
             <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1.1rem' }}>
               <button onClick={() => setEntrenoModal(null)} style={{ flex: 1, padding: '0.7rem', borderRadius: '0.7rem', border: '1.5px solid #E2E8F0', background: 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Cancelar</button>
-              <button onClick={confirmarEntreno} style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: '#DB2777', color: 'white', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Marcar entreno</button>
+              <button onClick={confirmarEntreno} style={{ flex: 2, padding: '0.7rem', borderRadius: '0.7rem', border: 'none', background: '#9333EA', color: 'white', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Marcar entreno</button>
             </div>
           </div>
         </div>
@@ -2087,7 +2087,7 @@ const AdminDashboard = () => {
               { label: 'Reservas hoy', value: allBookings.length, color: '#16A34A', bg: '#F0FDF4', border: '#86EFAC' },
               { label: 'Pistas activas', value: activeCourts, color: '#0EA5E9', bg: '#F0F9FF', border: '#BAE6FD' },
               { label: '🔒 Bloqueadas', value: bloqueadasDia.length, color: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
-              { label: '🏋️ Entrenos', value: entrenosDia.length, color: '#9D174D', bg: '#FBCFE8', border: '#EC4899' },
+              { label: '🏋️ Entrenos', value: entrenosDia.length, color: '#9333EA', bg: '#FAF5FF', border: '#D8B4FE' },
             ].map(s => (
               <div key={s.label} style={{ backgroundColor: s.bg, border: `1px solid ${s.border}`, borderRadius: '0.875rem', padding: '0.875rem 0.625rem', textAlign: 'center' }}>
                 <p style={{ margin: 0, fontSize: '1.75rem', fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</p>
@@ -2104,7 +2104,7 @@ const AdminDashboard = () => {
                 </span>
               ))}
               {entrenosDia.map((s, i) => (
-                <span key={`e-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9D174D', background: '#FBCFE8', border: '1px solid #EC4899', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
+                <span key={`e-${i}`} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9333EA', background: '#FAF5FF', border: '1px solid #D8B4FE', borderRadius: 999, padding: '0.28rem 0.65rem', whiteSpace: 'nowrap' }}>
                   🏋️ {s.courtName} · {s.time}
                 </span>
               ))}
@@ -2420,7 +2420,7 @@ const AdminDashboard = () => {
                                               setEntrenoStart(ini);
                                               setEntrenoEnd(fin);
                                             }}
-                                            style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #F9A8D4', backgroundColor: '#FDF2F8', color: '#BE185D', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                                            style={{ padding: '0.5rem 0.875rem', borderRadius: '0.5rem', border: '1.5px solid #D8B4FE', backgroundColor: '#FAF5FF', color: '#7E22CE', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.8rem', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                                             🏋️ Entreno
                                           </button>
                                           {/* Editar hora: mueve este hueco a otra hora SOLO este día */}
