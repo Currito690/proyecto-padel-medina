@@ -11,7 +11,7 @@ import { toast, confirmDialog } from '../utils/notify';
 import { serverToday, serverNow } from '../utils/serverTime';
 import { DEFAULT_SCHEDULE_CONFIG, normalizeScheduleConfig, buildScheduleTimes, rebuildAvailableTimes, parseSlot, toMin } from '../utils/schedule';
 import {
-  reservaPagada, resumenPagoReserva, resumenPagoEntreno, agregarClasesMonitor,
+  reservaPagada, resumenPagoReserva, resumenPagoEntreno, entrenoPagado, agregarClasesMonitor,
   pagoCaducado, estadoFilaReserva, filasPorClase, filasConPagos, metodoTrasPulsar,
   pagosConAlumno, faltaFuncionRpc, crearGuardiaRefresco, conGuardia, REFRESCO_AUTO_MS,
 } from '../utils/entrenos';
@@ -27,9 +27,11 @@ const CLIENTE_ELIMINADO_ID = '00000000-0000-4000-8000-000000000001';
 
 // Colores de la rejilla del HORARIO (solo panel del admin; la agenda del
 // monitor tiene los suyos):
-//   libre = VERDE · entreno = LILA (esté cobrado o no) · reserva pagada = AZUL ·
-//   reserva sin pagar = ROJO (también el pago en curso, que lleva ⏳) ·
-//   bloqueada = GRIS. Fondo suave + borde + texto oscuro del mismo tono.
+//   libre = VERDE · entreno sin cobrar del todo = LILA · PAGADO = AZUL (igual
+//   para una reserva pagada que para un entreno con todos los alumnos pagados;
+//   el club quiere el mismo color) · reserva sin pagar = ROJO (también el pago
+//   en curso, que lleva ⏳) · bloqueada = GRIS. Fondo suave + borde + texto
+//   oscuro del mismo tono.
 const slotColors = {
   available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' }, // libre (verde)
   entreno:   { borderColor: '#D8B4FE', backgroundColor: '#FAF5FF', color: '#9333EA' }, // entreno (LILA, el de siempre: el club lo pidió de vuelta tras probar el rosa)
@@ -42,7 +44,11 @@ const slotColors = {
 // Color de una celda del Horario según lo que hay en ella.
 const colorCelda = (slot) => {
   if (slot?.status === 'booked') return reservaPagada(slot) ? slotColors.pagado : slotColors.impago;
-  if (slot?.status === 'blocked') return slot.tipo === 'entreno' ? slotColors.entreno : slotColors.blocked;
+  if (slot?.status === 'blocked') {
+    if (slot.tipo !== 'entreno') return slotColors.blocked;
+    // Entreno con todos los alumnos pagados: el mismo azul que una pista pagada.
+    return entrenoPagado(slot.entrenoInfo) ? slotColors.pagado : slotColors.entreno;
+  }
   return slotColors.available;
 };
 
@@ -2227,8 +2233,8 @@ const AdminDashboard = () => {
                   <div style={{ display: 'flex', gap: '0.45rem 0.9rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '1.25rem' }}>
                     {[
                       { label: 'Libre', s: slotColors.available },
-                      { label: 'Entreno', s: slotColors.entreno },
-                      { label: '✓ Reserva pagada', s: slotColors.pagado },
+                      { label: 'Entreno pendiente de cobro', s: slotColors.entreno },
+                      { label: '✓ Pagado (pista o entreno)', s: slotColors.pagado },
                       { label: '✕ Reserva sin pagar', s: slotColors.impago },
                       { label: 'Bloqueada', s: slotColors.blocked },
                     ].map(({ label, s }) => (
