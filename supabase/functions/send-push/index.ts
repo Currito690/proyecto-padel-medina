@@ -6,6 +6,9 @@
 //   administradores (nueva reserva, cancelación, cobros de redsys-notify...).
 // - audiencia 'jugadores': todos los dispositivos (anuncio de un evento). Solo
 //   la puede pedir el backend (service role) o un usuario administrador.
+// - ios: true (solo con la service role): incluir también los iPhone. Para
+//   avisos OPERATIVOS de la cuenta (p. ej. "añade tu teléfono"), nunca para
+//   anuncios o promociones (Apple, norma 4.5.4).
 // Llega a la web/Android (web push) y al iPhone (APNs), y borra los
 // dispositivos caducados (ver _shared/envioPush.ts).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -98,7 +101,9 @@ Deno.serve(async (req: Request) => {
             // Los anuncios (eventos) NO van al iPhone: allí el jugador solo aceptó
             // "recordatorios de su pista", y Apple (norma 4.5.4) prohíbe avisos
             // promocionales sin un consentimiento aparte y una forma de darse de baja.
-            subs = (data || []).filter((f: FilaPush) => !esFilaIos(f));
+            // Solo el backend puede incluirlos, para avisos operativos de la cuenta.
+            const incluirIos = auth.serviceRole && body.ios === true;
+            subs = (data || []).filter((f: FilaPush) => incluirIos || !esFilaIos(f));
         } else {
             const admins = await idsAdministradores(supabase);
             subs = [];

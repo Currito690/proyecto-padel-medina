@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { sanitizeInput } from '../utils/sanitize';
 import { VERSION_TEXTOS_LEGALES } from '../utils/legal';
+import { normalizarTelefono, MSG_TELEFONO_INVALIDO } from '../utils/telefono';
 import { Capacitor } from '@capacitor/core';
 import { googleNativoListo } from '../utils/googleNativo';
 
@@ -61,6 +62,12 @@ const Login = () => {
       setError(MSG_ACEPTAR);
       return;
     }
+    // El teléfono es obligatorio y tiene que valer (el club lo quiere de todos).
+    const telefono = isLogin ? null : normalizarTelefono(phone);
+    if (!isLogin && !telefono) {
+      setError(MSG_TELEFONO_INVALIDO);
+      return;
+    }
     setLoading(true);
     setError(null);
     setSuccessMsg('');
@@ -74,7 +81,7 @@ const Login = () => {
           sanitizeInput(email),
           password,
           sanitizeInput(name),
-          sanitizeInput(phone),
+          telefono,
           { aceptadoAt: new Date().toISOString(), version: VERSION_TEXTOS_LEGALES }
         );
         setSuccessMsg(`¡Cuenta creada! Hemos enviado un código de verificación a ${email}. Introdúcelo para activar tu cuenta.`);
@@ -576,7 +583,7 @@ const Login = () => {
                 {!isLogin && (
                   <div className="login-input-group">
                     <label className="login-label">Teléfono</label>
-                    <input className="login-input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="+34 600 000 000" />
+                    <input className="login-input" type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="6XX XXX XXX" />
                   </div>
                 )}
 

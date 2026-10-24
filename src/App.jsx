@@ -8,6 +8,7 @@ import { metaDeRuta, aplicarMeta } from './utils/metaRuta';
 import MainLayout from './components/layout/MainLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import InstallPrompt from './components/InstallPrompt';
+import TelefonoObligatorio from './components/TelefonoObligatorio';
 
 const BookingDashboard = lazy(() => import('./pages/BookingDashboard'));
 const MyBookings = lazy(() => import('./pages/MyBookings'));
@@ -322,6 +323,9 @@ function App() {
           )}
         </Routes>
       </Suspense>
+      {/* Jugador sin teléfono válido en su ficha: ventana que tapa toda la app
+          hasta que lo guarde (el club lo quiere obligatorio). */}
+      {user?.role === 'client' && <TelefonoObligatorio />}
       </ErrorBoundary>
       {/* El banner "Instala Padel Medina" es para la web en el móvil. En la app
           de iPhone/Android ya está instalada: allí el WebView parece Safari y el

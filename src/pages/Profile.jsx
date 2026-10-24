@@ -3,8 +3,10 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
-import { toast, confirmDialog } from '../utils/notify';
+import { toast } from '../utils/notify';
+import { eliminarMiCuenta, MSG_ERROR_ELIMINAR } from '../utils/cuenta';
 import { FilaRecordatorios } from '../components/AvisoRecordatorios';
+import { FilaTelefono } from '../components/TelefonoObligatorio';
 
 const ChevronRight = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -50,39 +52,14 @@ const Profile = () => {
     setEventsLoading(false);
   };
 
-  // Eliminar la cuenta (obligatorio para publicar la app en Google Play).
-  // El servidor reasigna las reservas a una cuenta anónima para no destruir la
-  // contabilidad del club, cancela las futuras y borra los datos personales.
+  // Eliminar la cuenta (obligatorio para publicar la app en Google Play). La
+  // lógica está en utils/cuenta.js, compartida con la ventana del teléfono.
   const eliminarCuenta = async () => {
-    const ok = await confirmDialog(
-      'Se borrarán tu cuenta y tus datos personales: nombre, correo, teléfono y tus avisos. ' +
-      'Tus reservas futuras se cancelarán y no se devuelve el importe de las que ya hayas pagado. ' +
-      'El club conserva el histórico de cobros sin tus datos, porque la ley le obliga a guardar la contabilidad. ' +
-      'Esto no se puede deshacer.',
-      { title: '¿Eliminar tu cuenta?', okText: 'Sí, eliminar mi cuenta', cancelText: 'No, volver', danger: true }
-    );
-    if (!ok) return;
-
-    const seguro = await confirmDialog(
-      'Última confirmación: al aceptar, tu cuenta se elimina de inmediato y se cierra la sesión.',
-      { title: 'Confirmar para siempre', okText: 'Eliminar', cancelText: 'Cancelar', danger: true }
-    );
-    if (!seguro) return;
-
-    setBorrando(true);
     try {
-      const { error } = await supabase.rpc('eliminar_mi_cuenta');
-      if (error) throw error;
-      toast('Tu cuenta ha sido eliminada.', 'success');
-      // La sesión ya no existe en el servidor: cerramos sesión sin depender de
-      // que la llamada funcione y volvemos al login con una carga limpia.
-      setTimeout(async () => {
-        try { await logout(); } catch { /* el token ya no vale, da igual */ }
-        window.location.replace('/login');
-      }, 1200);
+      await eliminarMiCuenta(logout, { alEmpezar: () => setBorrando(true) });
     } catch (e) {
       setBorrando(false);
-      toast(e?.message || 'No se ha podido eliminar la cuenta. Inténtalo de nuevo o escribe al club.', 'error');
+      toast(e?.message || MSG_ERROR_ELIMINAR, 'error');
     }
   };
 
@@ -235,6 +212,9 @@ const Profile = () => {
           </div>
         </div>
       )}
+
+      {/* Teléfono de contacto (obligatorio para los jugadores) */}
+      {!isAdmin && <FilaTelefono />}
 
       {/* Recordatorios de partidos (avisos al móvil) */}
       <FilaRecordatorios />
