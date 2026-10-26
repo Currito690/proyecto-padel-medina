@@ -211,14 +211,17 @@ export function elegirHueco(agenda, parrilla, { desdeAbs = 0, dur, descanso = 0,
 // el que más `candidatas` (las parejas que pueden acabar jugándolo) tienen
 // libre; a igualdad, el más temprano. Así la hora provisional tiene muchas
 // más papeletas de valer cuando se sepa quién juega.
+//   hastaAbs: no desde este minuto en adelante (p. ej. dejar el último día
+//   para las finales); si con el tope no hay hueco, quien llama lo repite sin él.
 export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
-  const { desdeAbs = 0, dur, descanso = 0, pistas, parejas = [], courtStartHours = {} } = opts;
+  const { desdeAbs = 0, hastaAbs = Infinity, dur, descanso = 0, pistas, parejas = [], courtStartHours = {} } = opts;
   const reales = parejas.filter(esParejaReal);
   const bloq = reales.map((p) => horasBloqueadas(p));
   const cand = candidatas.filter(esParejaReal).map((c) => [c, horasBloqueadas(c)]);
   let mejor = null;
   for (const s of parrilla.slots) {
     if (s.abs < desdeAbs) continue;
+    if (s.abs >= hastaAbs) break;
     const fin = s.ini + dur;
     if (fin > parrilla.finDia) continue;
     if (bloq.some((b) => !disponibleEn(b, s.dia, s.ini, fin))) continue;

@@ -130,7 +130,7 @@ for (const [clave, lista] of Object.entries(porPista)) {
     for (const [bi, bf, et] of bloqueos[clave] || []) {
       if (ini < bf && bi < fin) {
         const arranca = ini >= bi && ini < bf;
-        (arranca ? error : aviso)(`${p.nombre}: ${p.h.dia} ${p.h.hora} Pista ${p.h.pista} ${arranca ? 'empieza dentro de' : 'se solapa por la cola con'} un ${et}`);
+        (arranca || !p.m.timeManual ? error : aviso)(`${p.nombre}: ${p.h.dia} ${p.h.hora} Pista ${p.h.pista} ${arranca ? 'empieza dentro de' : 'se solapa por la cola con'} un ${et}`);
       }
     }
   }
@@ -181,7 +181,7 @@ for (const p of programados) {
       if (!bloq.has(slot)) continue;
       conflictosDisp++;
       const arranque = h * 60 === ini;
-      (arranque ? error : aviso)(`${p.nombre}: ${j.name} NO puede ${arranque ? 'a esa hora' : 'durante el partido'} (${slot})`);
+      (arranque || !p.m.timeManual ? error : aviso)(`${p.nombre}: ${j.name} NO puede ${arranque ? 'a esa hora' : 'durante el partido'} (${slot})`);
       break;
     }
   }

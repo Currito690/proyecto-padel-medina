@@ -1,5 +1,6 @@
-// Genera los datos del SUPER TORNEO de prueba (5 categorías, un fin de semana
-// con partidos de SNP en las pistas y parejas con muy pocas horas libres).
+// Genera los datos del SUPER TORNEO de prueba: 64 parejas en 5 categorías,
+// 10 días (dos fines de semana y las tardes entre semana), partidos de SNP en
+// las pistas y parejas con muy pocas horas libres.
 //
 //   node sim-torneo/generar-datos.mjs
 //
@@ -7,13 +8,14 @@
 // sim-torneo/datos.json (lo usan el verificador y la carga en producción).
 //
 // Diseño (todo a 90 minutos por partido, horas enteras de inicio):
-//   · Viernes 06/11 16:00-22:00, sábado y domingo 09:00-22:00, 2 pistas.
-//   · SNP: sábado 10:30-13:30 en las DOS pistas y domingo 17:30-19:00 en la
-//     Pista 2 → se meten como bloqueos del Horario del club (blocked_slots).
-//   · Cada pareja solo puede en DOS ventanas: una corta el viernes o el sábado
-//     (según su categoría) y una parte del domingo. El resto está bloqueado.
-//   · Dos parejas juegan en dos categorías a la vez ("Masculino C y Masculino D",
-//     "Femenino B y Femenino C").
+//   · Viernes 06/11 16:00-22:00, del sábado 07/11 al domingo 15/11 09:00-22:00
+//     (entre semana la gente solo puede por la tarde), 2 pistas.
+//   · SNP: sábado 07/11 10:30-13:30 en las DOS pistas y domingo 08/11
+//     17:30-19:00 en la Pista 2 → bloqueos del Horario del club (blocked_slots).
+//   · Cada pareja puede en unas pocas ventanas: una "de su categoría" el primer
+//     fin de semana, una tarde entre semana, y trozos del segundo fin de semana.
+//     El resto (unas 80 de 110 horas) está bloqueado.
+//   · Dos parejas juegan en dos categorías a la vez.
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -28,9 +30,11 @@ export const PISTAS = {
   'Pista 3': '87781eea-6d8f-45da-897c-9164953d3aaf',
 };
 
-const VIE = '06/11', SAB = '07/11', DOM = '08/11';
-const FECHA = { [VIE]: '2026-11-06', [SAB]: '2026-11-07', [DOM]: '2026-11-08' };
-const HORAS_DIA = { [VIE]: rango(16, 22), [SAB]: rango(9, 22), [DOM]: rango(9, 22) };
+// Días del torneo (dd/mm → fecha ISO)
+const DIAS = ['06/11', '07/11', '08/11', '09/11', '10/11', '11/11', '12/11', '13/11', '14/11', '15/11'];
+const FECHA = Object.fromEntries(DIAS.map((d) => [d, `2026-${d.split('/')[1]}-${d.split('/')[0]}`]));
+const [VIE1, SAB1, DOM1, LUN, MAR, MIE, JUE, VIE2, SAB2, DOM2] = DIAS;
+const HORAS_DIA = Object.fromEntries(DIAS.map((d) => [d, d === VIE1 ? rango(16, 22) : rango(9, 22)]));
 
 function rango(a, b) { return Array.from({ length: b - a }, (_, i) => a + i); }
 const hh = (h) => `${String(h).padStart(2, '0')}:00`;
@@ -43,7 +47,6 @@ const elige = (lista) => lista[Math.floor(azar() * lista.length)];
 // Regla de horas BLOQUEADAS de un día, con la forma que guarda la app.
 function regla(dia, horasBloqueadas) {
   const horas = [...horasBloqueadas].sort((a, b) => a - b);
-  // "dd/mm: HH:00-HH:00, …" como hoursToRanges de la app
   const tramos = [];
   for (const h of horas) {
     const t = tramos[tramos.length - 1];
@@ -57,10 +60,10 @@ function regla(dia, horasBloqueadas) {
   };
 }
 
-// Disponible SOLO en las ventanas dadas {dia: [horaInicio, horaFin)}: todo lo demás, bloqueado.
+// Disponible SOLO en las ventanas dadas {dia: [[horaInicio, horaFin), …]}: todo lo demás, bloqueado.
 function soloDisponible(ventanas) {
   const reglas = [];
-  for (const dia of [VIE, SAB, DOM]) {
+  for (const dia of DIAS) {
     const libres = new Set();
     for (const [a, b] of ventanas[dia] || []) rango(a, b).forEach((h) => libres.add(h));
     const bloqueadas = HORAS_DIA[dia].filter((h) => !libres.has(h));
@@ -69,62 +72,75 @@ function soloDisponible(ventanas) {
   return reglas;
 }
 
-// Trozos del domingo para que la disponibilidad sea escasa también ese día.
-const DOM_MANANA = [[9, 14]], DOM_TARDE = [[14, 22]], DOM_CENTRO = [[11, 18]], DOM_TODO = [[9, 22]];
-const DOMINGOS = [DOM_MANANA, DOM_TARDE, DOM_CENTRO, DOM_TODO];
+// Une varias listas de ventanas por día.
+const unir = (...vs) => {
+  const out = {};
+  for (const v of vs) for (const [d, w] of Object.entries(v)) out[d] = [...(out[d] || []), ...w];
+  return out;
+};
 
-let n = 0;
-function pareja(nombre, categoria, ventanas, extra = {}) {
-  n += 1;
-  return {
-    id: `sim-${String(n).padStart(2, '0')}`,
-    name: nombre,
-    category: categoria,
-    prefRules: soloDisponible(ventanas),
-    get prefNames() { return this.prefRules.map((r) => r.label); },
-    ...extra,
-  };
+// Ventana "de su categoría" el primer fin de semana (así cualquier cruce de
+// primera ronda tiene horas en común) y una tarde entre semana.
+const NUCLEO = {
+  'Masculino B': { [VIE1]: [[16, 22]], [MAR]: [[17, 22]] },
+  'Masculino C': { [SAB1]: [[14, 22]], [MIE]: [[17, 22]] },
+  'Masculino D': { [DOM1]: [[9, 22]], [JUE]: [[17, 22]] },
+  'Femenino B': { [VIE1]: [[19, 22]], [LUN]: [[17, 22]] },
+  'Femenino C': { [SAB1]: [[14, 22]], [VIE2]: [[17, 22]] },
+};
+// Una tarde extra entre semana (al azar) y trozos del segundo fin de semana
+// (todas las parejas coinciden en algún momento del domingo 15 para la final).
+const TARDES = [LUN, MAR, MIE, JUE, VIE2];
+const TARDE = [[[17, 22]], [[18, 22]], [[16, 20]], [[19, 22]]];
+const SABADO2 = [[[9, 14]], [[14, 22]], [[9, 22]], [[11, 18]]];
+const DOMINGO2 = [[[9, 16]], [[12, 20]], [[9, 22]], [[11, 17]]];
+const ventanasDe = (cat) => unir(
+  NUCLEO[cat],
+  { [elige(TARDES)]: elige(TARDE) },
+  { [SAB2]: elige(SABADO2), [DOM2]: elige(DOMINGO2) },
+);
+
+// Nombres (64 parejas distintas).
+const NOMBRES_M = ['Carlos', 'Pedro', 'Miguel', 'Javier', 'Antonio', 'Luis', 'Fernando', 'Diego', 'Raúl', 'Sergio', 'David', 'Nicolás', 'Jorge', 'Manuel', 'Víctor', 'Daniel', 'Pablo', 'Andrés', 'Roberto', 'Álvaro', 'Marcos', 'Iván', 'Adrián', 'Óscar', 'Rubén', 'Gonzalo', 'Enrique', 'Felipe', 'Tomás', 'Rodrigo', 'Samuel', 'Cristian', 'Joaquín', 'Mario', 'Hugo', 'Bruno', 'Álex', 'Aitor', 'Juan', 'José', 'Francisco', 'Rafael', 'Ismael', 'Jaime', 'Guillermo', 'Alberto', 'Lucas', 'Martín', 'Gabriel', 'Emilio'];
+const NOMBRES_F = ['María', 'Laura', 'Ana', 'Sofía', 'Carmen', 'Lucía', 'Elena', 'Paula', 'Marta', 'Isabel', 'Rocío', 'Nuria', 'Claudia', 'Alba', 'Sara', 'Irene', 'Cristina', 'Patricia', 'Beatriz', 'Raquel', 'Silvia', 'Noelia', 'Lorena', 'Mónica', 'Teresa', 'Inés', 'Julia', 'Eva', 'Natalia', 'Andrea', 'Carla', 'Celia', 'Miriam', 'Verónica', 'Alicia'];
+const APELLIDOS = ['Ruiz', 'Gómez', 'Soto', 'Prieto', 'Benítez', 'Moreno', 'Castro', 'Ortega', 'Jiménez', 'Vidal', 'Romero', 'Pardo', 'Medina', 'Cabrera', 'Herrera', 'Reyes', 'Serrano', 'Molina', 'Núñez', 'Ibáñez', 'Peña', 'Lozano', 'Vega', 'Navarro', 'Gil', 'Marín', 'Fuentes', 'Carmona', 'Delgado', 'Campos', 'Aguilar', 'León', 'Flores', 'Santana', 'Blanco', 'Garrido', 'Domínguez', 'Lara', 'López', 'Sánchez', 'Martín', 'Torres', 'Ramos', 'Ortiz', 'Crespo', 'Iglesias', 'Rubio', 'Calvo', 'Pascual', 'Esteban', 'Ferrer', 'Mora', 'Guerrero', 'Salas', 'Cano', 'Pérez', 'Vargas', 'Rey', 'Barroso', 'Macías', 'Cordero', 'Galán'];
+const usados = new Set();
+function nombrePareja(femenino) {
+  for (;;) {
+    const pila = femenino ? NOMBRES_F : NOMBRES_M;
+    const n = `${elige(pila)} ${elige(APELLIDOS)} y ${elige(pila)} ${elige(APELLIDOS)}`;
+    const [a, b] = n.split(' y ');
+    if (a === b || usados.has(n)) continue;
+    usados.add(n);
+    return n;
+  }
 }
 
-const participantes = [];
-// Masculino B: solo el viernes por la tarde (4 cuartos) y un trozo del domingo.
-[
-  ['Carlos Ruiz y Pedro Gómez', { seedByCat: { 'Masculino B': 1 } }],
-  ['Miguel Ángel Soto y Javier Prieto', { seedByCat: { 'Masculino B': 2 } }],
-  ['Antonio Benítez y Luis Moreno'], ['Fernando Castro y Diego Ortega'],
-  ['Raúl Jiménez y Sergio Vidal'], ['David Romero y Nicolás Pardo'],
-  ['Jorge Medina y Manuel Cabrera'], ['Víctor Herrera y Daniel Reyes'],
-].forEach(([nombre, extra], i) => participantes.push(pareja(nombre, 'Masculino B', { [VIE]: [[16, 22]], [DOM]: DOMINGOS[i % 4] }, extra)));
+let n = 0;
+function pareja(categoria, ventanas, extra = {}) {
+  n += 1;
+  const prefRules = soloDisponible(ventanas);
+  return { id: `sim-${String(n).padStart(2, '0')}`, name: nombrePareja(categoria.startsWith('Femenino')), category: categoria, prefRules, prefNames: prefRules.map((r) => r.label), ...extra };
+}
 
-// Masculino C: sábado 14-18 (previa) y domingo a trozos.
-['Pablo Serrano y Andrés Molina', 'Roberto Núñez y Álvaro Ibáñez', 'Marcos Peña y Iván Lozano', 'Adrián Vega y Óscar Navarro', 'Rubén Gil y Gonzalo Marín']
-  .forEach((nombre, i) => participantes.push(pareja(nombre, 'Masculino C', { [SAB]: [[14, 18]], [DOM]: DOMINGOS[(i + 1) % 4] })));
-// Pareja en DOS categorías (C y D): sábado 14-22 y domingo entero.
-participantes.push(pareja('Enrique Fuentes y Felipe Carmona', 'Masculino C y Masculino D', { [SAB]: [[14, 22]], [DOM]: DOM_TODO }));
-
-// Masculino D: sábado 16-20 (previa) y domingo a trozos.
-['Tomás Delgado y Rodrigo Campos', 'Samuel Aguilar y Cristian León', 'Joaquín Flores y Mario Santana', 'Hugo Blanco y Bruno Garrido', 'Álex Domínguez y Aitor Lara']
-  .forEach((nombre, i) => participantes.push(pareja(nombre, 'Masculino D', { [SAB]: [[16, 20]], [DOM]: DOMINGOS[(i + 2) % 4] })));
-
-// Femenino B: viernes 19-22 (semifinales) y sábado por la tarde-noche, poco domingo.
-['María López y Laura Sánchez', 'Ana Martín y Sofía Torres', 'Carmen Ramos y Lucía Ortiz']
-  .forEach((nombre, i) => participantes.push(pareja(nombre, 'Femenino B', { [VIE]: [[19, 22]], [SAB]: [[18, 22]], [DOM]: DOMINGOS[i % 2 ? 0 : 1] })));
-// Pareja en DOS categorías (Femenino B y C).
-participantes.push(pareja('Elena Crespo y Paula Iglesias', 'Femenino B y Femenino C', { [VIE]: [[19, 22]], [SAB]: [[18, 22]], [DOM]: DOM_TODO }));
-
-// Femenino C: sábado 18-22 (semifinales) y domingo a trozos.
-['Marta Rubio y Isabel Calvo', 'Rocío Pascual y Nuria Esteban', 'Claudia Ferrer y Alba Mora']
-  .forEach((nombre, i) => participantes.push(pareja(nombre, 'Femenino C', { [SAB]: [[18, 22]], [DOM]: DOMINGOS[(i + 3) % 4] })));
-
-// Materializar prefNames (el getter no sobrevive a JSON.stringify).
-const participants = participantes.map((p) => ({ ...p, prefNames: p.prefRules.map((r) => r.label) }));
+const participants = [];
+const TAMANOS = { 'Masculino B': 16, 'Masculino C': 16, 'Masculino D': 15, 'Femenino B': 8, 'Femenino C': 7 };
+for (const [cat, cuantas] of Object.entries(TAMANOS)) {
+  for (let i = 0; i < cuantas; i++) {
+    const extra = i < 2 && cuantas >= 8 ? { seedByCat: { [cat]: i + 1 } } : {};
+    participants.push(pareja(cat, ventanasDe(cat), extra));
+  }
+}
+// Dos parejas en DOS categorías a la vez (suman las ventanas de las dos).
+participants.push(pareja('Masculino C y Masculino D', unir(ventanasDe('Masculino C'), ventanasDe('Masculino D'))));
+participants.push(pareja('Femenino B y Femenino C', unir(ventanasDe('Femenino B'), ventanasDe('Femenino C'))));
 
 const CATEGORIAS = ['Masculino B', 'Masculino C', 'Masculino D', 'Femenino B', 'Femenino C'];
 const tConfig = {
   name: 'Super Torneo Noviembre (simulación)',
   categories: CATEGORIAS.join(', '),
-  startDate: FECHA[VIE],
-  endDate: FECHA[DOM],
+  startDate: FECHA[VIE1],
+  endDate: FECHA[DOM2],
   registrationDeadline: '2026-11-04',
   registrationDeadlineTime: '23:59',
   startHour: '09:00',
@@ -142,16 +158,16 @@ const tConfig = {
 
 const config = { ...tConfig, rounds: {}, consRounds: {}, participants, phase: 'setup' };
 
-// Partidos de SNP ese fin de semana: bloqueos del Horario del club, con los
-// mismos tramos de 90 min que usa la parrilla (así el admin los ve igual).
+// Partidos de SNP: bloqueos del Horario del club, con los mismos tramos de
+// 90 min que usa la parrilla (así el admin los ve igual).
 const bloqueo = (pista, fecha, tramo) => ({
   id: `snp-${pista.replace(' ', '').toLowerCase()}-${fecha}-${tramo.slice(0, 5).replace(':', '')}`,
   court_id: PISTAS[pista], date: fecha, time_slot: tramo, created_by: ADMIN_ID, created_at: '2026-10-26T10:00:00Z', tipo: 'bloqueado', entreno_grupo: null,
 });
 const blocked_slots = [
-  bloqueo('Pista 1', FECHA[SAB], '10:30 - 12:00'), bloqueo('Pista 1', FECHA[SAB], '12:00 - 13:30'),
-  bloqueo('Pista 2', FECHA[SAB], '10:30 - 12:00'), bloqueo('Pista 2', FECHA[SAB], '12:00 - 13:30'),
-  bloqueo('Pista 2', FECHA[DOM], '17:30 - 19:00'),
+  bloqueo('Pista 1', FECHA[SAB1], '10:30 - 12:00'), bloqueo('Pista 1', FECHA[SAB1], '12:00 - 13:30'),
+  bloqueo('Pista 2', FECHA[SAB1], '10:30 - 12:00'), bloqueo('Pista 2', FECHA[SAB1], '12:00 - 13:30'),
+  bloqueo('Pista 2', FECHA[DOM1], '17:30 - 19:00'),
 ];
 
 const datos = {
@@ -167,9 +183,8 @@ writeFileSync(join(AQUI, 'datos.js'), `// Generado por generar-datos.mjs. No edi
 
 const porCat = {};
 participants.forEach((p) => p.category.split(/\s+y\s+/).forEach((c) => { porCat[c] = (porCat[c] || 0) + 1; }));
-console.log('Parejas por categoría:', porCat, '| total objetos:', participants.length);
-console.log('Horas libres por pareja:', participants.map((p) => {
-  const bloqueadas = p.prefRules.reduce((s, r) => s + r.slots.length, 0);
-  return `${p.name.split(' y ')[0]}: ${32 - bloqueadas}h`;
-}).join(' · '));
+const totalHoras = DIAS.reduce((s, d) => s + HORAS_DIA[d].length, 0);
+const libres = participants.map((p) => totalHoras - p.prefRules.reduce((s, r) => s + r.slots.length, 0));
+console.log('Parejas por categoría:', porCat, '| total parejas:', participants.length, '| partidos:', Object.values(porCat).reduce((s, k) => s + k - 1, 0));
+console.log(`Horas libres por pareja: mín ${Math.min(...libres)}, media ${(libres.reduce((a, b) => a + b, 0) / libres.length).toFixed(1)}, máx ${Math.max(...libres)} de ${totalHoras}`);
 console.log('Bloqueos SNP:', blocked_slots.map((b) => `${b.date} ${b.time_slot} (${Object.keys(PISTAS).find((k) => PISTAS[k] === b.court_id)})`).join(' | '));
