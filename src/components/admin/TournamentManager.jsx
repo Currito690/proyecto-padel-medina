@@ -9,12 +9,47 @@ import { toTitleCase, normalizeForCompare } from '../../utils/names';
 import { origenPublico } from '../../utils/origen';
 import { useServerTime, formatNowShort, isServerTimeSynced, serverNowMs } from '../../utils/serverTime';
 // Programador de partidos (parrilla y agenda en minutos de verdad).
+import CuadroArbol from '../CuadroArbol';
 import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, elegirHuecoCobertura, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, toMin as aMinutos } from '../../utils/torneoHorarios';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
   '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'
 ];
+
+// Estilos para usar el panel en el móvil sin ampliar ni reducir: los grupos
+// de botones pasan a rejilla de dos columnas, los modales ocupan la pantalla,
+// las rejillas de horas se compactan y la primera columna se queda fija.
+const ESTILOS_MOVIL = `
+  .tm-btn-group { max-width: 100%; min-width: 0; flex-shrink: 1 !important; }
+  .tm-btn-group > button { max-width: 100%; }
+  .tm-modal-box { max-width: 100%; }
+  .tm-solo-movil { display: none; }
+  .tm-dia-toggle, .tm-hora-toggle { cursor: pointer; }
+  @media (max-width: 640px) {
+    .tm-solo-escritorio { display: none !important; }
+    .tm-solo-movil { display: block; }
+    .tm-btn-group { width: 100%; display: grid !important; grid-template-columns: 1fr 1fr; gap: 0.4rem !important; }
+    .tm-btn-group > * { width: 100%; min-width: 0; }
+    .tm-btn-group button { white-space: normal !important; min-height: 44px; font-size: 0.78rem !important; padding: 0.5rem 0.6rem !important; line-height: 1.25; justify-content: center; }
+    .tm-btn-group > .tm-menu-mas { grid-column: 1 / -1; }
+    .tm-menu-mas > button { width: 100%; }
+    .tm-menu-mas-lista { position: static !important; min-width: 0 !important; width: 100%; margin-top: 0.4rem; box-shadow: none !important; }
+    .tm-section-header { flex-direction: column; align-items: stretch !important; }
+    .tm-modal-overlay { padding: 0.5rem !important; align-items: flex-start !important; }
+    .tm-modal-box { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; border-radius: 0.9rem !important; }
+    .tm-modal-box > div { padding-left: 0.85rem !important; padding-right: 0.85rem !important; }
+    .tm-grid-horas th, .tm-grid-horas td { min-width: 0 !important; padding: 0.15rem 0.2rem !important; font-size: 0.66rem !important; }
+    .tm-grid-horas th:first-child, .tm-grid-horas td:first-child { position: sticky; left: 0; z-index: 2; background-color: #F8FAFC; }
+    .tm-grid-horas th:first-child { z-index: 3; }
+    .tm-tabla-horas th, .tm-tabla-horas td { min-width: 0 !important; padding: 0.3rem 0.25rem !important; font-size: 0.7rem !important; }
+    .tm-cab-cuadro { flex-direction: column; align-items: flex-start !important; }
+    .tm-cab-cuadro > div { flex-wrap: wrap; gap: 0.5rem 0.9rem !important; }
+    .tm-cab-cat { padding: 0.8rem 1rem !important; }
+    .tm-cab-cat h2 { font-size: 1.1rem !important; }
+    .tm-caja-cuadro { padding: 0.75rem !important; }
+  }
+`;
 
 const fmtDateLabel = (d) =>
   `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -242,6 +277,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // (antes había 8 botones seguidos en la barra → ahora 3 principales + 1
   // menú con el resto). Se cierra al elegir cualquier opción o al click fuera.
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  // Móvil: el cuadro se ve una ronda cada vez (píldoras) y, si se quiere,
+  // entero en un visor con zoom. `esMovil` sigue al ancho de la pantalla.
+  const [esMovil, setEsMovil] = useState(() => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 767px)').matches);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const seguir = () => setEsMovil(mq.matches);
+    mq.addEventListener('change', seguir);
+    return () => mq.removeEventListener('change', seguir);
+  }, []);
+  const [rondaMovil, setRondaMovil] = useState({});
+  const [cuadroCompleto, setCuadroCompleto] = useState(null);
   useEffect(() => {
     if (!actionsMenuOpen) return;
     const close = () => setActionsMenuOpen(false);
@@ -3563,6 +3610,31 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
   };
 
+  // Un toque en la cabecera del día (o en la hora) marca o desmarca toda la
+  // columna (o fila). Es la forma rápida en el móvil, donde no se arrastra.
+  const toggleDiaEntero = (day) => {
+    const horas = getHoursForDay(day);
+    if (horas.length === 0) return;
+    setGridBlockedSlots(prev => {
+      const next = new Set(prev);
+      const faltan = horas.filter(h => !next.has(`${day} ${h}`));
+      if (faltan.length > 0) faltan.forEach(h => next.add(`${day} ${h}`));
+      else horas.forEach(h => next.delete(`${day} ${h}`));
+      return next;
+    });
+  };
+  const toggleHoraEntera = (hour) => {
+    const dias = activeDays.filter(d => getHoursForDay(d).includes(hour));
+    if (dias.length === 0) return;
+    setGridBlockedSlots(prev => {
+      const next = new Set(prev);
+      const faltan = dias.filter(d => !next.has(`${d} ${hour}`));
+      if (faltan.length > 0) faltan.forEach(d => next.add(`${d} ${hour}`));
+      else dias.forEach(d => next.delete(`${d} ${hour}`));
+      return next;
+    });
+  };
+
   const handleCellMouseEnter = (day, hour) => {
     if (!gridDragging) return;
     const key = `${day} ${hour}`;
@@ -3710,7 +3782,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   {Array.from({ length: seedSlots }, (_, i) => i + 1).map(seedNum => {
                     const currentId = seedMap[seedNum] || '';
                     return (
-                      <div key={seedNum} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', backgroundColor: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '0.5rem' }}>
+                      <div key={seedNum} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', backgroundColor: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '0.5rem' }}>
                         <span style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: seedNum === 1 ? '#FBBF24' : seedNum === 2 ? '#94A3B8' : '#CBD5E1', color: 'white', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', flexShrink: 0 }}>
                           {seedNum}
                         </span>
@@ -3730,7 +3802,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                               return p;
                             }));
                           }}
-                          style={{ flex: 1, padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', fontSize: '0.88rem', fontWeight: 600, color: '#0F172A', cursor: 'pointer' }}
+                          style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', fontSize: '0.88rem', fontWeight: 600, color: '#0F172A', cursor: 'pointer' }}
                         >
                           <option value="">— Sin asignar —</option>
                           {catParts.map(p => {
@@ -4267,9 +4339,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         {editingRegAvail && (
           <div
             onMouseUp={() => setGridDragging(false)}
-            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+            className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
           >
-            <div style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '680px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', marginTop: '1rem' }}>
+            <div className="tm-modal-box" style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '680px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', marginTop: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.1rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>✎ Disponibilidad de la pareja</h3>
@@ -4282,7 +4354,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <div style={{ padding: '1.25rem 1.5rem' }}>
                 <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.65rem', padding: '0.7rem 0.9rem', marginBottom: '0.9rem' }}>
                   <p style={{ margin: 0, fontSize: '0.78rem', color: '#92400E', lineHeight: 1.5 }}>
-                    Marca las horas en las que la pareja <strong>NO puede jugar</strong>. Puedes arrastrar para marcar/desmarcar varias. Los cambios se guardan en la inscripción.
+                    Marca las horas en las que la pareja <strong>NO puede jugar</strong>. Puedes arrastrar para marcar varias, y tocar un día o una hora para marcarlos enteros. Los cambios se guardan en la inscripción.
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.6rem', fontSize: '0.74rem', fontWeight: 600, color: '#64748B' }}>
@@ -4296,12 +4368,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   </div>
                 </div>
                 <div style={{ overflowX: 'auto', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
-                  <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
+                  <table className="tm-grid-horas" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
                     <thead>
                       <tr style={{ backgroundColor: '#F8FAFC' }}>
                         <th style={{ padding: '0.45rem 0.6rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '52px' }}>Hora</th>
                         {activeDays.map(day => (
-                          <th key={day} style={{ padding: '0.45rem 0.45rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '76px' }}>
+                          <th key={day} className="tm-dia-toggle" title="Marcar o desmarcar el día entero" onClick={() => toggleDiaEntero(day)} style={{ padding: '0.45rem 0.45rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '76px' }}>
                             {day}
                           </th>
                         ))}
@@ -4310,7 +4382,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     <tbody>
                       {allGridHours.map((hour, hIdx) => (
                         <tr key={hour} style={{ backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFA' }}>
-                          <td style={{ padding: '0.18rem 0.6rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
+                          <td className="tm-hora-toggle" title="Marcar o desmarcar esta hora todos los días" onClick={() => toggleHoraEntera(hour)} style={{ padding: '0.18rem 0.6rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
                           {activeDays.map(day => {
                             const isValid = getHoursForDay(day).includes(hour);
                             const isBlocked = gridBlockedSlots.has(`${day} ${hour}`);
@@ -4551,7 +4623,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           [cat]: parseInt(e.target.value)
                         }
                       })}
-                      style={{ flex: 1, padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', fontSize: '0.875rem', cursor: 'pointer', backgroundColor: 'white' }}
+                      style={{ flex: 1, minWidth: 0, padding: '0.6rem 0.75rem', borderRadius: '0.625rem', border: '1.5px solid #CBD5E1', fontSize: '0.875rem', cursor: 'pointer', backgroundColor: 'white' }}
                     >
                       <option value={30}>30 min</option>
                       <option value={45}>45 min</option>
@@ -4811,10 +4883,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const p2 = nameParts.slice(1).join(' y ').trim() || 'Jugador 2';
         return (
           <div
-            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+            className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
             onMouseUp={() => setGridDragging(false)}
           >
-            <div style={{ backgroundColor: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '680px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', marginTop: '1rem', marginBottom: '1rem' }}>
+            <div className="tm-modal-box" style={{ backgroundColor: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '680px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', marginTop: '1rem', marginBottom: '1rem' }}>
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
                 <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>Editar pareja</h3>
@@ -4823,7 +4895,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
               <div style={{ padding: '1.25rem 1.5rem' }}>
                 {/* Players */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
                   {[{ label: 'Jugador 1', name: p1 }, { label: 'Jugador 2', name: p2 }].map(({ label, name }) => (
                     <div key={label} style={{ border: '1.5px solid #E2E8F0', borderRadius: '0.875rem', padding: '1rem' }}>
                       <p style={{ margin: '0 0 0.35rem', fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</p>
@@ -4840,7 +4912,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 {/* Warning */}
                 <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1.25rem' }}>
                   <p style={{ margin: 0, fontSize: '0.8rem', color: '#92400E', lineHeight: 1.5 }}>
-                    A continuación se muestran los horarios disponibles del torneo. Selecciona las celdas en las que la pareja <strong>NO PUEDE JUGAR</strong>. Puedes arrastrar para seleccionar múltiples horas.
+                    A continuación se muestran los horarios disponibles del torneo. Selecciona las celdas en las que la pareja <strong>NO PUEDE JUGAR</strong>. Puedes arrastrar para seleccionar varias horas, y tocar un día o una hora para marcarlos enteros.
                   </p>
                 </div>
 
@@ -4858,12 +4930,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
                 {/* Calendar grid */}
                 <div style={{ overflowX: 'auto', borderRadius: '0.75rem', border: '1px solid #E2E8F0' }}>
-                  <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
+                  <table className="tm-grid-horas" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
                     <thead>
                       <tr style={{ backgroundColor: '#F8FAFC' }}>
                         <th style={{ padding: '0.5rem 0.75rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '52px' }}>Hora</th>
                         {activeDays.map(day => (
-                          <th key={day} style={{ padding: '0.5rem 0.5rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '80px' }}>
+                          <th key={day} className="tm-dia-toggle" title="Marcar o desmarcar el día entero" onClick={() => toggleDiaEntero(day)} style={{ padding: '0.5rem 0.5rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '80px' }}>
                             {day}
                           </th>
                         ))}
@@ -4872,7 +4944,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     <tbody>
                       {allGridHours.map((hour, hIdx) => (
                         <tr key={hour} style={{ backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFA' }}>
-                          <td style={{ padding: '0.2rem 0.75rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
+                          <td className="tm-hora-toggle" title="Marcar o desmarcar esta hora todos los días" onClick={() => toggleHoraEntera(hour)} style={{ padding: '0.2rem 0.75rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
                           {activeDays.map(day => {
                             const isValid = getHoursForDay(day).includes(hour);
                             const isBlocked = gridBlockedSlots.has(`${day} ${hour}`);
@@ -5094,8 +5166,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </button>
             </div>
           </form>
-          <p style={{ margin: '-0.5rem 0 1rem', fontSize: '0.78rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <p style={{ margin: '-0.5rem 0 1rem', fontSize: '0.78rem', color: '#64748B', lineHeight: 1.5 }}>
+            <svg style={{ verticalAlign: '-2px', marginRight: '0.3rem' }} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             Tras añadir una pareja, usa el botón <strong style={{ color: '#0F172A' }}>✎ Editar</strong> para configurar sus horas bloqueadas.
           </p>
 
@@ -5274,7 +5346,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
                     return (
                       <>
-                        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
+                        <table className="tm-grid-horas" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
                           <thead>
                             <tr style={{ backgroundColor: '#F8FAFC' }}>
                               <th style={{ padding: '0.5rem 0.6rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '48px', position: 'sticky', left: 0, backgroundColor: '#F8FAFC', zIndex: 1 }}>Hora</th>
@@ -5412,8 +5484,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       {/* Modal de elección de formato — debe renderizarse aquí (fase setup)
           porque es donde están los botones que lo abren. */}
       {showFormatPicker && (
-        <div onClick={() => setShowFormatPicker(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+        <div onClick={() => setShowFormatPicker(false)} className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()} className="tm-modal-box" style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
             <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🎲 Formato por categoría</h3>
@@ -5614,9 +5686,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         return (
           <div
             onClick={() => setEditingTime(null)}
-            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+            className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
           >
-            <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '860px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div onClick={e => e.stopPropagation()} className="tm-modal-box" style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '860px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
               <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>Elegir horario · {isCons ? 'Consolación' : 'Principal'} · {cat}</h3>
@@ -5693,7 +5765,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </div>
 
                 <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                  <table className="tm-tabla-horas" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                     <thead>
                       <tr style={{ backgroundColor: '#F8FAFC' }}>
                         <th style={{ textAlign: 'right', padding: '0.5rem 0.75rem', fontWeight: 700, color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0' }}>Hora</th>
@@ -5840,8 +5912,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         });
 
         return (
-          <div onClick={() => setShowMatchesList(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '900px', marginTop: '2rem', marginBottom: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+          <div onClick={() => setShowMatchesList(false)} className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+            <div onClick={e => e.stopPropagation()} className="tm-modal-box" style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '900px', marginTop: '2rem', marginBottom: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
               <div style={{ padding: '1.1rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>📅 Partidos por día · {tConfig.name}</h3>
@@ -5883,7 +5955,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       <h4 style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.85rem', fontSize: '0.85rem', fontWeight: 800, color: 'white', background: 'linear-gradient(135deg,#1E293B,#334155)', borderRadius: '0.5rem', display: 'inline-block' }}>
                         📅 {d} · {byDay[d].length} partido{byDay[d].length === 1 ? '' : 's'}
                       </h4>
-                      <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.6rem' }}>
+                      <div className="tm-solo-movil">
+                        {byDay[d].map((it, i) => {
+                          const isP1Win = it.winner && it.winner === it.p1;
+                          const isP2Win = it.winner && it.winner === it.p2;
+                          const roundName = it.isPrelim ? 'Previa' : (it.roundName || `R${it.round + 1}`);
+                          return (
+                            <div key={i} style={{ border: '1px solid #E2E8F0', borderRadius: '0.6rem', padding: '0.55rem 0.7rem', marginBottom: '0.45rem', backgroundColor: it.winner ? '#F0FDF4' : 'white' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
+                                <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>{it.hour} · {getCourtName(it.court)}</span>
+                                <span style={{ fontSize: '0.68rem', color: it.isCons ? '#D97706' : '#64748B', fontWeight: 700, textAlign: 'right' }}>{it.cat} · {it.isCons ? '🥈 ' : ''}{roundName}</span>
+                              </div>
+                              <div style={{ fontSize: '0.82rem', fontWeight: isP1Win ? 800 : 600, color: isP1Win ? '#15803D' : '#0F172A' }}>{it.p1} {isP1Win && '🏆'}</div>
+                              <div style={{ fontSize: '0.82rem', fontWeight: isP2Win ? 800 : 600, color: isP2Win ? '#15803D' : '#0F172A' }}>{it.p2} {isP2Win && '🏆'}</div>
+                              {it.score && <div style={{ marginTop: '0.25rem', fontSize: '0.76rem', color: '#15803D', fontWeight: 700 }}>{it.score}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="tm-solo-escritorio" style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.6rem' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                           <thead>
                             <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
@@ -5926,9 +6016,32 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         );
       })()}
 
+      {/* ── Visor del cuadro entero (móvil): árbol con zoom, solo lectura ── */}
+      {cuadroCompleto && (() => {
+        const datos = cuadroCompleto.isCons ? (consRounds[cuadroCompleto.cat] || []) : (rounds[cuadroCompleto.cat] || []);
+        return (
+          <div onClick={() => setCuadroCompleto(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.75)', zIndex: 1100, display: 'flex', alignItems: 'stretch', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: 'white', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ padding: '0.7rem 0.9rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: cuadroCompleto.isCons ? '#D97706' : '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {cuadroCompleto.isCons ? '🥈 Consolación' : '🥇 Principal'} · {cuadroCompleto.cat}
+                  </h3>
+                  <p style={{ margin: '0.1rem 0 0', fontSize: '0.72rem', color: '#64748B' }}>Pellizca o usa los botones para ampliar. Para editar, vuelve al cuadro por rondas.</p>
+                </div>
+                <button onClick={() => setCuadroCompleto(null)} style={{ background: '#F1F5F9', border: 'none', cursor: 'pointer', color: '#0F172A', fontSize: '0.9rem', lineHeight: 1, padding: '0.6rem 0.8rem', borderRadius: '0.6rem', fontWeight: 800, flexShrink: 0 }}>✕ Cerrar</button>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, padding: '0.5rem', display: 'flex', flexDirection: 'column' }}>
+                <CuadroArbol rondas={datos} esCons={cuadroCompleto.isCons} courtNames={tConfig.courtNames} rellenar />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showCourtsEditor && (
-        <div onClick={() => setShowCourtsEditor(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+        <div onClick={() => setShowCourtsEditor(false)} className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()} className="tm-modal-box" style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '560px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
             <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>🏟️ Pistas del torneo</h3>
@@ -6133,7 +6246,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               {/* Acciones SECUNDARIAS / destructivas — en un dropdown para no
                   saturar la cabecera. El stopPropagation evita que el listener
                   global de "click fuera" cierre el menú al pulsar el botón. */}
-              <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+              <div className="tm-menu-mas" style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
                 <button
                   onClick={() => setActionsMenuOpen(v => !v)}
                   style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #E2E8F0', backgroundColor: actionsMenuOpen ? '#F1F5F9' : 'white', color: '#475569', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
@@ -6143,6 +6256,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </button>
                 {actionsMenuOpen && (
                   <div
+                    className="tm-menu-mas-lista"
                     style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '240px', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.75rem', boxShadow: '0 10px 30px rgba(15,23,42,0.12)', padding: '0.45rem', zIndex: 100, display: 'flex', flexDirection: 'column', gap: '0.2rem' }}
                   >
                     <button
@@ -6498,7 +6612,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
          return (
             <div key={cat} style={{ marginBottom: '4rem' }}>
-               <div style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', color: 'white', borderRadius: '1rem', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+               <div className="tm-cab-cat" style={{ padding: '1rem 1.5rem', backgroundColor: '#1E293B', color: 'white', borderRadius: '1rem', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'white' }}>Categoría: {cat}</h2>
                   {!isExporting && catCons.length === 0 && (
                     <button onClick={() => generateConsolation(cat)} style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#F59E0B', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>
@@ -6515,12 +6629,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 const swapKey = `${bracket.isCons}-${cat}`;
                 const isSwapping = !!swapMode[swapKey];
                 return (
-                  <div id={bracket.id} key={bracket.title} style={{ padding: '1.5rem', backgroundColor: '#FAFAF9', borderRadius: '1rem', marginBottom: '3rem', borderTop: bracket.isCons ? '2px dashed #E2E8F0' : 'none', marginTop: bracket.isCons ? '2rem' : '0' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                  <div id={bracket.id} key={bracket.title} className="tm-caja-cuadro" style={{ padding: '1.5rem', backgroundColor: '#FAFAF9', borderRadius: '1rem', marginBottom: '3rem', borderTop: bracket.isCons ? '2px dashed #E2E8F0' : 'none', marginTop: bracket.isCons ? '2rem' : '0' }}>
+                    <div className="tm-cab-cuadro" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                       <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: bracket.isCons ? '#D97706' : '#0F172A' }}>
                         {isExporting === bracket.id ? `${tConfig.name} - ${bracket.title}` : bracket.title}
                       </h3>
-                      <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
                         {!isExporting && (
                           <>
                             <button
@@ -6562,7 +6676,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 funcionando con el índice real. */}
             {(() => {
               const indexedRounds = bracket.data.map((round, originalIdx) => ({ round, originalIdx }));
-              const renderedRounds = bracket.isCons ? [...indexedRounds].reverse() : indexedRounds;
+              const todasLasRondas = bracket.isCons ? [...indexedRounds].reverse() : indexedRounds;
+              // Móvil: una sola ronda a la vez. Por defecto, la primera con
+              // partidos listos para jugar; si no queda ninguno, la final.
+              const esReal = (p) => !!p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
+              const pendientesDe = (r) => (r || []).filter(m => m && !m.winner && esReal(m.p1) && esReal(m.p2)).length;
+              const claveRonda = `${bracket.isCons}-${cat}`;
+              const primeraPendiente = bracket.data.findIndex(r => pendientesDe(r) > 0);
+              const rondaPorDefecto = primeraPendiente >= 0 ? primeraPendiente : bracket.data.length - 1;
+              const rondaElegida = esMovil && !isExporting ? (rondaMovil[claveRonda] ?? rondaPorDefecto) : null;
+              const renderedRounds = rondaElegida === null ? todasLasRondas : todasLasRondas.filter(r => r.originalIdx === rondaElegida);
+              const verTrofeo = rondaElegida === null || rondaElegida === bracket.data.length - 1;
               // Altura mínima dinámica: cada match real de R0 necesita ~190px
               // (header + 2 parejas + botón resultado + botón pasar). Sin esto
               // la columna se queda corta y las cards se cortan a mitad —
@@ -6575,11 +6699,41 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               }).length;
               const dynMinHeight = Math.max(350, r0RealCount * 195);
               return (
-            <div style={{ display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: `${dynMinHeight}px`, alignItems: 'stretch' }}>
+            <>
+            {rondaElegida !== null && (
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.8rem' }}>
+                {todasLasRondas.map(({ round: r, originalIdx }) => {
+                  const pend = pendientesDe(r);
+                  const activa = originalIdx === rondaElegida;
+                  const colorActivo = bracket.isCons ? '#D97706' : '#16A34A';
+                  return (
+                    <button
+                      key={originalIdx}
+                      type="button"
+                      onClick={() => setRondaMovil(prev => ({ ...prev, [claveRonda]: originalIdx }))}
+                      style={{ flexShrink: 0, padding: '0.45rem 0.8rem', borderRadius: '999px', border: `1.5px solid ${activa ? colorActivo : '#CBD5E1'}`, background: activa ? colorActivo : 'white', color: activa ? 'white' : '#475569', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      {getRoundName(originalIdx, bracket.data)}
+                      {pend > 0 && (
+                        <span title="Partidos por jugar" style={{ fontSize: '0.68rem', fontWeight: 800, padding: '0 0.4rem', borderRadius: '999px', background: activa ? 'rgba(255,255,255,0.3)' : '#FEF3C7', color: activa ? 'white' : '#B45309' }}>{pend}</span>
+                      )}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setCuadroCompleto({ cat, isCons: bracket.isCons })}
+                  style={{ flexShrink: 0, padding: '0.45rem 0.8rem', borderRadius: '999px', border: '1.5px solid #1B3A6E', background: '#1B3A6E', color: 'white', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  🔍 Cuadro entero
+                </button>
+              </div>
+            )}
+            <div style={rondaElegida !== null ? { display: 'flex', flexDirection: 'column', gap: '1rem', paddingBottom: '0.5rem' } : { display: 'flex', overflowX: 'auto', gap: '2.5rem', paddingBottom: '2rem', minHeight: `${dynMinHeight}px`, alignItems: 'stretch' }}>
               {/* En consolación, trofeo a la IZQUIERDA (al lado de la final
                   que ya está a la izquierda por el reverse). En principal
                   va a la derecha (al final del recorrido visual). */}
-              {bracket.isCons && (
+              {bracket.isCons && verTrofeo && (
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
                   <h4 style={{ textAlign: 'center', color: '#D97706', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
                     🏆 Campeón Consolación
@@ -6592,7 +6746,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </div>
               )}
               {renderedRounds.map(({ round: roundMatches, originalIdx: rIdx }) => (
-                <div key={`round-${rIdx}`} style={{ display: 'flex', flexDirection: 'column', minWidth: '220px' }}>
+                <div key={`round-${rIdx}`} style={rondaElegida !== null ? { display: 'flex', flexDirection: 'column', minWidth: 0, width: '100%' } : { display: 'flex', flexDirection: 'column', minWidth: '220px' }}>
                   <h4 style={{ textAlign: 'center', color: bracket.isCons ? '#D97706' : '#16A34A', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 0.5rem 0', padding: '0.35rem 0.75rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#F0FDF4', borderRadius: '0.5rem', border: `1px solid ${bracket.isCons ? '#FDE68A' : '#DCFCE7'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
                     {getRoundName(rIdx, bracket.data)}
                   </h4>
@@ -6765,7 +6919,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               ))}
 
               {/* En principal, trofeo a la DERECHA (al final del recorrido). */}
-              {!bracket.isCons && (
+              {!bracket.isCons && verTrofeo && (
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '180px' }}>
                   <h4 style={{ textAlign: 'center', color: '#F59E0B', fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
                     Campeón Absoluto
@@ -6778,6 +6932,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 </div>
               )}
             </div>
+            </>
               );
             })()}
           </div>
@@ -6822,8 +6977,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           .reduce((acc, r) => acc + validEmailsOf(r).length, 0);
         const isUpdate = recipientPickerKind === 'updated';
         return (
-          <div onClick={() => !recipientPickerSending && setRecipientPickerOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '620px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 4rem)' }}>
+          <div onClick={() => !recipientPickerSending && setRecipientPickerOpen(false)} className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+            <div onClick={e => e.stopPropagation()} className="tm-modal-box" style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '620px', marginTop: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 4rem)' }}>
               <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
                 <div style={{ minWidth: 0 }}>
                   <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>
@@ -7131,11 +7286,16 @@ const TournamentManager = () => {
   if (activeId) {
      // El nombre se guarda antes de recargar la lista: si no, el SELECT
      // podía adelantarse al UPDATE y mostrar el nombre viejo.
-     return <TournamentEditor tournamentKey={activeId} onBack={async (newName) => {
-         if (newName) await updateTournamentName(activeId, newName);
-         setActiveIdPersist(null);
-         fetchTournaments();
-     }} />;
+     return (
+       <>
+         <style>{ESTILOS_MOVIL}</style>
+         <TournamentEditor tournamentKey={activeId} onBack={async (newName) => {
+           if (newName) await updateTournamentName(activeId, newName);
+           setActiveIdPersist(null);
+           fetchTournaments();
+         }} />
+       </>
+     );
   }
 
   return (
