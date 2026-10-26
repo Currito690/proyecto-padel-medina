@@ -7,8 +7,8 @@ android {
         applicationId "com.padelmedina.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "1.1.2"
+        versionCode 11
+        versionName "1.1.3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -35,8 +35,12 @@ android {
             if (System.getenv("PM_KEYSTORE")) {
                 signingConfig signingConfigs.release
             }
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // R8: reduce y ofusca el código y quita recursos sin usar. Google Play
+            // lo exige desde febrero de 2027 (aviso «optimización de código DEX»).
+            // Las reglas que conservan Capacitor y los plugins están en proguard-rules.pro.
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

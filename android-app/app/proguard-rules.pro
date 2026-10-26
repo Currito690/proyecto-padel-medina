@@ -1,21 +1,27 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# Padel Medina · reglas de R8 (reducción y ofuscación activadas desde la 1.1.3).
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Capacitor localiza los plugins y sus métodos por reflexión y expone el puente
+# al WebView con @JavascriptInterface: todo eso tiene que conservar el nombre.
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, JavascriptInterface
+-keep class com.getcapacitor.** { *; }
+-keep class com.padelmedina.app.** { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Plugins nativos: los oficiales de Capacitor, los de Capgo (inicio de sesión
+# con Google) y los de la comunidad (Apple).
+-keep class com.capacitorjs.plugins.** { *; }
+-keep class ee.forgr.** { *; }
+-keep class com.getcapacitor.community.** { *; }
+-keep class io.ionic.** { *; }
+-dontwarn com.getcapacitor.**
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Firebase y Google traen sus propias reglas; esto solo calla avisos de clases
+# opcionales que no se usan.
+-dontwarn com.google.android.gms.**
+-dontwarn com.google.firebase.**
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Trazas de error legibles en Play Console aunque el código vaya ofuscado.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
