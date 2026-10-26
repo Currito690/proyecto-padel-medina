@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { descargarBlob, descargarTexto } from '../../utils/descargas';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
@@ -424,12 +425,7 @@ export default function TimeClockManager() {
     const totales = Object.entries(totalesPorUser).map(([uid, t]) =>
       `TOTAL ${names[uid] || ''};;;;${horasDec(t.ms)};${horasDec(t.msClub)};${horasDec(t.msClase)}`);
     const csv = '﻿' + [header, ...filas, '', ...totales].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `control-horario-${nombreMes}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000); // Safari/iPhone y Firefox: revocar de inmediato puede cancelar la descarga
+    descargarTexto(csv, `control-horario-${nombreMes}.csv`);
   };
 
   // ── Exportar PDF ──
@@ -510,7 +506,7 @@ export default function TimeClockManager() {
     if (hayManuales) doc.text('* Jornada añadida a mano por administración (sin firma ni GPS).', 14, 280);
     doc.text('Fichajes con hora de servidor, ubicación GPS y firma del trabajador (ver panel online).', 14, 285);
     doc.text(`Generado el ${new Date().toLocaleDateString('es-ES')} · Padel Medina`, 14, 290);
-    doc.save(`control-horario-${MESES[month].toLowerCase()}-${year}.pdf`);
+    descargarBlob(doc.output('blob'), `control-horario-${MESES[month].toLowerCase()}-${year}.pdf`);
   };
 
   const esteMes = year === now.getFullYear() && month === now.getMonth();

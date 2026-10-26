@@ -692,6 +692,9 @@ export default function TournamentRegistration() {
       <main className="treg-main" style={{ maxWidth: '640px', margin: '0 auto', backgroundColor: 'white', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
 
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
+          {tournament.config.posterUrl && (
+            <img src={tournament.config.posterUrl} alt={`Cartel: ${tournament.name}`} style={{ display: 'block', width: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: '1rem', marginBottom: '1.25rem', backgroundColor: '#F8FAFC' }} />
+          )}
           <div style={{ display: 'inline-block', padding: '0.5rem 1rem', backgroundColor: deadlinePassed ? '#FEE2E2' : '#EFF6FF', color: deadlinePassed ? '#DC2626' : '#2563EB', fontWeight: 800, borderRadius: '2rem', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
             {deadlinePassed ? 'Inscripción Cerrada' : 'Inscripción Abierta'}
           </div>

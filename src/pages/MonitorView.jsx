@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { descargarBlob } from '../utils/descargas';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -1104,7 +1105,7 @@ export default function MonitorView() {
       doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
       doc.text('Horas según fichajes firmados, con hora de servidor y ubicación GPS.', 14, 285);
       doc.text(`Generado el ${new Date().toLocaleDateString('es-ES')} · Padel Medina`, 14, 290);
-      doc.save(`mis-horas-${MESES_M[mm].toLowerCase()}-${yy}.pdf`);
+      descargarBlob(doc.output('blob'), `mis-horas-${MESES_M[mm].toLowerCase()}-${yy}.pdf`);
       toast('Informe descargado 📄', 'success');
     } catch (e) {
       console.error(e);

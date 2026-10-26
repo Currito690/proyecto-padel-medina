@@ -10,6 +10,8 @@ import { origenPublico } from '../../utils/origen';
 import { useServerTime, formatNowShort, isServerTimeSynced, serverNowMs } from '../../utils/serverTime';
 // Programador de partidos (parrilla y agenda en minutos de verdad).
 import CuadroArbol from '../CuadroArbol';
+import { descargarBlob, descargarDataUrl, descargarTexto } from '../../utils/descargas';
+import { prepararCartel } from '../../utils/cartel';
 import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, elegirHuecoCobertura, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, toMin as aMinutos } from '../../utils/torneoHorarios';
 
 const HOURS = [
@@ -289,6 +291,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   }, []);
   const [rondaMovil, setRondaMovil] = useState({});
   const [cuadroCompleto, setCuadroCompleto] = useState(null);
+  // Subida del cartel del torneo (ver subirCartel).
+  const [subiendoCartel, setSubiendoCartel] = useState(false);
   useEffect(() => {
     if (!actionsMenuOpen) return;
     const close = () => setActionsMenuOpen(false);
@@ -712,6 +716,50 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     }
   };
 
+  // ── Cartel del torneo ─────────────────────────────────────────────────────
+  // Se guarda en el bucket público "event-posters" (carpeta torneos/) en dos
+  // tamaños: el cartel para la página de inscripción y una imagen de 1200×630
+  // para la vista previa del enlace en WhatsApp y compañía. Las URLs viajan en
+  // la config del torneo (posterUrl, posterOgUrl) con el autosave de siempre.
+  const subirCartel = async (archivo) => {
+    if (!archivo) return;
+    setSubiendoCartel(true);
+    try {
+      const { cartel, vistaPrevia } = await prepararCartel(archivo);
+      const subir = async (ruta, blob) => {
+        const { error } = await supabase.storage.from('event-posters').upload(ruta, blob, { upsert: true, contentType: 'image/jpeg', cacheControl: '3600' });
+        if (error) throw error;
+        const { data } = supabase.storage.from('event-posters').getPublicUrl(ruta);
+        // La ruta se reutiliza (upsert): sin el parámetro de versión, el
+        // navegador y WhatsApp seguirían enseñando el cartel viejo.
+        return `${data.publicUrl}?v=${Date.now()}`;
+      };
+      const posterUrl = await subir(`torneos/${tournamentKey}.jpg`, cartel);
+      const posterOgUrl = await subir(`torneos/${tournamentKey}-og.jpg`, vistaPrevia);
+      setTConfig(prev => ({ ...prev, posterUrl, posterOgUrl }));
+      toast('Cartel guardado: saldrá en la página de inscripción y al compartir el enlace.', 'success');
+    } catch (e) {
+      console.error('No se pudo subir el cartel:', e);
+      toast('No se pudo subir el cartel: ' + (e.message || e), 'error');
+    } finally {
+      setSubiendoCartel(false);
+    }
+  };
+
+  const quitarCartel = async () => {
+    const ok = await confirmDialog('¿Quitar el cartel del torneo?', { danger: true, okText: 'Quitar cartel' });
+    if (!ok) return;
+    setTConfig(prev => {
+      const next = { ...prev };
+      delete next.posterUrl;
+      delete next.posterOgUrl;
+      return next;
+    });
+    supabase.storage.from('event-posters')
+      .remove([`torneos/${tournamentKey}.jpg`, `torneos/${tournamentKey}-og.jpg`])
+      .then(({ error }) => { if (error) console.warn('No se pudo borrar el cartel del almacén:', error.message); });
+  };
+
   // ── Inscripciones: cargar, marcar como pagado, exportar CSV ───────────────
   const loadRegistrations = async () => {
     if (!publishedId) return;
@@ -875,15 +923,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     ]);
     const csv = [headers, ...onlineRows, ...manualRows].map(row => row.map(csvEscape).join(',')).join('\n');
     // BOM para que Excel detecte UTF-8 con tildes
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `inscripciones_${(tConfig.name || 'torneo').replace(/[^a-z0-9]+/gi, '_')}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    descargarTexto('\uFEFF' + csv, `inscripciones_${(tConfig.name || 'torneo').replace(/[^a-z0-9]+/gi, '_')}.csv`, 'text/csv;charset=utf-8;');
   };
 
   const syncRegistrations = async () => {
@@ -3272,7 +3312,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         }
 
         const safeTitle = title.replace(/[^a-zA-Z0-9]/g, '_');
-        pdf.save(`Cuadro_${tConfig.name.replace(/\s+/g, '_')}_${safeTitle}.pdf`);
+        await descargarBlob(pdf.output('blob'), `Cuadro_${tConfig.name.replace(/\s+/g, '_')}_${safeTitle}.pdf`);
       } catch (err) {
         console.error("Error generating PDF:", err);
         toast("Hubo un error al generar el PDF.", 'error');
@@ -3488,7 +3528,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
       const safeName = (tConfig.name || 'Torneo').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
       const safeDay = filterDay === 'all' ? 'todos' : filterDay.replace(/\//g, '-');
-      pdf.save(`Partidos_${safeName}_${safeDay}.pdf`);
+      await descargarBlob(pdf.output('blob'), `Partidos_${safeName}_${safeDay}.pdf`);
     } catch (err) {
       console.error('Error generando PDF de partidos:', err);
       toast('Error al generar el PDF.', 'error');
@@ -4516,6 +4556,31 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <input type="text" placeholder="Ej: Masculino, Femenino, Mixto" value={tConfig.categories} onChange={e => setTConfig({...tConfig, categories: e.target.value})} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1.5px solid #CBD5E1', fontSize: '0.95rem' }} />
             </div>
 
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Cartel del torneo</label>
+              <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', color: '#64748B', lineHeight: 1.5 }}>
+                Sale en la página de inscripción y es la imagen que aparece al compartir el enlace por WhatsApp.
+              </p>
+              <div style={{ display: 'flex', gap: '0.9rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                {tConfig.posterUrl ? (
+                  <img src={tConfig.posterUrl} alt="Cartel del torneo" style={{ width: '96px', height: '128px', objectFit: 'cover', objectPosition: 'top', borderRadius: '0.6rem', border: '1px solid #E2E8F0', backgroundColor: '#F8FAFC' }} />
+                ) : (
+                  <div style={{ width: '96px', height: '128px', borderRadius: '0.6rem', border: '1.5px dashed #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', fontSize: '1.6rem' }}>🖼️</div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', padding: '0.6rem 1rem', borderRadius: '0.6rem', border: '1.5px solid #BFDBFE', backgroundColor: '#EFF6FF', color: '#1D4ED8', fontWeight: 700, fontSize: '0.82rem', cursor: subiendoCartel ? 'wait' : 'pointer', opacity: subiendoCartel ? 0.7 : 1 }}>
+                    {subiendoCartel ? '⏳ Subiendo…' : (tConfig.posterUrl ? '🔁 Cambiar cartel' : '📤 Subir cartel')}
+                    <input type="file" accept="image/*" disabled={subiendoCartel} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; subirCartel(f); }} style={{ display: 'none' }} />
+                  </label>
+                  {tConfig.posterUrl && !subiendoCartel && (
+                    <button type="button" onClick={quitarCartel} style={{ padding: '0.5rem 0.9rem', borderRadius: '0.6rem', border: '1.5px solid #FECACA', backgroundColor: '#FEF2F2', color: '#B91C1C', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
+                      🗑️ Quitar cartel
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div className="tm-date-row">
               <div>
                 <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Fecha de Inicio</label>
@@ -5062,14 +5127,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '0.04em' }}>📱 Código QR para inscribirse</p>
                 <img src={qrDataUrl} alt="QR de inscripción al torneo" style={{ width: '180px', height: '180px', display: 'block' }} />
                 <button
-                  onClick={() => {
-                    const a = document.createElement('a');
-                    a.href = qrDataUrl;
-                    a.download = `qr_inscripcion_${(tConfig.name || 'torneo').replace(/[^a-z0-9]+/gi, '_')}.png`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                  }}
+                  onClick={() => descargarDataUrl(qrDataUrl, `qr_inscripcion_${(tConfig.name || 'torneo').replace(/[^a-z0-9]+/gi, '_')}.png`)}
                   style={{ padding: '0.4rem 0.8rem', borderRadius: '0.5rem', border: '1.5px solid #BAE6FD', backgroundColor: '#EFF6FF', color: '#0369A1', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
                 >
                   ⬇ Descargar QR

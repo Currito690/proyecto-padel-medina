@@ -111,6 +111,14 @@ export const supabase = {
   channel: () => canal,
   removeChannel: async () => 'ok',
   functions: { invoke: async () => ({ data: { ok: true }, error: null }) },
+  // Almacén de archivos de mentira: no guarda nada y devuelve una imagen de prueba.
+  storage: {
+    from: () => ({
+      upload: async () => ({ data: { path: 'x' }, error: null }),
+      remove: async () => ({ data: [], error: null }),
+      getPublicUrl: () => ({ data: { publicUrl: `${window.location.origin}/cartel-prueba.jpg` } }),
+    }),
+  },
   auth: {
     getSession: async () => ({ data: { session: null }, error: null }),
     getUser: async () => ({ data: { user: null }, error: null }),

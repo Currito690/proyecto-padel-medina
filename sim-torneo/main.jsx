@@ -11,8 +11,11 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import '../src/index.css';
 import TournamentManager from '../src/components/admin/TournamentManager';
 import TournamentBracket from '../src/pages/TournamentBracket';
+import { prepararCartel } from '../src/utils/cartel';
+import TournamentRegistration from '../src/pages/TournamentRegistration';
 
 const vista = new URLSearchParams(window.location.search).get('vista');
+window.__sim.prepararCartel = prepararCartel; // para probar el cartel desde fuera
 const raiz = createRoot(document.getElementById('root'));
 
 if (vista === 'cuadro') {
@@ -30,6 +33,19 @@ if (vista === 'cuadro') {
       </MemoryRouter>
     );
   });
+} else if (vista === 'inscripcion') {
+  // Página PÚBLICA de inscripción con el torneo abierto y un cartel de prueba.
+  const t = window.__SIM_DATOS.tournaments[0];
+  t.status = 'open';
+  t.config = { ...t.config, posterUrl: '/cartel-prueba.jpg' };
+  raiz.render(
+    <MemoryRouter initialEntries={[`/torneos/${t.id}`]}>
+      <Routes>
+        <Route path="/torneos/:id" element={<TournamentRegistration />} />
+        <Route path="/" element={<div style={{ padding: 24 }}>(inicio)</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
 } else {
   raiz.render(
     <div className="dashboard-container" style={{ maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>

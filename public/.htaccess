@@ -15,6 +15,12 @@
   # Redirección 301 de www al dominio sin www (antes del fallback de la SPA)
   RewriteCond %{HTTP_HOST} ^www\.padelmedina\.com$ [NC]
   RewriteRule ^ https://padelmedina.com%{REQUEST_URI} [R=301,L]
+  # Vista previa del enlace de un torneo (WhatsApp, Facebook, Telegram, X…).
+  # Los rastreadores no ejecutan JavaScript: a ellos les responde la función
+  # og-torneo de Supabase (título, fechas, categorías y cartel del torneo).
+  # Las personas siguen entrando en la SPA.
+  RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|Facebot|WhatsApp|Twitterbot|TelegramBot|LinkedInBot|Slackbot|Discordbot|Pinterest|SkypeUriPreview|redditbot|Embedly|Iframely|Mastodon|Bluesky|Snapchat) [NC]
+  RewriteRule ^torneos/([0-9a-fA-F-]{36})(/cuadro)?/?$ http://127.0.0.1:8000/functions/v1/og-torneo?id=$1&ruta=$2 [P,L,QSD]
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]

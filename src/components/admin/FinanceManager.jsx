@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { descargarTexto } from '../../utils/descargas';
 import { supabase } from '../../services/supabase';
 import { toast, confirmDialog } from '../../utils/notify';
 
@@ -328,14 +329,7 @@ export default function FinanceManager() {
       bookingAmount(b).toFixed(2).replace('.', ','),
     ].map(csvCell).join(';'));
     const csv = [header.map(csvCell).join(';'), ...rows].join('\n');
-    const a = document.createElement('a');
-    const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.href = url;
-    a.download = `finanzas_${fromDate}_${toDate}.csv`;
-    a.click();
-    // Revocar m\u00E1s tarde: en Safari/iPhone y Firefox revocar de inmediato puede
-    // cancelar la descarga.
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    descargarTexto('\uFEFF' + csv, `finanzas_${fromDate}_${toDate}.csv`);
   };
 
   const SortIcon = ({ field }) => {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { descargarBlob, descargarTexto } from '../../utils/descargas';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../../services/supabase';
 
@@ -156,15 +157,7 @@ export default function EntrenosManager() {
       `TOTAL;;${clasesDetalle.length};${totalPendientes};${eur(totalIngresos)} EUR;tarjeta ${pagosResumen.tarjeta} · bizum ${pagosResumen.bizum} · en mano ${pagosResumen.mano} · sin marcar ${pagosResumen.sin}`,
     ];
     const csv = '﻿' + lineas.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    a.href = url;
-    a.download = `entrenos-${nombreMes}.csv`;
-    a.click();
-    // Revocar más tarde: en Safari/iPhone y Firefox revocar de inmediato puede
-    // cancelar la descarga.
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    descargarTexto(csv, `entrenos-${nombreMes}.csv`);
   };
 
   // ── Exportar PDF ──
@@ -251,7 +244,7 @@ export default function EntrenosManager() {
     doc.setFont(undefined, 'normal'); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
     doc.text('Solo suman las clases confirmadas por el monitor y que existen como entreno en el horario.', 14, 285);
     doc.text(`Generado el ${new Date().toLocaleDateString('es-ES')} · Padel Medina`, 14, 290);
-    doc.save(`entrenos-${MESES[month].toLowerCase()}-${year}.pdf`);
+    descargarBlob(doc.output('blob'), `entrenos-${MESES[month].toLowerCase()}-${year}.pdf`);
   };
 
   const esteMes = year === now.getFullYear() && month === now.getMonth();
