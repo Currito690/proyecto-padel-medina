@@ -10,6 +10,9 @@ const fmt = (dateStr) => {
   return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
+// Último error al subir un cartel, para enseñarlo en el aviso.
+let ultimoErrorCartel = '';
+
 export default function EventsManager() {
   const { user } = useAuth();
   const fileRef = useRef(null);
@@ -152,7 +155,11 @@ export default function EventsManager() {
     const { error } = await supabase.storage
       .from('event-posters')
       .upload(path, posterFile, { upsert: true, contentType: posterFile.type });
-    if (error) { console.error('Poster upload error:', error); return null; }
+    if (error) {
+      console.error('Poster upload error:', error);
+      ultimoErrorCartel = error.message || String(error);
+      return null;
+    }
     const { data: { publicUrl } } = supabase.storage.from('event-posters').getPublicUrl(path);
     // Parámetro de versión: la ruta del cartel se reutiliza (upsert), así que
     // sin esto el navegador sigue mostrando la imagen vieja desde la caché.
@@ -186,7 +193,7 @@ export default function EventsManager() {
           posterUrl = up;
           await supabase.from('events').update({ poster_url: posterUrl }).eq('id', editingEvent.id);
         } else {
-          toast('El evento se guardó pero el cartel no se pudo subir.', 'error');
+          toast(`El evento se guardó pero el cartel no se pudo subir: ${ultimoErrorCartel}`, 'error');
         }
       }
       setEvents(prev => prev.map(ev => ev.id === editingEvent.id ? { ...data, poster_url: posterUrl } : ev));
@@ -200,7 +207,7 @@ export default function EventsManager() {
         if (posterUrl) {
           await supabase.from('events').update({ poster_url: posterUrl }).eq('id', data.id);
         } else {
-          toast('El evento se guardó pero el cartel no se pudo subir.', 'error');
+          toast(`El evento se guardó pero el cartel no se pudo subir: ${ultimoErrorCartel}`, 'error');
         }
       }
       setEvents(prev => [{ ...data, poster_url: posterUrl }, ...prev]);
