@@ -143,6 +143,13 @@ export default function TournamentRegistration() {
   const [gridBlockedSlots, setGridBlockedSlots] = useState(new Set());
   const [gridDragging, setGridDragging] = useState(false);
   const [gridDragAction, setGridDragAction] = useState(null);
+  // DISPONIBILIDAD OBLIGATORIA (27/10/2026): la pareja tiene que decir si puede
+  // jugar a cualquier hora o marcar las horas en las que NO puede. Antes se
+  // podía inscribir sin tocar la rejilla y el club no sabía si era «a cualquier
+  // hora» o «no me he fijado». null = sin elegir; 'all' = a cualquier hora;
+  // 'some' = hay horas que no (y entonces hay que marcar al menos una).
+  const [availChoice, setAvailChoice] = useState(null);
+  const availSectionRef = useRef(null);
   // Lock síncrono anti doble-click: si el user pulsa "Inscribirse" dos veces
   // rápido, el primero pone esto en true y el segundo se rechaza al instante,
   // sin esperar al re-render que desactiva el botón vía `loading`.
@@ -380,6 +387,21 @@ export default function TournamentRegistration() {
       toast('Indica la talla de camiseta de cada jugador.');
       return releaseLock();
     }
+    // La disponibilidad es obligatoria: o «a cualquier hora» o la rejilla con
+    // al menos una hora marcada. Si no, el programador trabaja a ciegas.
+    const irADisponibilidad = () => {
+      try { availSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* sin scroll */ }
+    };
+    if (!availChoice) {
+      toast('Indica vuestra disponibilidad: «Podemos jugar a cualquier hora» o marcad las horas en las que NO podéis.', 'error');
+      irADisponibilidad();
+      return releaseLock();
+    }
+    if (availChoice === 'some' && gridBlockedSlots.size === 0) {
+      toast('Marcad en la rejilla al menos una hora en la que NO podéis jugar, o elegid «Podemos jugar a cualquier hora».', 'error');
+      irADisponibilidad();
+      return releaseLock();
+    }
     // Normalización a Title Case para evitar variantes "JUAN" / "juan" / "Juan"
     // que ensucian el cuadro y rompen la detección de duplicados.
     const p1NameNorm = toTitleCase(p1Name);
@@ -417,9 +439,9 @@ export default function TournamentRegistration() {
       console.warn('No se pudo re-comprobar el plazo antes de inscribir:', chkErr);
     }
 
-    // Convert grid to unavailable_times array
+    // Convert grid to unavailable_times array («a cualquier hora» = sin bloqueos)
     const byDay = {};
-    activeDays.forEach(day => {
+    (availChoice === 'all' ? [] : activeDays).forEach(day => {
       const blocked = getHoursForDay(day).filter(h => gridBlockedSlots.has(`${day} ${h}`));
       if (blocked.length > 0) byDay[day] = blocked;
     });
@@ -832,10 +854,45 @@ export default function TournamentRegistration() {
           </section>
 
           {/* 3 — Horarios no disponibles */}
-          <section>
+          <section ref={availSectionRef}>
             <h2 style={stepStyle}>
-              <Num>3</Num> Preferencias horarias
+              <Num>3</Num> Disponibilidad
             </h2>
+
+            {/* Obligatorio: una de las dos opciones (27/10/2026) */}
+            <p style={{ margin: '0 0 0.75rem', fontSize: '0.85rem', color: '#475569', lineHeight: 1.5 }}>
+              <strong>Obligatorio.</strong> El club organiza los partidos con esto: elegid una opción.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.6rem', marginBottom: '1rem' }}>
+              {[
+                { id: 'all', titulo: '✅ Podemos jugar a cualquier hora', detalle: 'Sin restricciones: no hace falta marcar nada.' },
+                { id: 'some', titulo: '⛔ Hay horas en las que NO podemos jugar', detalle: 'Marcad en la rejilla las horas en las que no podéis.' },
+              ].map(op => {
+                const activa = availChoice === op.id;
+                return (
+                  <button
+                    key={op.id}
+                    type="button"
+                    data-avail={op.id}
+                    aria-pressed={activa}
+                    onClick={() => { setAvailChoice(op.id); if (op.id === 'all') setGridBlockedSlots(new Set()); }}
+                    style={{ textAlign: 'left', padding: '0.8rem 1rem', borderRadius: '0.9rem', cursor: 'pointer', border: `2px solid ${activa ? '#0F172A' : '#E2E8F0'}`, backgroundColor: activa ? '#F1F5F9' : 'white', boxShadow: activa ? '0 0 0 3px rgba(15,23,42,0.08)' : 'none' }}
+                  >
+                    <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#0F172A' }}>{op.titulo}</div>
+                    <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.15rem' }}>{op.detalle}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {availChoice === 'all' && (
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#166534', backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '0.75rem', padding: '0.75rem 1rem', lineHeight: 1.5 }}>
+                Perfecto: os podrán poner a cualquier hora del torneo.
+              </p>
+            )}
+
+            {availChoice === 'some' && (
+              <>
 
             {/* Warning */}
             <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem' }}>
@@ -913,6 +970,13 @@ export default function TournamentRegistration() {
               <p style={{ margin: '0.6rem 0 0', fontSize: '0.78rem', color: '#DC2626', fontWeight: 600 }}>
                 {gridBlockedSlots.size} hora{gridBlockedSlots.size !== 1 ? 's' : ''} marcada{gridBlockedSlots.size !== 1 ? 's' : ''} como no disponible
               </p>
+            )}
+            {gridBlockedSlots.size === 0 && (
+              <p style={{ margin: '0.6rem 0 0', fontSize: '0.78rem', color: '#B45309', fontWeight: 600 }}>
+                Marcad al menos una hora. Si en realidad podéis a cualquier hora, elegid la primera opción.
+              </p>
+            )}
+              </>
             )}
           </section>
 

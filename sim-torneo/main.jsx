@@ -37,7 +37,8 @@ if (vista === 'cuadro') {
   // Página PÚBLICA de inscripción con el torneo abierto y un cartel de prueba.
   const t = window.__SIM_DATOS.tournaments[0];
   t.status = 'open';
-  t.config = { ...t.config, posterUrl: '/cartel-prueba.jpg' };
+  // Abierta de verdad: datos.js viene de una simulación con la inscripción ya cerrada.
+  t.config = { ...t.config, posterUrl: '/cartel-prueba.jpg', registrationClosed: false, bracketPublished: false };
   raiz.render(
     <MemoryRouter initialEntries={[`/torneos/${t.id}`]}>
       <Routes>
