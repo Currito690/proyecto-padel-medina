@@ -76,6 +76,36 @@ Están andamiados en el código; hay que probarlos en el dispositivo:
 
 ---
 
+## Actualizar la app (versión nueva, las dos tiendas a la vez)
+
+La versión visible (por ejemplo **1.1.4**) vive en UN sitio:
+`android-app/app/build.gradle` (`versionName`, y `versionCode` que sube de uno
+en uno). Android la lee al compilar y `npm run ios:subir` la lee también para el
+iPhone: así Google Play y App Store llevan siempre el mismo número y ninguna va
+por detrás de la otra.
+
+**En el PC (Android)**: se sube `versionCode` y `versionName`, `npm run
+android:compilar`, y el `.aab` resultante se sube en Play Console → Producción →
+Crear nueva versión.
+
+**En el Mac (iPhone)**, en la carpeta del proyecto:
+```
+git pull
+npm install            # por si hay plugins nuevos (Filesystem, Share…)
+npm run ios:subir      # build de la web, cap sync, preparar-ios, archivar y subir
+```
+Cierra Xcode (⌘Q) antes de lanzarlo. Al acabar dice «Subida hecha: versión X,
+build AAAAMMDDHHMM». Luego, en App Store Connect:
+1. En la app, pulsa **«+»** junto a «iOS» y escribe la misma versión (1.1.4).
+2. En 10-30 minutos el build aparece en la versión: elígelo.
+3. Rellena «Novedades de esta versión» y **Enviar a revisión**. Una
+   actualización suele tardar menos que la primera vez (horas o un día).
+
+Si Xcode se queja de la firma, abre `npm run ios:open` una vez, deja que
+«Automatically manage signing» arregle el perfil y vuelve a lanzar `ios:subir`.
+
+---
+
 ## Por qué Apple NO la rechaza
 - No parece "solo una web": icono y splash propios, barra de estado nativa y
   **push nativo** (por eso añadimos la capacidad en el Paso 2).

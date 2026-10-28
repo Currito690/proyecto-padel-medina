@@ -5,7 +5,11 @@
 //
 // - Firma automática con la cuenta de Apple que ya tiene Xcode (equipo 76STNXGZTF).
 // - El número de build es la fecha y hora (AAAAMMDDHHMM): cada subida lleva uno
-//   nuevo y Apple no la rechaza por repetido. La versión visible (1.0) no cambia.
+//   nuevo y Apple no la rechaza por repetido.
+// - LA VERSIÓN VISIBLE ES LA MISMA QUE EN ANDROID (28/10/2026): se lee de
+//   android-app/app/build.gradle (versionName), así las dos tiendas van a la par
+//   y la versión solo se sube en un sitio. «No puede estar una app más
+//   desactualizada que otra» (Francisco).
 // - El archivo queda en ~/Library/Developer/Xcode/Archives, así que también se ve
 //   en Xcode > Window > Organizer.
 import { execFileSync } from 'node:child_process';
@@ -26,6 +30,12 @@ if (!fs.existsSync(PROYECTO)) {
   process.exit(1);
 }
 
+const gradle = fs.readFileSync(path.join(RAIZ, 'android-app', 'app', 'build.gradle'), 'utf8');
+const version = (gradle.match(/versionName "([^"]+)"/) || [])[1];
+if (!version) {
+  console.error('subir-ios: no encuentro versionName en android-app/app/build.gradle.');
+  process.exit(1);
+}
 const ahora = new Date();
 const dos = (n) => String(n).padStart(2, '0');
 const dia = `${ahora.getFullYear()}-${dos(ahora.getMonth() + 1)}-${dos(ahora.getDate())}`;
@@ -60,7 +70,7 @@ fs.writeFileSync(opciones, `<?xml version="1.0" encoding="UTF-8"?>
 const xcodebuild = (args) => execFileSync('xcodebuild', args, { stdio: 'inherit' });
 
 try {
-  console.log(`\n▶ 1/2 Archivando la app (build ${build}). Tarda unos minutos…\n`);
+  console.log(`\n▶ 1/2 Archivando la app (versión ${version}, build ${build}). Tarda unos minutos…\n`);
   xcodebuild([
     '-project', PROYECTO,
     '-scheme', 'App',
@@ -71,6 +81,7 @@ try {
     '-quiet',
     'archive',
     `CURRENT_PROJECT_VERSION=${build}`,
+    `MARKETING_VERSION=${version}`,
     `DEVELOPMENT_TEAM=${EQUIPO}`,
   ]);
 
@@ -83,7 +94,7 @@ try {
     '-allowProvisioningUpdates',
   ]);
 
-  console.log(`\n✓ Subida hecha: versión 1.0, build ${build}.`);
+  console.log(`\n✓ Subida hecha: versión ${version}, build ${build}.`);
   console.log('  En 10-30 minutos aparece en App Store Connect > TestFlight; después se elige en la página de la versión.\n');
 } catch {
   console.error('\n✗ Algo ha fallado. Mira las líneas de "error:" de arriba (y mándale una captura a quien te ayude).');

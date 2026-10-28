@@ -192,10 +192,17 @@ con Redsys y Bizum de principio a fin, la descarga de PDF y la subida de imágen
 
 ## Mantenimiento
 
-- Los cambios de la web llegan solos a la app.
-- Solo hay que subir un paquete nuevo si cambia el icono, el nombre, los permisos
-  o el nivel de API exigido por Google. El procedimiento está en
-  [android/COMO-COMPILAR.md](android/COMO-COMPILAR.md).
+- **Versión nueva (28/10/2026)**: la versión visible es la misma en Google Play y
+  en App Store, y se escribe en un solo sitio, `android-app/app/build.gradle`
+  (`versionName`; `versionCode` sube de uno en uno). `npm run android:compilar`
+  deja el `.aab` en `C:/Users/curri/AndroidBuild/apps-para-las-tiendas/`; se sube
+  en Play Console → Producción → Crear nueva versión. El iPhone se sube desde el
+  Mac con `npm run ios:subir` (ver GUIA-IOS-APPSTORE.md, «Actualizar la app»).
+
+- **Desde la 1.1.0 (19/10/2026) la app es Capacitor y lleva la web DENTRO**: los
+  datos (reservas, torneos, precios) llegan solos, pero un cambio de pantallas o
+  de funciones necesita versión nueva en las dos tiendas. (Hasta entonces era una
+  TWA y la web llegaba sola; `android/COMO-COMPILAR.md` es de aquella época.)
 - Vigilar en Play Console los fallos y los bloqueos: Google penaliza por encima
   del 1,09 % de fallos.
 - No borrar nunca las cuentas de revisión.
