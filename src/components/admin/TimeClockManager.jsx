@@ -301,8 +301,8 @@ export default function TimeClockManager() {
         .eq('fichado_at', f.fichado_at)
         .select('id');
       if (error) {
-        if (/hora_original|editado|column|privilege/i.test(error.message || '')) {
-          toast('Falta aplicar la migración fichajes_editar_hora_admin en Supabase para corregir horas', 'error');
+        if (/hora_original|editado|column|privilege|permission denied/i.test(error.message || '')) {
+          toast('Falta el permiso de corregir horas en Supabase: aplicar la migración fichajes_editar_hora_admin (GRANT UPDATE de fichado_at a authenticated)', 'error');
         } else {
           toast('No se pudo cambiar la hora: ' + error.message, 'error');
         }
