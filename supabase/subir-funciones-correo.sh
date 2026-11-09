@@ -26,11 +26,11 @@ S=$(docker inspect -f "{{index .Config.Labels \"com.docker.compose.service\"}}" 
 docker compose up -d --force-recreate --no-deps "$S" >/dev/null 2>&1
 for i in $(seq 1 30); do [ "$(docker inspect -f "{{.State.Health.Status}}" supabase-edge-functions)" = healthy ] && break; sleep 2; done
 echo "Contenedor de funciones: $(docker inspect -f "{{.State.Health.Status}}" supabase-edge-functions)"
-KONG=$(grep "^KONG_HTTP_PORT=" .env | cut -d= -f2 | tr -d "\x27\"")
-K=$(grep "^SERVICE_ROLE_KEY=" .env | cut -d= -f2- | tr -d "\x27\"")
+KONG=$(grep "^KONG_HTTP_PORT=" .env | cut -d= -f2 | tr -d "\047\"")
+K=$(grep "^SERVICE_ROLE_KEY=" .env | cut -d= -f2- | tr -d "\047\"")
 # Con el cuerpo vacío cada función contesta 400 sin mandar nada: así se ve que el código nuevo arranca.
 for f in send-booking-email send-tournament-confirmation send-bracket-published send-registration-admin-notify; do
-  c=$(curl -sS -o /tmp/r.txt -w "%{http_code}" -X POST "http://$KONG/functions/v1/$f" -H "Authorization: Bearer $K" -H "apikey: $K" -H "Content-Type: application/json" -d "{}")
+  c=$(curl -sS --max-time 30 -o /tmp/r.txt -w "%{http_code}" -X POST "http://$KONG/functions/v1/$f" -H "Authorization: Bearer $K" -H "apikey: $K" -H "Content-Type: application/json" -d "{}")
   echo "$f -> $c $(head -c 120 /tmp/r.txt)"
 done
 rm -f /tmp/r.txt
