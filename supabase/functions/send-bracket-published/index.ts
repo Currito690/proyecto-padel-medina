@@ -2,7 +2,7 @@
 // Deploy: npx supabase functions deploy send-bracket-published
 // Notifica a todos los jugadores inscritos que el cuadro del torneo se ha
 // publicado e incluye el enlace para verlo.
-// Correo: SMTP de IONOS, con Resend de reserva (ver _shared/correo.ts).
+// Correo: SMTP del Plesk, con Resend de reserva (ver _shared/correo.ts).
 import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
 
 // Contacto que se enseña al pie del correo (las respuestas van ahí también).
@@ -174,12 +174,10 @@ Deno.serve(async (req: Request) => {
       : `🏆 Cuadro publicado — ${tournamentName}`;
     const html = bracketHtml(tournamentName, tournamentUrl, isUpdate);
 
-    // Tandas de BATCH_SIZE en paralelo con espera entre tandas: el SMTP de
-    // IONOS no quiere ráfagas (y Resend, de reserva, limita a 2 por segundo).
-    // Cada envío individual conserva la privacidad (sin "To" compartido) y
-    // los errores puntuales no paran el resto.
-    // OJO: IONOS limita los envíos por hora según la antigüedad del buzón
-    // (50/h la primera semana, 100/h la segunda, 400/h hasta el mes, luego 500/h).
+    // Tandas de BATCH_SIZE en paralelo con espera entre tandas: sin ráfagas
+    // para no parecer spam a Gmail/Hotmail (y Resend, de reserva, limita a 2
+    // por segundo). Cada envío individual conserva la privacidad (sin "To"
+    // compartido) y los errores puntuales no paran el resto.
     const BATCH_SIZE = 5;
     const BATCH_DELAY_MS = 3000; // 5 envíos cada 3 s
     const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));

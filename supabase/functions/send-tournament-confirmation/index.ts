@@ -1,6 +1,6 @@
 // supabase/functions/send-tournament-confirmation/index.ts
 // Deploy: npx supabase functions deploy send-tournament-confirmation
-// Correo: SMTP de IONOS, con Resend de reserva (ver _shared/correo.ts).
+// Correo: SMTP del Plesk, con Resend de reserva (ver _shared/correo.ts).
 import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
 
 // Contacto que se enseña al pie del correo (las respuestas van ahí también).

@@ -1,6 +1,6 @@
 // supabase/functions/send-booking-email/index.ts
 // Deploy: npx supabase functions deploy send-booking-email
-// Correo: SMTP de IONOS, con Resend de reserva (ver _shared/correo.ts).
+// Correo: SMTP del Plesk, con Resend de reserva (ver _shared/correo.ts).
 import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
 
 // Contacto que se enseña al pie del correo (las respuestas van ahí también).

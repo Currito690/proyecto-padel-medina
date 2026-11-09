@@ -1,15 +1,15 @@
 // Envío de correos de la app (reservas, torneos, avisos al club).
 //
-// Principal: el SMTP del correo de IONOS (donde está el correo de padelmedina.com),
+// Principal: el servidor de correo del Plesk (donde está el correo de padelmedina.com),
 // con el cliente propio de _shared/smtp.ts.
 // Secretos (volumes/functions/.env.secrets en el servidor):
-//   CORREO_SMTP_HOST     smtp.ionos.es
+//   CORREO_SMTP_HOST     mail.ggomezstudio.es (el certificado del Plesk es para ese nombre)
 //   CORREO_SMTP_PUERTO   465 (SSL/TLS; con 587 se usa STARTTLS)
 //   CORREO_SMTP_SEGURIDAD opcional: "ssl" o "starttls" (por defecto, según el puerto)
 //   CORREO_SMTP_USUARIO  el buzón completo, p. ej. reservas@padelmedina.com
 //   CORREO_SMTP_CLAVE    la contraseña de ese buzón
 //   CORREO_REMITENTE     opcional: "Padel Medina <reservas@padelmedina.com>".
-//                        IONOS solo deja enviar como el propio buzón (o un alias
+//                        El servidor solo deja enviar como el propio buzón (o un alias
 //                        suyo); por defecto se usa el buzón del usuario SMTP.
 //   CORREO_RESPONDER_A   opcional: a dónde van las respuestas (info@padelmedina.com)
 //
@@ -64,7 +64,7 @@ async function porSmtp(cfg: ConfigSmtp, c: Correo): Promise<ResultadoCorreo> {
   try {
     const r = await enviarSmtp(cfg, {
       remitente: env('CORREO_REMITENTE') || `Padel Medina <${cfg.usuario}>`,
-      // El remite del sobre tiene que ser el buzón autenticado (IONOS lo exige).
+      // El remite del sobre tiene que ser el buzón autenticado (el servidor lo exige).
       sobreDe: cfg.usuario,
       para: c.to,
       responderA: responderA(),
@@ -73,7 +73,7 @@ async function porSmtp(cfg: ConfigSmtp, c: Correo): Promise<ResultadoCorreo> {
       texto: c.text,
       cabeceras: c.headers,
     }, TIEMPO_MAXIMO_MS);
-    if (r.rechazados.length > 0) console.warn(`IONOS no aceptó a: ${r.rechazados.join('; ')}`);
+    if (r.rechazados.length > 0) console.warn(`El servidor de correo no aceptó a: ${r.rechazados.join('; ')}`);
     return { ok: true, id: r.id, via: 'smtp', error: null };
   } catch (e) {
     const err = e as { codigo?: number; message?: string };
@@ -113,7 +113,7 @@ export async function enviarCorreo(c: Correo): Promise<ResultadoCorreo> {
   if (cfg) {
     const r = await porSmtp(cfg, c);
     if (r.ok) return r;
-    console.error(`Correo por IONOS fallido (${c.to.join(',')}): ${r.error}`);
+    console.error(`Correo por SMTP fallido (${c.to.join(',')}): ${r.error}`);
     if (!env('RESEND_API_KEY')) return r;
     const r2 = await porResend(c);
     if (r2.ok) console.warn(`Correo enviado por Resend como reserva (${c.to.join(',')})`);

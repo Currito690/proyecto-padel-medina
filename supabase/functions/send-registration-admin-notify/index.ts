@@ -9,7 +9,7 @@
 // dos, la llamada se acepta con un aviso en el log para que el club no se
 // quede sin correos a mitad de configurar; ver callerAutorizado.
 
-// Correo: SMTP de IONOS, con Resend de reserva (ver _shared/correo.ts).
+// Correo: SMTP del Plesk, con Resend de reserva (ver _shared/correo.ts).
 import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
 
 // Destinatario fijo: buzón del club. Si en el futuro se quiere cambiar

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Sube al servidor las funciones de correo nuevas (SMTP de IONOS con Resend de
-# reserva) y el guion configurar-correo-ionos.sh. Se lanza desde el PC, en Git Bash,
+# Sube al servidor las funciones de correo nuevas (SMTP del Plesk con Resend de
+# reserva) y el guion configurar-correo-plesk.sh. Se lanza desde el PC, en Git Bash,
 # en la carpeta del proyecto:
 #   bash supabase/subir-funciones-correo.sh
-# Mientras no se configure el buzón de IONOS todo sigue saliendo por Resend,
+# Mientras no se lance configurar-correo-plesk.sh activar, todo sigue saliendo por Resend,
 # como hasta ahora. Guarda antes una copia de las funciones del servidor.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -13,12 +13,12 @@ F=/root/padel-migracion/stack/volumes/functions
 FECHA=$(date +%Y%m%d-%H%M%S)
 FUNCIONES="send-booking-email send-tournament-confirmation send-bracket-published send-registration-admin-notify"
 
-ssh -i $LLAVE $SRV "cd $F && tar czf /root/padel-migracion/funciones-antes-ionos-$FECHA.tgz _shared $FUNCIONES"
-echo "Copia en el servidor: /root/padel-migracion/funciones-antes-ionos-$FECHA.tgz"
+ssh -i $LLAVE $SRV "cd $F && tar czf /root/padel-migracion/funciones-antes-smtp-$FECHA.tgz _shared $FUNCIONES"
+echo "Copia en el servidor: /root/padel-migracion/funciones-antes-smtp-$FECHA.tgz"
 
 scp -q -i $LLAVE functions/_shared/correo.ts functions/_shared/smtp.ts $SRV:$F/_shared/
 for f in $FUNCIONES; do scp -q -i $LLAVE functions/$f/index.ts $SRV:$F/$f/index.ts; done
-scp -q -i $LLAVE configurar-correo-ionos.sh $SRV:/root/padel-migracion/
+scp -q -i $LLAVE configurar-correo-plesk.sh $SRV:/root/padel-migracion/
 echo "Código subido."
 
 ssh -i $LLAVE $SRV 'cd /root/padel-migracion/stack

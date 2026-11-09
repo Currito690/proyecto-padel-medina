@@ -2,7 +2,7 @@
 // Deno.startTls). nodemailer (npm) se queda colgado al abrir el TLS dentro de
 // Deno, así que no se usa.
 //
-// Hace lo justo para el correo de IONOS: SSL directo (465) o STARTTLS (587),
+// Hace lo justo para un servidor de correo normal (el del Plesk): SSL directo (465) o STARTTLS (587),
 // AUTH PLAIN/LOGIN, varios destinatarios y un mensaje HTML (con texto plano
 // opcional) en UTF-8. Una conexión por mensaje.
 
@@ -16,7 +16,7 @@ export interface ConfigSmtp {
 
 export interface MensajeSmtp {
   remitente: string; // "Nombre <buzon@dominio>" o "buzon@dominio" (cabecera From)
-  sobreDe: string; // MAIL FROM (IONOS exige el buzón autenticado)
+  sobreDe: string; // MAIL FROM (el servidor exige el buzón autenticado)
   para: string[];
   responderA?: string;
   asunto: string;
