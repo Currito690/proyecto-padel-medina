@@ -9,9 +9,9 @@
 // dos, la llamada se acepta con un aviso en el log para que el club no se
 // quede sin correos a mitad de configurar; ver callerAutorizado.
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
-const REPLY_TO = 'info@padelmedina.com';
+// Correo: SMTP de IONOS, con Resend de reserva (ver _shared/correo.ts).
+import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
+
 // Destinatario fijo: buzón del club. Si en el futuro se quiere cambiar
 // se puede leer de Deno.env.get('CLUB_NOTIFY_EMAIL') sin romper nada.
 const ADMIN_EMAIL = Deno.env.get('CLUB_NOTIFY_EMAIL') || 'padelmedina@hotmail.com';
@@ -190,7 +190,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    if (!RESEND_API_KEY) {
+    if (!correoConfigurado()) {
       return new Response(JSON.stringify({ error: 'Email not configured' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -229,31 +229,21 @@ Deno.serve(async (req: Request) => {
       payload.registrationsUrl ? payload.registrationsUrl : '',
     ].filter(Boolean).join('\n');
 
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
+    const result = await enviarCorreo({
+      to: [ADMIN_EMAIL],
+      subject,
+      html,
+      text: textLines,
+      // Headers transaccionales: ayudan a que Hotmail/Outlook entiendan
+      // que es notificación legítima y no marketing.
       headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
+        'X-Entity-Ref-ID': `padelmedina-reg-${Date.now()}`,
+        'X-Auto-Response-Suppress': 'OOF, AutoReply',
       },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        reply_to: REPLY_TO,
-        to: [ADMIN_EMAIL],
-        subject,
-        html,
-        text: textLines,
-        // Headers transaccionales: ayudan a que Hotmail/Outlook entiendan
-        // que es notificación legítima y no marketing.
-        headers: {
-          'X-Entity-Ref-ID': `padelmedina-reg-${Date.now()}`,
-          'X-Auto-Response-Suppress': 'OOF, AutoReply',
-        },
-      }),
     });
-    const result = await res.json();
-    if (!res.ok) {
-      console.error('Resend error:', result);
-      return new Response(JSON.stringify({ error: result }), {
+    if (!result.ok) {
+      console.error('Registration notify email error:', result.error);
+      return new Response(JSON.stringify({ error: result.error }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

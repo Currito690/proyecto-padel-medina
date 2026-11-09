@@ -1,9 +1,9 @@
 // supabase/functions/send-tournament-confirmation/index.ts
 // Deploy: npx supabase functions deploy send-tournament-confirmation
-// Secret needed: RESEND_API_KEY (la misma API key que send-booking-email)
+// Correo: SMTP de IONOS, con Resend de reserva (ver _shared/correo.ts).
+import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
+// Contacto que se enseña al pie del correo (las respuestas van ahí también).
 const REPLY_TO = 'info@padelmedina.com';
 const APP_URL = Deno.env.get('APP_URL') || 'https://padelmedina.com';
 
@@ -179,8 +179,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    if (!RESEND_API_KEY) {
-      console.error('RESEND_API_KEY not configured');
+    if (!correoConfigurado()) {
+      console.error('Correo sin configurar (ni CORREO_SMTP_* ni RESEND_API_KEY)');
       return new Response(JSON.stringify({ error: 'Email not configured' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -211,27 +211,18 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Resend acepta varios destinatarios en un único envío.
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ from: FROM_EMAIL, reply_to: REPLY_TO, to: cleanEmails, subject, html }),
-    });
+    // Un único correo a los dos jugadores de la pareja.
+    const result = await enviarCorreo({ to: cleanEmails, subject, html });
 
-    const result = await res.json();
-
-    if (!res.ok) {
-      console.error('Resend error:', result);
-      return new Response(JSON.stringify({ error: result }), {
+    if (!result.ok) {
+      console.error(`Tournament email (${action}) error:`, result.error);
+      return new Response(JSON.stringify({ error: result.error }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    console.log(`Tournament email (${action}) sent to ${cleanEmails.join(',')} — id: ${result.id}`);
+    console.log(`Tournament email (${action}) sent to ${cleanEmails.join(',')} via ${result.via} — id: ${result.id}`);
     return new Response(JSON.stringify({ success: true, id: result.id, sentTo: cleanEmails }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

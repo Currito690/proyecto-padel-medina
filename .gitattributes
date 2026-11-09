@@ -1,0 +1,2 @@
+# Los guiones de shell se ejecutan en el servidor Linux o en el Mac: siempre con LF.
+*.sh text eol=lf

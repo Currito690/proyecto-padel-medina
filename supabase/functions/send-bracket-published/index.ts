@@ -2,11 +2,11 @@
 // Deploy: npx supabase functions deploy send-bracket-published
 // Notifica a todos los jugadores inscritos que el cuadro del torneo se ha
 // publicado e incluye el enlace para verlo.
+// Correo: SMTP de IONOS, con Resend de reserva (ver _shared/correo.ts).
+import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
+// Contacto que se enseña al pie del correo (las respuestas van ahí también).
 const REPLY_TO = 'info@padelmedina.com';
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -147,7 +147,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    if (!RESEND_API_KEY) {
+    if (!correoConfigurado()) {
       return new Response(JSON.stringify({ error: 'Email not configured' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -174,24 +174,19 @@ Deno.serve(async (req: Request) => {
       : `🏆 Cuadro publicado — ${tournamentName}`;
     const html = bracketHtml(tournamentName, tournamentUrl, isUpdate);
 
-    // Resend free tier limita a 2 req/s. Si mandamos todos en paralelo, los
-    // últimos rebotan con 429 y solo llegan a las primeras parejas. Solución:
-    // tandas de BATCH_SIZE en paralelo con espera entre tandas. Cada envío
-    // individual conserva privacidad (sin "To" compartido) y errores
-    // puntuales no paran el resto.
+    // Tandas de BATCH_SIZE en paralelo con espera entre tandas: el SMTP de
+    // IONOS no quiere ráfagas (y Resend, de reserva, limita a 2 por segundo).
+    // Cada envío individual conserva la privacidad (sin "To" compartido) y
+    // los errores puntuales no paran el resto.
+    // OJO: IONOS limita los envíos por hora según la antigüedad del buzón
+    // (50/h la primera semana, 100/h la segunda, 400/h hasta el mes, luego 500/h).
     const BATCH_SIZE = 5;
-    const BATCH_DELAY_MS = 3000; // 5 envíos cada 3s ≈ 1,67 req/s, bajo el límite
+    const BATCH_DELAY_MS = 3000; // 5 envíos cada 3 s
     const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
 
     const sendOne = (email: string) =>
-      fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ from: FROM_EMAIL, reply_to: REPLY_TO, to: [email], subject, html }),
-      }).then(async (res) => ({ email, ok: res.ok, status: res.status, body: res.ok ? null : await res.text() }));
+      enviarCorreo({ to: [email], subject, html })
+        .then((r) => ({ email, ok: r.ok, status: r.ok ? 200 : 500, body: r.error }));
 
     let success = 0; let failed = 0;
     const failures: { email: string; reason: string }[] = [];
