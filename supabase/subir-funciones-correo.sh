@@ -16,7 +16,7 @@ FUNCIONES="send-booking-email send-tournament-confirmation send-bracket-publishe
 ssh -i $LLAVE $SRV "cd $F && tar czf /root/padel-migracion/funciones-antes-smtp-$FECHA.tgz _shared $FUNCIONES"
 echo "Copia en el servidor: /root/padel-migracion/funciones-antes-smtp-$FECHA.tgz"
 
-scp -q -i $LLAVE functions/_shared/correo.ts functions/_shared/smtp.ts $SRV:$F/_shared/
+scp -q -i $LLAVE functions/_shared/correo.ts functions/_shared/smtp.ts functions/_shared/inscripcion-recibida.ts $SRV:$F/_shared/
 for f in $FUNCIONES; do scp -q -i $LLAVE functions/$f/index.ts $SRV:$F/$f/index.ts; done
 scp -q -i $LLAVE configurar-correo-plesk.sh $SRV:/root/padel-migracion/
 echo "Código subido."
