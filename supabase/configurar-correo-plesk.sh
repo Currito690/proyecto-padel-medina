@@ -29,6 +29,8 @@ IP=87.106.229.29
 SMTP_HOST=mail.ggomezstudio.es
 SMTP_PUERTO=465
 STACK=/root/padel-migracion/stack
+# Buzón creado con contraseña aleatoria (BUZON=... y CLAVE=..., permisos 600).
+FICHERO=/root/padel-migracion/.correo-$DOMINIO
 
 preguntar_buzon() {
   read -r -p "Buzón que envía [reservas@$DOMINIO]: " BUZON
@@ -57,7 +59,7 @@ preparar() {
   echo "== 1. Correo y DKIM de $DOMINIO en el Plesk"
   plesk bin domain --update "$DOMINIO" -mail_service true >/dev/null
   plesk bin domain_pref --update "$DOMINIO" -sign_outgoing_mail true >/dev/null
-  plesk bin domain --info "$DOMINIO" | grep -m1 'Mail service:'
+  (plesk bin domain --info "$DOMINIO" | grep 'Mail service:') || true
 
   echo "== 2. Buzón"
   preguntar_buzon
@@ -128,15 +130,25 @@ activar() {
   echo "MX:   $mx"; echo "SPF:  $spf"; echo "DKIM: ${dkim:-(no está)}"
   if [[ "$mx" != *"$SMTP_HOST"* || "$spf" != *"$IP"* ]]; then
     echo "Todavía no: el MX tiene que ser $SMTP_HOST y el SPF tiene que llevar $IP."
+    [ -t 0 ] || exit 1
     read -r -p "¿Seguir de todas formas? (los correos podrían ir a spam) [s/N]: " R
     [[ "$R" =~ ^[sS] ]] || exit 1
   fi
 
   echo "== 7. Configuración de la app"
-  preguntar_buzon
-  preguntar_clave "Contraseña de $BUZON: "
+  # Si el buzón se creó con contraseña aleatoria, está en $FICHERO (solo root)
+  # y no se pregunta nada. Correo de prueba: segundo argumento o se pregunta.
+  if [ -s "$FICHERO" ]; then
+    # shellcheck disable=SC1090
+    . "$FICHERO"
+    echo "Buzón $BUZON (contraseña en $FICHERO)."
+  else
+    preguntar_buzon
+    preguntar_clave "Contraseña de $BUZON: "
+  fi
   probar_login
-  read -r -p "Correo para la prueba (de una cuenta de la app, p. ej. el tuyo): " PRUEBA
+  PRUEBA=${2:-}
+  [ -n "$PRUEBA" ] || [ ! -t 0 ] || read -r -p "Correo para la prueba (de una cuenta de la app, p. ej. el tuyo): " PRUEBA
 
   local env=.env secretos=volumes/functions/.env.secrets fecha
   fecha=$(date +%Y%m%d-%H%M%S)
@@ -205,6 +217,6 @@ activar() {
 
 case "${1:-}" in
   preparar) preparar ;;
-  activar) activar ;;
+  activar) activar "$@" ;;
   *) echo "Uso: $0 preparar | activar"; exit 1 ;;
 esac
