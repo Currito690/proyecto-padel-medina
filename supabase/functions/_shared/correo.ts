@@ -15,6 +15,7 @@
 //
 // Reserva: si el SMTP no está configurado o falla, y sigue existiendo
 // RESEND_API_KEY, el correo sale por Resend como antes (y queda en el log).
+// Además, lo que va a Hotmail/Outlook/Live sale por Resend (ver MICROSOFT abajo).
 // Para dejar de usar Resend del todo basta con quitar RESEND_API_KEY.
 import { type ConfigSmtp, enviarSmtp } from './smtp.ts';
 
@@ -107,8 +108,29 @@ async function porResend(c: Correo): Promise<ResultadoCorreo> {
   }
 }
 
+// Microsoft (Hotmail/Outlook/Live) rechaza la IP del Plesk (550 5.7.1 S3150,
+// lista negra de parte de la red de IONOS, desde el 9/11/2026). Mientras dure,
+// lo que va a esos buzones sale por Resend si hay RESEND_API_KEY; lo demás
+// sigue por el Plesk.
+const MICROSOFT = /@(hotmail|outlook|live|msn)\.[a-z.]+$/i;
+
 // Manda un correo. Nunca lanza: devuelve ok/error y por dónde salió.
 export async function enviarCorreo(c: Correo): Promise<ResultadoCorreo> {
+  const ms = c.to.filter((d) => MICROSOFT.test(d.trim()));
+  if (ms.length === 0 || !env('RESEND_API_KEY')) return enviarNormal(c);
+  const resto = c.to.filter((d) => !MICROSOFT.test(d.trim()));
+  const rMs = await porResend({ ...c, to: ms });
+  if (!rMs.ok) console.error(`Correo por Resend fallido (${ms.join(',')}): ${rMs.error}`);
+  if (resto.length === 0) {
+    // Si Resend falla, último intento por el Plesk (puede que Microsoft ya no bloquee).
+    return rMs.ok ? rMs : enviarNormal(c);
+  }
+  const rResto = await enviarNormal({ ...c, to: resto });
+  if (rResto.ok && rMs.ok) return rResto;
+  return rResto.ok ? rResto : rMs.ok ? rMs : { ...rResto, error: `${rResto.error} | Resend: ${rMs.error}` };
+}
+
+async function enviarNormal(c: Correo): Promise<ResultadoCorreo> {
   const cfg = configSmtp();
   if (cfg) {
     const r = await porSmtp(cfg, c);
