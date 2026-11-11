@@ -443,10 +443,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     };
   }, []);
 
-  // Carga las reservas externas (gente que ha reservado pista normal) en
-  // el rango de fechas del torneo. Las usa el scheduler para no pisar
-  // huecos ya reservados por otros usuarios. También las usa el editor
-  // de horario manual para mostrar esos slots como ocupados.
   const courtIdByNumRef = useRef({}); // nº de pista del torneo → UUID de la pista del club
 
   // Bloqueo automático de las pistas del torneo: cada partido con hora y
@@ -520,16 +516,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         ...((fuera.data || []).map(b => b.id)),
       ];
       const yaEstan = new Set(propios.map(b => `${b.court_id}|${b.date}|${b.time_slot}`));
-      const { data: auth } = await supabase.auth.getUser();
+      const { data: ses } = await supabase.auth.getSession();
       const insertar = [...deseados.entries()]
         .filter(([k, f]) => !yaEstan.has(k) && !solapa(f))
-        .map(([, f]) => ({ court_id: f.court_id, date: f.date, time_slot: f.time_slot, tipo: 'torneo', tournament_id: tournamentKey, created_by: auth?.user?.id || null }));
+        .map(([, f]) => ({ court_id: f.court_id, date: f.date, time_slot: f.time_slot, tipo: 'torneo', tournament_id: tournamentKey, created_by: ses?.session?.user?.id || null }));
       if (borrar.length) {
         const { error } = await supabase.from('blocked_slots').delete().in('id', borrar);
         if (error) console.warn('No se pudieron quitar bloqueos del torneo:', error.message);
       }
       if (insertar.length) {
-        const { error } = await supabase.from('blocked_slots').insert(insertar);
+        // ON CONFLICT DO NOTHING: si otra pestaña del admin acaba de crear la
+        // misma fila (UNIQUE court_id+date+time_slot), no falla todo el lote.
+        const { error } = await supabase.from('blocked_slots')
+          .upsert(insertar, { onConflict: 'court_id,date,time_slot', ignoreDuplicates: true });
         if (error) console.warn('No se pudieron bloquear las pistas del torneo:', error.message);
       }
     } catch (e) {
@@ -546,16 +545,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (!dbLoaded) return;
     const t = setTimeout(() => { syncBlocksFnRef.current(); }, 2500);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbLoaded, dbStatus, rounds, consRounds, tConfig.startDate, tConfig.endDate, tConfig.matchDurationByCategory, tConfig.courtsCount, tConfig.courtNames]);
 
+  // Carga las reservas externas (gente que ha reservado pista normal) en
+  // el rango de fechas del torneo. Las usa el scheduler para no pisar
+  // huecos ya reservados por otros usuarios. También las usa el editor
+  // de horario manual para mostrar esos slots como ocupados.
   const loadExternalBookings = async () => {
     if (!tConfig.startDate || !tConfig.endDate) return {};
     try {
       // Reservas (confirmadas y holds de pago recientes), bloqueos/entrenos
       // del admin y las pistas del club para traducir su UUID al nº de pista
       // del torneo. bookings.time_slot es un rango "HH:MM - HH:MM".
-      const [bk, bl, ct] = await Promise.all([
+      const [bk, blNuevo, ct] = await Promise.all([
         supabase.from('bookings')
           .select('date, time_slot, court_id, status, created_at')
           .gte('date', tConfig.startDate)
@@ -569,6 +571,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         supabase.from('courts').select('id, name').order('name'),
       ]);
       if (bk.error) throw bk.error;
+      // Si la base de datos aún no tiene tipo/tournament_id (migración
+      // 20261111100000 sin aplicar), se leen como antes y TODOS ocupan:
+      // mejor eso que ignorar también los entrenos.
+      const bl = blNuevo.error
+        ? await supabase.from('blocked_slots').select('date, time_slot, court_id')
+          .gte('date', tConfig.startDate).lte('date', tConfig.endDate)
+        : blNuevo;
       // Si los bloqueos no se pueden leer seguimos solo con las reservas.
       // Los bloqueos del admin ('bloqueado') en los días del torneo son
       // pistas que el club guarda PARA el torneo, y los 'torneo' de este
@@ -604,7 +613,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (courtsOk) {
         const porNum = {};
         Object.entries(courtNum).forEach(([id, n]) => { if (porNum[n] == null) porNum[n] = id; });
+        const primeraVez = Object.keys(courtIdByNumRef.current).length === 0;
         courtIdByNumRef.current = porNum;
+        // Si el mapa de pistas llega después del primer intento de
+        // sincronizar (que no hace nada sin él), se sincroniza ahora: así los
+        // partidos que ya tenían hora quedan bloqueados nada más abrir el torneo.
+        if (primeraVez) setTimeout(() => syncBlocksFnRef.current(), 0);
       }
       const toMin = (t) => { const [h, m] = String(t).trim().split(':').map(Number); return h * 60 + (m || 0); };
       const HOLD_MS = 15 * 60 * 1000; // un hold de pago solo ocupa la pista 15 min

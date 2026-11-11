@@ -10,3 +10,7 @@ ALTER TABLE public.blocked_slots
   ADD CONSTRAINT blocked_slots_tipo_chk CHECK (tipo IN ('bloqueado', 'entreno', 'torneo'));
 
 CREATE INDEX IF NOT EXISTS blocked_slots_tournament_idx ON public.blocked_slots (tournament_id) WHERE tournament_id IS NOT NULL;
+
+-- Que PostgREST vea la columna nueva ya (el event trigger pgrst_ddl_watch
+-- también lo hace; esto es por si acaso).
+NOTIFY pgrst, 'reload schema';
