@@ -2292,7 +2292,7 @@ const AdminDashboard = () => {
                                     <div style={{ fontSize: '0.58rem', fontWeight: 600, marginTop: '0.15rem' }}>
                                       {slot?.status === 'booked'
                                         ? (slot.esHold ? '' : reservaPagada(slot) ? '✓ ' : '✕ ') + slot.client.split(' ')[0]
-                                        : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? etiquetaEntreno(slot) : '🔒 Bloqueada') : 'Libre'}
+                                        : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? etiquetaEntreno(slot) : slot.tipo === 'torneo' ? '🏆 Torneo' : '🔒 Bloqueada') : 'Libre'}
                                     </div>
                                   </button>
                                 );
@@ -2305,7 +2305,7 @@ const AdminDashboard = () => {
                                   <div style={{ minWidth: 0 }}>
                                     <p style={{ margin: 0, fontWeight: 800, color: '#0F172A', fontSize: '0.875rem' }}>{activeSlot.time}</p>
                                     <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
-                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Entreno' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
+                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Entreno' : selectedSlotData.tipo === 'torneo' ? '🏆 Partido de torneo (se mueve solo con el cuadro)' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
                                       {selectedSlotData.status === 'booked' && selectedSlotData.userId === CLIENTE_ELIMINADO_ID && ' (borró su cuenta)'}
                                     </p>
                                     {selectedSlotData.conflicto && (

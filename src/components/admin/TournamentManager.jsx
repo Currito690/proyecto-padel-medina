@@ -447,6 +447,108 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // el rango de fechas del torneo. Las usa el scheduler para no pisar
   // huecos ya reservados por otros usuarios. También las usa el editor
   // de horario manual para mostrar esos slots como ocupados.
+  const courtIdByNumRef = useRef({}); // nº de pista del torneo → UUID de la pista del club
+
+  // Bloqueo automático de las pistas del torneo: cada partido con hora y
+  // pista queda como bloqueo 'torneo' (con tournament_id) en blocked_slots,
+  // así nadie puede reservar esa pista a esa hora desde la app. Se sincroniza
+  // con el cuadro: si un partido cambia de hora o se borra, su bloqueo se
+  // mueve o desaparece. Un torneo en borrador no bloquea nada. No se pone
+  // bloqueo encima de otro bloqueo/entreno o de una reserva de esa pista
+  // (ya está ocupada). Al borrar el torneo se borran solos (ON DELETE CASCADE).
+  const syncingBlocksRef = useRef({ running: false, again: false });
+  const syncTournamentBlocks = async () => {
+    const st = syncingBlocksRef.current;
+    if (st.running) { st.again = true; return; }
+    st.running = true;
+    try {
+      const { startDate, endDate } = tConfig;
+      if (!startDate || !endDate) return;
+      const porNum = courtIdByNumRef.current;
+      // Sin el mapa de pistas no sabemos qué bloquear: mejor no tocar nada
+      // (si no, se borrarían todos los bloqueos del torneo).
+      if (Object.keys(porNum).length === 0) return;
+      const toMin = (t) => { const [h, m] = String(t).trim().split(':').map(Number); return h * 60 + (m || 0); };
+      const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+      const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+      // dd/mm → yyyy-mm-dd con el año del torneo (vale aunque cruce de año)
+      const anioDe = (mm) => {
+        const [y1, m1] = startDate.split('-');
+        const [y2] = endDate.split('-');
+        return Number(mm) >= Number(m1) ? y1 : y2;
+      };
+      const deseados = new Map(); // clave court|date|time_slot → fila
+      if (dbStatus !== 'draft') {
+        const add = (roundsObj) => Object.entries(roundsObj || {}).forEach(([ct, catR]) => {
+          (catR || []).forEach(round => (round || []).forEach(m => {
+            const t = parsearTiempo(m?.time);
+            if (!t || !porNum[t.pista]) return;
+            const [dd, mm] = t.dia.split('/');
+            const date = `${anioDe(mm)}-${mm}-${dd}`;
+            if (date < startDate || date > endDate) return;
+            const ini = toMin(t.hora);
+            const fin = Math.min(ini + durDe(ct), 24 * 60 - 1);
+            const time_slot = `${hhmm(ini)} - ${hhmm(fin)}`;
+            const court_id = porNum[t.pista];
+            deseados.set(`${court_id}|${date}|${time_slot}`, { court_id, date, time_slot, ini, fin });
+          }));
+        });
+        add(rounds);
+        add(consRounds);
+      }
+      const [bl, bk] = await Promise.all([
+        supabase.from('blocked_slots').select('id, court_id, date, time_slot, tipo, tournament_id')
+          .gte('date', startDate).lte('date', endDate),
+        supabase.from('bookings').select('court_id, date, time_slot')
+          .gte('date', startDate).lte('date', endDate).eq('status', 'confirmed'),
+      ]);
+      if (bl.error) { console.warn('No se pudieron leer los bloqueos del torneo:', bl.error.message); return; }
+      // Los de este torneo de otras fechas (si se movieron los días) también se limpian.
+      const fuera = await supabase.from('blocked_slots').select('id')
+        .eq('tipo', 'torneo').eq('tournament_id', tournamentKey)
+        .or(`date.lt.${startDate},date.gt.${endDate}`);
+      const propios = (bl.data || []).filter(b => b.tipo === 'torneo' && b.tournament_id === tournamentKey);
+      const ajenos = [...(bl.data || []).filter(b => !(b.tipo === 'torneo' && b.tournament_id === tournamentKey)), ...(bk.error ? [] : (bk.data || []))];
+      const solapa = (f) => ajenos.some(o => {
+        if (o.court_id !== f.court_id || o.date !== f.date) return false;
+        const [a, b] = String(o.time_slot || '').split(' - ');
+        if (!a || !b) return false;
+        return toMin(a) < f.fin && f.ini < toMin(b);
+      });
+      const borrar = [
+        ...propios.filter(b => !deseados.has(`${b.court_id}|${b.date}|${b.time_slot}`) || solapa({ ...b, ini: toMin(b.time_slot.split(' - ')[0]), fin: toMin(b.time_slot.split(' - ')[1]) })).map(b => b.id),
+        ...((fuera.data || []).map(b => b.id)),
+      ];
+      const yaEstan = new Set(propios.map(b => `${b.court_id}|${b.date}|${b.time_slot}`));
+      const { data: auth } = await supabase.auth.getUser();
+      const insertar = [...deseados.entries()]
+        .filter(([k, f]) => !yaEstan.has(k) && !solapa(f))
+        .map(([, f]) => ({ court_id: f.court_id, date: f.date, time_slot: f.time_slot, tipo: 'torneo', tournament_id: tournamentKey, created_by: auth?.user?.id || null }));
+      if (borrar.length) {
+        const { error } = await supabase.from('blocked_slots').delete().in('id', borrar);
+        if (error) console.warn('No se pudieron quitar bloqueos del torneo:', error.message);
+      }
+      if (insertar.length) {
+        const { error } = await supabase.from('blocked_slots').insert(insertar);
+        if (error) console.warn('No se pudieron bloquear las pistas del torneo:', error.message);
+      }
+    } catch (e) {
+      console.warn('Error sincronizando los bloqueos del torneo:', e?.message || e);
+    } finally {
+      st.running = false;
+      // La repetición usa la versión más reciente (con el cuadro actual).
+      if (st.again) { st.again = false; syncBlocksFnRef.current(); }
+    }
+  };
+  const syncBlocksFnRef = useRef(syncTournamentBlocks);
+  syncBlocksFnRef.current = syncTournamentBlocks;
+  useEffect(() => {
+    if (!dbLoaded) return;
+    const t = setTimeout(() => { syncBlocksFnRef.current(); }, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbLoaded, dbStatus, rounds, consRounds, tConfig.startDate, tConfig.endDate, tConfig.matchDurationByCategory, tConfig.courtsCount, tConfig.courtNames]);
+
   const loadExternalBookings = async () => {
     if (!tConfig.startDate || !tConfig.endDate) return {};
     try {
@@ -460,15 +562,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           .lte('date', tConfig.endDate)
           .in('status', ['confirmed', 'pendiente_pago']),
         supabase.from('blocked_slots')
-          .select('date, time_slot, court_id')
+          .select('date, time_slot, court_id, tipo, tournament_id')
           .gte('date', tConfig.startDate)
           .lte('date', tConfig.endDate),
         // Mismo orden que el resto de la app (por nombre)
         supabase.from('courts').select('id, name').order('name'),
       ]);
       if (bk.error) throw bk.error;
-      // Si los bloqueos no se pueden leer seguimos solo con las reservas
-      const blocked = bl.error ? [] : (bl.data || []);
+      // Si los bloqueos no se pueden leer seguimos solo con las reservas.
+      // Los bloqueos del admin ('bloqueado') en los días del torneo son
+      // pistas que el club guarda PARA el torneo, y los 'torneo' de este
+      // torneo son sus propios partidos: ninguno cuenta como ocupado. Sí
+      // cuentan los entrenos y los partidos de otro torneo.
+      const blocked = (bl.error ? [] : (bl.data || []))
+        .filter(b => b.tipo !== 'bloqueado' && !(b.tipo === 'torneo' && b.tournament_id === tournamentKey));
       // Si las pistas no se pueden leer no sabemos a qué pista va cada
       // reserva: en vez de tirarlas todas, bloquean todas las pistas del
       // torneo (mejor pasarse que pisar una reserva real) y avisamos.
@@ -494,6 +601,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         }
         courtNum[c.id] = n;
       });
+      if (courtsOk) {
+        const porNum = {};
+        Object.entries(courtNum).forEach(([id, n]) => { if (porNum[n] == null) porNum[n] = id; });
+        courtIdByNumRef.current = porNum;
+      }
       const toMin = (t) => { const [h, m] = String(t).trim().split(':').map(Number); return h * 60 + (m || 0); };
       const HOLD_MS = 15 * 60 * 1000; // un hold de pago solo ocupa la pista 15 min
       const map = {};
