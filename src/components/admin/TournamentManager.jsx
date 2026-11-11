@@ -115,6 +115,42 @@ const sameCat = (a, b) => String(a || '').trim().toLowerCase() === String(b || '
 // que trocearla.
 const playsInCat = (p, cat) => sameCat(p?.category, cat) || catsOf(p).some(c => sameCat(c, cat));
 
+// Jugadores en dos categorías con parejas DISTINTAS (Iván juega en C con
+// Diego Sánchez y en D con Diego de los Reyes). Se guardan en
+// tConfig.jugadoresCompartidos = [{ jugador, parejas: [id, id, …] }] y el
+// programador no deja que esas parejas jueguen a la vez ni sin descanso.
+// Con dualCategoryMaxMatches = 2 el club permite que coincidan: no se vincula.
+// Devuelve { idPareja: [ids vinculados] } (ids como texto).
+const vinculosDeParejas = (cfg) => {
+  const out = {};
+  if (Number(cfg?.dualCategoryMaxMatches) === 2) return out;
+  (cfg?.jugadoresCompartidos || []).forEach(v => {
+    const ids = (v?.parejas || []).map(String);
+    ids.forEach(a => { out[a] = Array.from(new Set([...(out[a] || []), ...ids.filter(b => b !== a)])); });
+  });
+  return out;
+};
+// Jugadores de una pareja a partir de su nombre ("Ivan y Diego Sanchez").
+const jugadoresDe = (p) => String(p?.name || '').split(/\s+y\s+/i).map(s => s.trim()).filter(Boolean);
+// Añade/quita el vínculo entre dos parejas en la lista de jugadores compartidos.
+const vincularParejas = (lista, idA, idB, jugador) => {
+  const a = String(idA), b = String(idB);
+  const grupos = (lista || []).map(g => ({ ...g, parejas: (g.parejas || []).map(String) }));
+  const conA = grupos.find(g => g.parejas.includes(a));
+  const conB = grupos.find(g => g.parejas.includes(b));
+  if (conA && conB && conA === conB) return grupos;
+  if (conA && conB) {
+    conA.parejas = Array.from(new Set([...conA.parejas, ...conB.parejas]));
+    return grupos.filter(g => g !== conB);
+  }
+  if (conA) { conA.parejas.push(b); return grupos; }
+  if (conB) { conB.parejas.push(a); return grupos; }
+  return [...grupos, { jugador: jugador || '', parejas: [a, b] }];
+};
+const desvincularPareja = (lista, id) => (lista || [])
+  .map(g => ({ ...g, parejas: (g.parejas || []).map(String).filter(x => x !== String(id)) }))
+  .filter(g => g.parejas.length >= 2);
+
 // Cabeza de serie POR CATEGORÍA. Una pareja con doble inscripción puede ser
 // #1 en una categoría y no serlo en la otra, así que el número vive en
 // `seedByCat`. El campo antiguo `seed` (torneos ya guardados) sigue valiendo
@@ -1480,6 +1516,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       return;
     }
     const agenda = crearAgenda(externalIntervals);
+    agenda.vinculos = vinculosDeParejas(tConfig);
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
     const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
 
@@ -2239,6 +2276,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // La agenda arranca con lo fijo (manual o jugado) y las reservas del club.
     const agenda = agendaDeCuadros(parrilla, externalIntervals,
       [{ obj: nextMain, cons: false }, { obj: nextCons, cons: true }], durDe);
+    agenda.vinculos = vinculosDeParejas(tConfig);
     const numDays = parrilla.dias.length;
     const absDe = (m) => parrilla.absDeTiempo(m?.time);
     const programable = (m) => !m.time && !jugado(m) && isRealPair(m.p1) && isRealPair(m.p2);
@@ -2475,6 +2513,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const agenda = agendaDeCuadros(parrilla, externalIntervals,
       [{ obj: updatedMain, cons: false }, { obj: updatedCons, cons: true }], durDe, () => false,
       (m) => enFirme(m) || !propios.has(m));
+    agenda.vinculos = vinculosDeParejas(tConfig);
     liberar(agenda, nextMatch.id);
 
     // Las horas puestas a mano se respetan. Una hora automática se conserva
@@ -3179,6 +3218,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const gap = durationMin + restMin;
     const agenda = agendaDeCuadros(parrilla, externalIntervals,
       [{ obj: rounds, cons: false }, { obj: consRounds, cons: true }], durDe, (c, cons) => cons && c === cat);
+    agenda.vinculos = vinculosDeParejas(tConfig);
     const allowedCourtsForCons = getAllowedCourts(cat, true);
     const absDe = (m) => parrilla.absDeTiempo(m?.time);
     const programar = (match, desdeAbs = 0) => {
@@ -3706,6 +3746,37 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
     return minIdx >= HOURS.length ? HOURS : HOURS.slice(minIdx, maxIdx + 1);
   })();
+
+  // Parejas vinculadas a p (comparten jugador en otra categoría).
+  const vinculadasDe = (p) => {
+    if (!p) return [];
+    const id = String(p.id);
+    const grupo = (tConfig.jugadoresCompartidos || []).find(g => (g.parejas || []).map(String).includes(id));
+    if (!grupo) return [];
+    const ids = new Set(grupo.parejas.map(String));
+    return participants.filter(x => String(x.id) !== id && ids.has(String(x.id)));
+  };
+  // Posibles jugadores en dos categorías aún sin vincular: el mismo nombre de
+  // jugador (sin tildes ni mayúsculas) en parejas de categorías distintas.
+  const sugerenciasVinculo = () => {
+    const out = [];
+    const vistos = new Set();
+    for (let i = 0; i < participants.length; i++) {
+      for (let j = i + 1; j < participants.length; j++) {
+        const a = participants[i], b = participants[j];
+        if (catsOf(a).some(c => playsInCat(b, c))) continue; // misma categoría
+        if (vinculadasDe(a).some(v => String(v.id) === String(b.id))) continue;
+        const ja = jugadoresDe(a).map(normalizeForCompare);
+        const comun = jugadoresDe(b).find(n => ja.includes(normalizeForCompare(n)));
+        if (!comun) continue;
+        const k = `${a.id}|${b.id}`;
+        if (vistos.has(k)) continue;
+        vistos.add(k);
+        out.push({ a, b, jugador: comun });
+      }
+    }
+    return out;
+  };
 
   const openEditGrid = (participant) => {
     const blocked = new Set();
@@ -5100,6 +5171,73 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   ))}
                 </div>
 
+                {/* Jugador que juega también en otra categoría con OTRA pareja */}
+                {(() => {
+                  const ep = editingParticipant;
+                  const vinculadas = vinculadasDe(ep);
+                  const misJugadores = jugadoresDe(ep).map(normalizeForCompare);
+                  const candidatas = participants
+                    .filter(x => String(x.id) !== String(ep.id)
+                      && !vinculadas.some(v => String(v.id) === String(x.id))
+                      && !catsOf(x).some(c => playsInCat(ep, c)))
+                    .map(x => ({ x, comun: jugadoresDe(x).find(j => misJugadores.includes(normalizeForCompare(j))) || null }))
+                    .sort((a, b) => (b.comun ? 1 : 0) - (a.comun ? 1 : 0)
+                      || String(a.x.category || '').localeCompare(String(b.x.category || ''))
+                      || String(a.x.name || '').localeCompare(String(b.x.name || '')));
+                  const vincular = (otraId) => {
+                    const otra = participants.find(x => String(x.id) === String(otraId));
+                    if (!otra) return;
+                    const comun = jugadoresDe(otra).find(j => misJugadores.includes(normalizeForCompare(j))) || '';
+                    setTConfig(prev => ({ ...prev, jugadoresCompartidos: vincularParejas(prev.jugadoresCompartidos, ep.id, otra.id, comun) }));
+                    toast(`Vinculadas: ${ep.name} (${ep.category}) y ${otra.name} (${otra.category}). No jugarán a la vez.`, 'success');
+                  };
+                  const quitar = () => {
+                    setTConfig(prev => ({ ...prev, jugadoresCompartidos: desvincularPareja(prev.jugadoresCompartidos, ep.id) }));
+                  };
+                  return (
+                    <div style={{ border: '1.5px solid #C7D2FE', background: '#EEF2FF', borderRadius: '0.875rem', padding: '0.85rem 1rem', marginBottom: '1.25rem' }}>
+                      <p style={{ margin: '0 0 0.3rem', fontSize: '0.85rem', fontWeight: 800, color: '#3730A3' }}>🔗 ¿Un jugador de esta pareja juega también en otra categoría?</p>
+                      <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#4338CA', lineHeight: 1.5 }}>
+                        Elige la otra pareja de ese jugador. El programador no le pondrá dos partidos a la vez y respetará el descanso entre ellos.
+                      </p>
+                      {Number(tConfig.dualCategoryMaxMatches) === 2 && (
+                        <p style={{ margin: '0 0 0.6rem', fontSize: '0.72rem', color: '#9A3412', fontWeight: 700, lineHeight: 1.5 }}>
+                          ⚠ En la configuración del torneo está puesto que un jugador puede jugar en las dos categorías a la vez: mientras siga así, el vínculo no limita nada.
+                        </p>
+                      )}
+                      {vinculadas.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '0.6rem' }}>
+                          {vinculadas.map(v => (
+                            <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', background: 'white', border: '1px solid #C7D2FE', borderRadius: '0.5rem', padding: '0.45rem 0.65rem' }}>
+                              <span style={{ fontSize: '0.8rem', color: '#1E1B4B', fontWeight: 700 }}>
+                                Vinculada con <span style={{ color: '#3730A3' }}>{v.name}</span>
+                                <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', background: '#E0E7FF', color: '#3730A3', padding: '0.05rem 0.35rem', borderRadius: '0.25rem' }}>{v.category}</span>
+                              </span>
+                            </div>
+                          ))}
+                          <button type="button" onClick={quitar} style={{ alignSelf: 'flex-start', padding: '0.3rem 0.65rem', borderRadius: '0.4rem', border: '1px solid #FCA5A5', background: 'white', color: '#B91C1C', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer' }}>
+                            Quitar vínculo
+                          </button>
+                        </div>
+                      )}
+                      {candidatas.length > 0 && (
+                        <select
+                          value=""
+                          onChange={e => { if (e.target.value) vincular(e.target.value); }}
+                          style={{ width: '100%', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1.5px solid #A5B4FC', fontSize: '0.82rem', background: 'white', color: '#1E1B4B', cursor: 'pointer' }}
+                        >
+                          <option value="">{vinculadas.length > 0 ? 'Vincular otra pareja más…' : 'Elegir la otra pareja de ese jugador…'}</option>
+                          {candidatas.map(({ x, comun }) => (
+                            <option key={x.id} value={x.id}>
+                              {comun ? `★ ${comun} — ` : ''}{x.name} · {x.category}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Warning */}
                 <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1.25rem' }}>
                   <p style={{ margin: 0, fontSize: '0.8rem', color: '#92400E', lineHeight: 1.5 }}>
@@ -5370,6 +5508,28 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 🎲 Generar Cuadro
               </button>
             </div>
+            {sugerenciasVinculo().length > 0 && (
+              <div style={{ border: '1.5px solid #C7D2FE', background: '#EEF2FF', borderRadius: '0.6rem', padding: '0.6rem 0.75rem', marginBottom: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#3730A3' }}>🔗 ¿Mismo jugador en dos categorías?</span>
+                {sugerenciasVinculo().map(({ a, b, jugador }) => (
+                  <div key={`${a.id}|${b.id}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#1E1B4B' }}>
+                      <strong>{jugador}</strong>: {a.name} ({a.category}) · {b.name} ({b.category})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTConfig(prev => ({ ...prev, jugadoresCompartidos: vincularParejas(prev.jugadoresCompartidos, a.id, b.id, jugador) }));
+                        toast(`Vinculadas: ${a.name} y ${b.name}. ${jugador} no jugará dos partidos a la vez.`, 'success');
+                      }}
+                      style={{ padding: '0.3rem 0.65rem', borderRadius: '0.4rem', border: 'none', background: '#4F46E5', color: 'white', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      Es el mismo: vincular
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             {participants.filter(p => !newCoupleCategory || p.category === newCoupleCategory).length === 0 ? (
               <p style={{ fontSize: '0.875rem', color: '#94A3B8', fontStyle: 'italic' }}>No hay parejas en esta categoría todavía.</p>
             ) : (
@@ -5383,6 +5543,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       <span style={{ display: 'inline-block', backgroundColor: '#E2E8F0', padding: '0.1rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, color: '#475569', marginTop: '0.2rem', marginBottom: '0.1rem' }}>
                          {p.category}
                       </span>
+                      {vinculadasDe(p).map(v => (
+                        <span key={v.id} title="Comparten jugador: no jugarán a la vez" style={{ display: 'inline-block', marginLeft: '0.35rem', backgroundColor: '#E0E7FF', padding: '0.1rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.68rem', fontWeight: 700, color: '#3730A3' }}>
+                          🔗 También en {v.category} ({v.name})
+                        </span>
+                      ))}
                       {p.prefRules?.length > 0 && (
                         <div style={{ marginTop: '0.3rem', display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
                           {p.prefRules.map(r => (
@@ -5858,10 +6023,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         // Construimos un set por cada pareja con los slots que marcó como
         // no disponibles. Así en la grid podemos mostrar QUIÉN bloquea cada
         // celda (🅰️ = pareja 1, 🅱️ = pareja 2, 🅰🅱 = las dos).
+        // Partidos con hora de las parejas VINCULADAS a p (comparten jugador
+        // en otra categoría): ese jugador no puede estar en dos pistas a la vez.
+        const vincEditor = vinculosDeParejas(tConfig);
+        const durCat = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+        const durEste = durCat(cat);
+        const descansoEditor = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
+        const partidosVinculados = (p) => {
+          const ids = new Set(vincEditor[String(p?.id)] || []);
+          if (ids.size === 0) return [];
+          const out = [];
+          [rounds, consRounds].forEach(obj => Object.entries(obj || {}).forEach(([ct, catR]) => (catR || []).forEach(r => (r || []).forEach(m => {
+            if (!m || m.id === match.id) return;
+            const t = parsearTiempo(m.time);
+            if (!t) return;
+            const otra = [m.p1, m.p2].find(x => x && ids.has(String(x.id)));
+            if (!otra) return;
+            out.push({ dia: t.dia, hora: t.hora, pista: t.pista, ini: aMinutos(t.hora), dur: durCat(ct), cat: ct, pareja: otra.name });
+          }))));
+          return out;
+        };
         const blocksFor = (p) => {
           if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return new Set();
           const out = new Set();
           (p.prefRules || []).forEach(rule => (rule.slots || []).forEach(s => out.add(s)));
+          partidosVinculados(p).forEach(l => HOURS.forEach(h => {
+            const ini = aMinutos(h);
+            if (ini < l.ini + l.dur + descansoEditor && l.ini < ini + durEste + descansoEditor) out.add(`${l.dia} ${h}`);
+          }));
           return out;
         };
         const blockedByP1 = blocksFor(match.p1);
@@ -5924,6 +6113,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                               {r.label || r.day}
                             </span>
                           ))}
+                        </div>
+                      )}
+                      {partidosVinculados(p).length > 0 && (
+                        <div style={{ marginTop: '0.35rem', fontSize: '0.7rem', color: '#3730A3', fontWeight: 700, lineHeight: 1.5 }}>
+                          🔗 Su jugador también juega en otra categoría (bloquea esas horas y el descanso):{' '}
+                          {partidosVinculados(p).map(l => `${l.cat} ${l.dia} ${l.hora} en ${getCourtName(l.pista)}`).join(' · ')}
                         </div>
                       )}
                     </div>

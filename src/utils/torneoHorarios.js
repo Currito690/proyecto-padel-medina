@@ -134,8 +134,13 @@ export function crearAgenda(externos = {}) {
 export const pistaLibre = (agenda, dia, pista, ini, fin) =>
   !(agenda.pistas[`${dia}|${pista}`] || []).some(([a, b]) => solapa(ini, fin, a, b));
 
+// agenda.vinculos (opcional) = { idPareja: [ids] }: parejas distintas que
+// comparten un jugador (p. ej. Iván juega en C con uno y en D con otro). Una
+// pareja no está libre si cualquiera de sus vinculadas juega a esa hora (con
+// el mismo descanso), porque ese jugador no puede estar en dos pistas.
 export const parejaLibre = (agenda, id, absIni, absFin, descanso = 0) =>
-  !(agenda.parejas[id] || []).some(([a, b]) => absIni < b + descanso && a < absFin + descanso);
+  [id, ...((agenda.vinculos && agenda.vinculos[id]) || [])].every((k) =>
+    !(agenda.parejas[k] || []).some(([a, b]) => absIni < b + descanso && a < absFin + descanso));
 
 // Apunta un partido en la agenda. etiqueta: id del partido (para poder liberarlo).
 export function ocupar(agenda, parrilla, { dia, hora, pista, dur, parejas = [], etiqueta = null }) {
