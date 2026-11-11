@@ -1722,7 +1722,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          for (const s of half) { out.push(s); out.push(n + 1 - s); }
          return out;
        };
-       const positions = seedPositions(mainBracketSize);
+       // Cabezas de serie (hueco → nº de seed). Sobre la colocación estándar
+       // (#1 arriba, #2 abajo) se intercambian el 2º y el 4º cuarto del
+       // cuadro: así el #3 cae en el lado del #1 y el #4 en el OTRO lado,
+       // con el #2 (lo pidió el club: "si pongo el cuarto, que salga en el
+       // otro lado del cuadro"). Semifinales #1-#3 y #2-#4; los #5-#8 siguen
+       // uno por cuarto y cada cruce de R1 suma lo mismo que antes.
+       const positions = (() => {
+         const base = seedPositions(mainBracketSize);
+         const n = base.length;
+         if (n < 4) return base;
+         const q = n / 4;
+         for (let i = 0; i < q; i++) [base[q + i], base[3 * q + i]] = [base[3 * q + i], base[q + i]];
+         return base;
+       })();
 
        // Seeds POR CATEGORÍA y saneados: sin números repetidos, dentro del
        // cuadro y nunca más que plazas directas (con previa los seeds no la
@@ -1755,8 +1768,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        }
 
        const slot = new Array(mainBracketSize).fill(null);
-       // 1) Coloca los seeds en sus posiciones estándar (#1 y #2 en lados
-       //    opuestos del cuadro, etc.)
+       // 1) Coloca los seeds en sus posiciones (#1 arriba, #2 abajo, #3 con
+       //    el #1 y #4 en el otro lado; ver `positions`)
        seededHere.forEach(p => {
          const idx = positions.indexOf(seedOf(p));
          if (idx >= 0 && idx < mainBracketSize) slot[idx] = p;
@@ -3934,7 +3947,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
             <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em' }}>🏆 Cabezas de Serie · {tConfig.name}</h2>
             <p style={{ margin: '0.4rem 0 0', fontSize: '0.85rem', color: '#64748B', lineHeight: 1.5 }}>
-              Asigna las parejas que entran como <strong>cabezas de serie</strong>. Se colocan en posiciones estándar: #1 y #2 en lados opuestos del cuadro (solo se cruzarían en la final), #3 y #4 en cuartos opuestos. Si hay <strong>ronda previa</strong> (cuando el nº de parejas no es potencia de 2), los seeds enfrentan a los ganadores de la previa en R1.
+              Asigna las parejas que entran como <strong>cabezas de serie</strong>. Se colocan así: <strong>#1 arriba</strong> y <strong>#2 abajo</strong> (solo se cruzarían en la final); el <strong>#3 en el lado del #1</strong> y el <strong>#4 en el otro lado del cuadro</strong>, con el #2. Si hay <strong>ronda previa</strong> (cuando el nº de parejas no es potencia de 2), los seeds enfrentan a los ganadores de la previa en R1.
             </p>
           </div>
         </div>
