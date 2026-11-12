@@ -5402,12 +5402,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           const abre = tConfig.courtStartHours?.[c] || tConfig.courtStartHours?.[String(c)];
                           if (abre && hour < abre) return { c, estado: 'cerrada', texto: `abre a las ${abre}` };
                           const p = (partidosPorDia[day] || []).find(x => x.pista === c && x.ini < h + 60 && h < x.fin);
-                          if (p) return { c, estado: 'partido', texto: p.texto };
+                          if (p) {
+                            const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+                            const rango = `${hm(p.ini)}–${hm(p.fin)}`;
+                            // Un partido de 90 min ocupa también la hora siguiente: ahí no se repite
+                            // el partido, se avisa de que la pista sigue ocupada por él.
+                            if (p.ini < h) return { c, estado: 'sigue', texto: `Ocupada hasta las ${hm(p.fin)} (sigue el partido de las ${hm(p.ini)}: ${p.texto})`, corto: `↳ Sigue el partido de las ${hm(p.ini)} (hasta ${hm(p.fin)})` };
+                            return { c, estado: 'partido', texto: `${rango} · ${p.texto}`, corto: `${rango} · ${p.texto}` };
+                          }
                           if (externalBookings[`${day} ${hour}`]?.has(c)) return { c, estado: 'club', texto: 'reserva o entreno del club' };
                           return { c, estado: 'libre', texto: 'libre' };
                         });
                       };
-                      const colorPista = { libre: '#22C55E', partido: '#EF4444', club: '#64748B', cerrada: '#CBD5E1' };
+                      const colorPista = { libre: '#22C55E', partido: '#EF4444', sigue: '#FCA5A5', club: '#64748B', cerrada: '#CBD5E1' };
 
                       const getColor = (blocked) => {
                         if (blocked === 0) return { bg: '#DCFCE7', border: '#86EFAC', text: '#16A34A' };
@@ -5441,9 +5448,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       );
 
                       if (mapaVista === 'pistas') {
-                        const fondoPista = { libre: '#F0FDF4', partido: '#FEE2E2', club: '#F1F5F9', cerrada: '#F8FAFC' };
-                        const bordePista = { libre: '#BBF7D0', partido: '#FECACA', club: '#CBD5E1', cerrada: '#E2E8F0' };
-                        const textoPista = { libre: '#15803D', partido: '#B91C1C', club: '#475569', cerrada: '#94A3B8' };
+                        const fondoPista = { libre: '#F0FDF4', partido: '#FEE2E2', sigue: '#FFF5F5', club: '#F1F5F9', cerrada: '#F8FAFC' };
+                        const bordePista = { libre: '#BBF7D0', partido: '#FECACA', sigue: '#FECACA', club: '#CBD5E1', cerrada: '#E2E8F0' };
+                        const textoPista = { libre: '#15803D', partido: '#B91C1C', sigue: '#DC2626', club: '#475569', cerrada: '#94A3B8' };
                         const horasDia = getHoursForDay(diaPistas);
                         return (
                           <>
@@ -5472,8 +5479,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                       </td>
                                       {estadoPistas(diaPistas, hour).map(p => (
                                         <td key={p.c} style={{ padding: '0.25rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
-                                          <div title={p.texto} style={{ minHeight: '30px', borderRadius: '0.4rem', background: fondoPista[p.estado], border: `1.5px solid ${bordePista[p.estado]}`, color: textoPista[p.estado], fontWeight: 700, fontSize: '0.7rem', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0.2rem 0.35rem', lineHeight: 1.25 }}>
-                                            {p.estado === 'libre' ? 'Libre' : p.estado === 'club' ? '🔒 Reserva / entreno' : p.estado === 'cerrada' ? `Cerrada (${p.texto})` : p.texto}
+                                          <div title={p.texto} style={{ minHeight: '30px', borderRadius: '0.4rem', background: fondoPista[p.estado], border: `1.5px ${p.estado === 'sigue' ? 'dashed' : 'solid'} ${bordePista[p.estado]}`, color: textoPista[p.estado], fontWeight: p.estado === 'sigue' ? 600 : 700, fontStyle: p.estado === 'sigue' ? 'italic' : 'normal', fontSize: '0.7rem', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0.2rem 0.35rem', lineHeight: 1.25 }}>
+                                            {p.estado === 'libre' ? 'Libre' : p.estado === 'club' ? '🔒 Reserva / entreno' : p.estado === 'cerrada' ? `Cerrada (${p.texto})` : p.corto}
                                           </div>
                                         </td>
                                       ))}
