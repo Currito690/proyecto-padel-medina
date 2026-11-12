@@ -301,6 +301,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [showAvailability, setShowAvailability] = useState(false);
   const [availabilityCategory, setAvailabilityCategory] = useState('');
   const [hoveredSlot, setHoveredSlot] = useState(null);
+  // Mapa de disponibilidad: 'resumen' (todos los días) o 'pistas' (un día, pista por pista)
+  const [mapaVista, setMapaVista] = useState('resumen');
+  const [mapaDia, setMapaDia] = useState(null);
   const [gridDragAction, setGridDragAction] = useState(null);
   // Editor de horario con cuadrante (día × hora × pista)
   const [editingTime, setEditingTime] = useState(null); // { match, isCons, cat } | null
@@ -5379,9 +5382,75 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       if (activeDays.length === 0) {
                         return <p style={{ textAlign: 'center', color: '#94A3B8', fontSize: '0.85rem', padding: '2rem' }}>Configura las fechas del torneo para ver el mapa de disponibilidad.</p>;
                       }
-  
+
+                      // Selector de vista: resumen de todos los días o un día pista por pista.
+                      const diaPistas = activeDays.includes(mapaDia) ? mapaDia : activeDays[0];
+                      const botonVista = (v, txt) => (
+                        <button type="button" onClick={() => setMapaVista(v)} style={{ padding: '0.4rem 0.8rem', borderRadius: '999px', border: `1.5px solid ${mapaVista === v ? '#6D28D9' : '#C4B5FD'}`, background: mapaVista === v ? '#6D28D9' : 'white', color: mapaVista === v ? 'white' : '#6D28D9', fontWeight: 800, fontSize: '0.78rem', cursor: 'pointer' }}>{txt}</button>
+                      );
+                      const selectorVista = (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+                          {botonVista('resumen', '📅 Todos los días')}
+                          {botonVista('pistas', '🎾 Pista por pista')}
+                          {mapaVista === 'pistas' && (
+                            <span style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginLeft: '0.5rem' }}>
+                              {activeDays.map(d => (
+                                <button key={d} type="button" onClick={() => setMapaDia(d)} style={{ padding: '0.35rem 0.7rem', borderRadius: '999px', border: `1.5px solid ${diaPistas === d ? '#1B3A6E' : '#CBD5E1'}`, background: diaPistas === d ? '#1B3A6E' : 'white', color: diaPistas === d ? 'white' : '#475569', fontWeight: 700, fontSize: '0.76rem', cursor: 'pointer' }}>{d}</button>
+                              ))}
+                            </span>
+                          )}
+                        </div>
+                      );
+
+                      if (mapaVista === 'pistas') {
+                        const fondoPista = { libre: '#F0FDF4', partido: '#FEE2E2', club: '#F1F5F9', cerrada: '#F8FAFC' };
+                        const bordePista = { libre: '#BBF7D0', partido: '#FECACA', club: '#CBD5E1', cerrada: '#E2E8F0' };
+                        const textoPista = { libre: '#15803D', partido: '#B91C1C', club: '#475569', cerrada: '#94A3B8' };
+                        const horasDia = getHoursForDay(diaPistas);
+                        return (
+                          <>
+                            {selectorVista}
+                            <table className="tm-tabla-horas" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.74rem' }}>
+                              <thead>
+                                <tr style={{ backgroundColor: '#F8FAFC' }}>
+                                  <th style={{ padding: '0.5rem 0.6rem', color: '#64748B', fontWeight: 700, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Hora</th>
+                                  <th style={{ padding: '0.5rem 0.6rem', color: '#64748B', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>No pueden</th>
+                                  {Array.from({ length: totalPistas }, (_, i) => i + 1).map(c => (
+                                    <th key={c} style={{ padding: '0.5rem 0.6rem', color: '#0F172A', fontWeight: 800, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', minWidth: '130px' }}>{getCourtName(c)}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {horasDia.map(hour => {
+                                  const slot = `${diaPistas} ${hour}`;
+                                  const blocked = getBlockedCount(slot);
+                                  const color = getColor(blocked);
+                                  const nombres = blocked > 0 ? getBlockedNames(slot) : [];
+                                  return (
+                                    <tr key={hour}>
+                                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', fontWeight: 700, color: '#475569', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>{hour}</td>
+                                      <td title={nombres.length ? `No pueden:\n${nombres.join('\n')}` : 'Pueden todas'} style={{ padding: '0.3rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', textAlign: 'center' }}>
+                                        <span style={{ display: 'inline-block', minWidth: '2rem', padding: '0.2rem 0.4rem', borderRadius: '0.35rem', background: color.bg, border: `1px solid ${color.border}`, color: color.text, fontWeight: 800, cursor: nombres.length ? 'help' : 'default' }}>{blocked}</span>
+                                      </td>
+                                      {estadoPistas(diaPistas, hour).map(p => (
+                                        <td key={p.c} style={{ padding: '0.25rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
+                                          <div title={p.texto} style={{ minHeight: '30px', borderRadius: '0.4rem', background: fondoPista[p.estado], border: `1.5px solid ${bordePista[p.estado]}`, color: textoPista[p.estado], fontWeight: 700, fontSize: '0.7rem', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0.2rem 0.35rem', lineHeight: 1.25 }}>
+                                            {p.estado === 'libre' ? 'Libre' : p.estado === 'club' ? '🔒 Reserva / entreno' : p.estado === 'cerrada' ? `Cerrada (${p.texto})` : p.texto}
+                                          </div>
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </>
+                        );
+                      }
+
                       return (
                         <>
+                          {selectorVista}
                           <table className="tm-grid-horas" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
                             <thead>
                               <tr style={{ backgroundColor: '#F8FAFC' }}>
