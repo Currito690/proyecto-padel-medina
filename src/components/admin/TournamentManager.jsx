@@ -5115,6 +5115,214 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     );
   }
 
+  // Mapa de disponibilidad en tiempo real: se usa en la inscripción y en la
+  // zona de cuadros (lo pidió el club el 12/11/2026).
+  const renderMapaDisponibilidad = () => (
+    <>
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
+            {/* ── Availability Heatmap ── */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <button
+                onClick={() => setShowAvailability(!showAvailability)}
+                style={{
+                  width: '100%', padding: '0.875rem 1rem', borderRadius: '0.75rem',
+                  border: '1.5px solid #C4B5FD', backgroundColor: showAvailability ? '#7C3AED' : '#F5F3FF',
+                  color: showAvailability ? 'white' : '#6D28D9', fontWeight: 800, fontSize: '0.9rem',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                  transition: 'all 0.2s', boxShadow: showAvailability ? '0 4px 12px rgba(124,58,237,0.3)' : 'none'
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
+                </svg>
+                📊 {showAvailability ? 'Ocultar' : 'Ver'} Disponibilidad en Tiempo Real
+                {publishedId && showAvailability && (
+                  <span style={{ marginLeft: '0.5rem', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22C55E', display: 'inline-block', animation: 'pulse 2s infinite' }} />
+                )}
+              </button>
+  
+              {showAvailability && (
+                <div style={{ marginTop: '1rem', backgroundColor: 'white', border: '1.5px solid #C4B5FD', borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 12px rgba(124,58,237,0.08)' }}>
+                  {/* Header */}
+                  <div style={{ padding: '1rem 1.25rem', background: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: 'white' }}>
+                        Mapa de Disponibilidad
+                      </h4>
+                      <p style={{ margin: '0.15rem 0 0', fontSize: '0.72rem', color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>
+                        {participants.length} parejas inscritas · Horas bloqueadas por slot
+                        {publishedId && ' · En vivo'}
+                      </p>
+                    </div>
+                    <select
+                      value={availabilityCategory}
+                      onChange={e => setAvailabilityCategory(e.target.value)}
+                      style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', backgroundColor: 'rgba(255,255,255,0.9)', color: '#6D28D9' }}
+                    >
+                      <option value="">Todas las categorías</option>
+                      {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+  
+                  {/* Legend */}
+                  <div style={{ padding: '0.75rem 1.25rem', backgroundColor: '#FAFAF9', borderBottom: '1px solid #E2E8F0', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', fontSize: '0.72rem', fontWeight: 600, color: '#64748B' }}>
+                    {[
+                      { bg: '#DCFCE7', border: '#86EFAC', label: '0 bloqueadas' },
+                      { bg: '#FEF9C3', border: '#FDE047', label: '≤25%' },
+                      { bg: '#FED7AA', border: '#FB923C', label: '≤50%' },
+                      { bg: '#FECACA', border: '#F87171', label: '>50%' },
+                    ].map(item => (
+                      <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <div style={{ width: '14px', height: '14px', borderRadius: '3px', backgroundColor: item.bg, border: `1px solid ${item.border}` }} />
+                        {item.label}
+                      </div>
+                    ))}
+                  </div>
+  
+                  {/* Grid */}
+                  <div style={{ padding: '1rem', overflowX: 'auto' }}>
+                    {(() => {
+                      const filteredP = availabilityCategory
+                        ? participants.filter(p => p.category === availabilityCategory)
+                        : participants;
+                      const totalP = filteredP.length;
+  
+                      const getBlockedCount = (slot) => {
+                        return filteredP.filter(p => p.prefRules?.some(r => r.slots?.includes(slot))).length;
+                      };
+  
+                      const getBlockedNames = (slot) => {
+                        return filteredP.filter(p => p.prefRules?.some(r => r.slots?.includes(slot))).map(p => p.name);
+                      };
+  
+                      const getColor = (blocked) => {
+                        if (blocked === 0) return { bg: '#DCFCE7', border: '#86EFAC', text: '#16A34A' };
+                        const pct = totalP > 0 ? blocked / totalP : 0;
+                        if (pct <= 0.25) return { bg: '#FEF9C3', border: '#FDE047', text: '#A16207' };
+                        if (pct <= 0.50) return { bg: '#FED7AA', border: '#FB923C', text: '#C2410C' };
+                        return { bg: '#FECACA', border: '#F87171', text: '#DC2626' };
+                      };
+  
+                      if (activeDays.length === 0) {
+                        return <p style={{ textAlign: 'center', color: '#94A3B8', fontSize: '0.85rem', padding: '2rem' }}>Configura las fechas del torneo para ver el mapa de disponibilidad.</p>;
+                      }
+  
+                      return (
+                        <>
+                          <table className="tm-grid-horas" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
+                            <thead>
+                              <tr style={{ backgroundColor: '#F8FAFC' }}>
+                                <th style={{ padding: '0.5rem 0.6rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '48px', position: 'sticky', left: 0, backgroundColor: '#F8FAFC', zIndex: 1 }}>Hora</th>
+                                {activeDays.map(day => (
+                                  <th key={day} style={{ padding: '0.5rem 0.4rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '72px' }}>
+                                    {day}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {allGridHours.map((hour, hIdx) => {
+                                const courtsAvail = getAvailableCourtsForHour(hour, tConfig.courtsCount, tConfig.courtStartHours);
+                                return (
+                                  <tr key={hour} style={{ backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFB' }}>
+                                    <td style={{ padding: '0.15rem 0.6rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFB', zIndex: 1 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.3rem' }}>
+                                        {hour}
+                                        <span style={{ fontSize: '0.6rem', color: '#94A3B8', fontWeight: 500 }}>({courtsAvail}p)</span>
+                                      </div>
+                                    </td>
+                                    {activeDays.map(day => {
+                                      const isValid = getHoursForDay(day).includes(hour);
+                                      const slot = `${day} ${hour}`;
+                                      const blocked = isValid ? getBlockedCount(slot) : 0;
+                                      const color = isValid ? getColor(blocked) : { bg: '#F1F5F9', border: '#E2E8F0', text: '#CBD5E1' };
+                                      const isHovered = hoveredSlot === slot;
+                                      const blockedNames = isHovered ? getBlockedNames(slot) : [];
+  
+                                      return (
+                                        <td key={day} style={{ padding: '0.15rem 0.3rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', position: 'relative' }}>
+                                          <div
+                                            onMouseEnter={isValid ? () => setHoveredSlot(slot) : undefined}
+                                            onMouseLeave={() => setHoveredSlot(null)}
+                                            style={{
+                                              height: '28px',
+                                              borderRadius: '4px',
+                                              backgroundColor: color.bg,
+                                              border: `1px solid ${color.border}`,
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              cursor: isValid ? 'help' : 'default',
+                                              transition: 'all 0.1s',
+                                              transform: isHovered ? 'scale(1.05)' : 'scale(1)',
+                                            }}
+                                          >
+                                            {isValid && totalP > 0 && (
+                                              <span style={{ fontSize: '0.68rem', fontWeight: 800, color: color.text }}>
+                                                {blocked}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {/* Tooltip */}
+                                          {isHovered && isValid && blocked > 0 && (
+                                            <div style={{
+                                              position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+                                              backgroundColor: '#1E293B', color: 'white', padding: '0.5rem 0.75rem',
+                                              borderRadius: '0.5rem', fontSize: '0.7rem', fontWeight: 600,
+                                              whiteSpace: 'nowrap', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+                                              pointerEvents: 'none', marginBottom: '4px'
+                                            }}>
+                                              <div style={{ marginBottom: '0.25rem', color: '#F87171', fontWeight: 700 }}>
+                                                {blocked} pareja{blocked !== 1 ? 's' : ''} no disponible{blocked !== 1 ? 's' : ''}:
+                                              </div>
+                                              {blockedNames.map((name, i) => (
+                                                <div key={i} style={{ color: '#CBD5E1', fontSize: '0.65rem' }}>• {name}</div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+  
+                          {/* Court availability summary */}
+                          {tConfig.courtsCount >= 2 && Object.keys(tConfig.courtStartHours || {}).length > 0 && (
+                            <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', backgroundColor: '#FFFAF0', borderRadius: '0.625rem', border: '1px solid #FED7AA' }}>
+                              <p style={{ margin: '0 0 0.4rem', fontSize: '0.75rem', fontWeight: 800, color: '#9A3412' }}>🕐 Pistas disponibles por hora:</p>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                {(() => {
+                                  // Group hours by court count
+                                  const groups = {};
+                                  allGridHours.forEach(h => {
+                                    const courts = getAvailableCourtsForHour(h, tConfig.courtsCount, tConfig.courtStartHours);
+                                    if (!groups[courts]) groups[courts] = [];
+                                    groups[courts].push(h);
+                                  });
+                                  return Object.entries(groups).map(([count, hours]) => (
+                                    <span key={count} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#C2410C', backgroundColor: '#FFF7ED', padding: '0.2rem 0.6rem', borderRadius: '2rem', border: '1px solid #FED7AA' }}>
+                                      {hours[0]}–{hours[hours.length - 1]}: {count} pista{count > 1 ? 's' : ''}
+                                    </span>
+                                  ));
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+    </>
+  );
+
   if (phase === 'setup') {
     return (
       <div onMouseUp={() => setGridDragging(false)}>
@@ -5599,206 +5807,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             )}
           </div>
 
-          {/* ── Availability Heatmap ── */}
-          <div style={{ marginBottom: '1.5rem' }}>
-            <button
-              onClick={() => setShowAvailability(!showAvailability)}
-              style={{
-                width: '100%', padding: '0.875rem 1rem', borderRadius: '0.75rem',
-                border: '1.5px solid #C4B5FD', backgroundColor: showAvailability ? '#7C3AED' : '#F5F3FF',
-                color: showAvailability ? 'white' : '#6D28D9', fontWeight: 800, fontSize: '0.9rem',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                transition: 'all 0.2s', boxShadow: showAvailability ? '0 4px 12px rgba(124,58,237,0.3)' : 'none'
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
-              </svg>
-              📊 {showAvailability ? 'Ocultar' : 'Ver'} Disponibilidad en Tiempo Real
-              {publishedId && showAvailability && (
-                <span style={{ marginLeft: '0.5rem', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22C55E', display: 'inline-block', animation: 'pulse 2s infinite' }} />
-              )}
-            </button>
-
-            {showAvailability && (
-              <div style={{ marginTop: '1rem', backgroundColor: 'white', border: '1.5px solid #C4B5FD', borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 12px rgba(124,58,237,0.08)' }}>
-                {/* Header */}
-                <div style={{ padding: '1rem 1.25rem', background: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  <div>
-                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: 'white' }}>
-                      Mapa de Disponibilidad
-                    </h4>
-                    <p style={{ margin: '0.15rem 0 0', fontSize: '0.72rem', color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>
-                      {participants.length} parejas inscritas · Horas bloqueadas por slot
-                      {publishedId && ' · En vivo'}
-                    </p>
-                  </div>
-                  <select
-                    value={availabilityCategory}
-                    onChange={e => setAvailabilityCategory(e.target.value)}
-                    style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', backgroundColor: 'rgba(255,255,255,0.9)', color: '#6D28D9' }}
-                  >
-                    <option value="">Todas las categorías</option>
-                    {tConfig.categories.split(',').map(c => c.trim()).filter(Boolean).map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Legend */}
-                <div style={{ padding: '0.75rem 1.25rem', backgroundColor: '#FAFAF9', borderBottom: '1px solid #E2E8F0', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', fontSize: '0.72rem', fontWeight: 600, color: '#64748B' }}>
-                  {[
-                    { bg: '#DCFCE7', border: '#86EFAC', label: '0 bloqueadas' },
-                    { bg: '#FEF9C3', border: '#FDE047', label: '≤25%' },
-                    { bg: '#FED7AA', border: '#FB923C', label: '≤50%' },
-                    { bg: '#FECACA', border: '#F87171', label: '>50%' },
-                  ].map(item => (
-                    <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                      <div style={{ width: '14px', height: '14px', borderRadius: '3px', backgroundColor: item.bg, border: `1px solid ${item.border}` }} />
-                      {item.label}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Grid */}
-                <div style={{ padding: '1rem', overflowX: 'auto' }}>
-                  {(() => {
-                    const filteredP = availabilityCategory
-                      ? participants.filter(p => p.category === availabilityCategory)
-                      : participants;
-                    const totalP = filteredP.length;
-
-                    const getBlockedCount = (slot) => {
-                      return filteredP.filter(p => p.prefRules?.some(r => r.slots?.includes(slot))).length;
-                    };
-
-                    const getBlockedNames = (slot) => {
-                      return filteredP.filter(p => p.prefRules?.some(r => r.slots?.includes(slot))).map(p => p.name);
-                    };
-
-                    const getColor = (blocked) => {
-                      if (blocked === 0) return { bg: '#DCFCE7', border: '#86EFAC', text: '#16A34A' };
-                      const pct = totalP > 0 ? blocked / totalP : 0;
-                      if (pct <= 0.25) return { bg: '#FEF9C3', border: '#FDE047', text: '#A16207' };
-                      if (pct <= 0.50) return { bg: '#FED7AA', border: '#FB923C', text: '#C2410C' };
-                      return { bg: '#FECACA', border: '#F87171', text: '#DC2626' };
-                    };
-
-                    if (activeDays.length === 0) {
-                      return <p style={{ textAlign: 'center', color: '#94A3B8', fontSize: '0.85rem', padding: '2rem' }}>Configura las fechas del torneo para ver el mapa de disponibilidad.</p>;
-                    }
-
-                    return (
-                      <>
-                        <table className="tm-grid-horas" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', userSelect: 'none' }}>
-                          <thead>
-                            <tr style={{ backgroundColor: '#F8FAFC' }}>
-                              <th style={{ padding: '0.5rem 0.6rem', color: '#94A3B8', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '48px', position: 'sticky', left: 0, backgroundColor: '#F8FAFC', zIndex: 1 }}>Hora</th>
-                              {activeDays.map(day => (
-                                <th key={day} style={{ padding: '0.5rem 0.4rem', color: '#0F172A', fontWeight: 700, textAlign: 'center', borderBottom: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', minWidth: '72px' }}>
-                                  {day}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {allGridHours.map((hour, hIdx) => {
-                              const courtsAvail = getAvailableCourtsForHour(hour, tConfig.courtsCount, tConfig.courtStartHours);
-                              return (
-                                <tr key={hour} style={{ backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFB' }}>
-                                  <td style={{ padding: '0.15rem 0.6rem', color: '#64748B', fontWeight: 600, textAlign: 'right', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: hIdx % 2 === 0 ? 'white' : '#FAFAFB', zIndex: 1 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.3rem' }}>
-                                      {hour}
-                                      <span style={{ fontSize: '0.6rem', color: '#94A3B8', fontWeight: 500 }}>({courtsAvail}p)</span>
-                                    </div>
-                                  </td>
-                                  {activeDays.map(day => {
-                                    const isValid = getHoursForDay(day).includes(hour);
-                                    const slot = `${day} ${hour}`;
-                                    const blocked = isValid ? getBlockedCount(slot) : 0;
-                                    const color = isValid ? getColor(blocked) : { bg: '#F1F5F9', border: '#E2E8F0', text: '#CBD5E1' };
-                                    const isHovered = hoveredSlot === slot;
-                                    const blockedNames = isHovered ? getBlockedNames(slot) : [];
-
-                                    return (
-                                      <td key={day} style={{ padding: '0.15rem 0.3rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', position: 'relative' }}>
-                                        <div
-                                          onMouseEnter={isValid ? () => setHoveredSlot(slot) : undefined}
-                                          onMouseLeave={() => setHoveredSlot(null)}
-                                          style={{
-                                            height: '28px',
-                                            borderRadius: '4px',
-                                            backgroundColor: color.bg,
-                                            border: `1px solid ${color.border}`,
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            cursor: isValid ? 'help' : 'default',
-                                            transition: 'all 0.1s',
-                                            transform: isHovered ? 'scale(1.05)' : 'scale(1)',
-                                          }}
-                                        >
-                                          {isValid && totalP > 0 && (
-                                            <span style={{ fontSize: '0.68rem', fontWeight: 800, color: color.text }}>
-                                              {blocked}
-                                            </span>
-                                          )}
-                                        </div>
-                                        {/* Tooltip */}
-                                        {isHovered && isValid && blocked > 0 && (
-                                          <div style={{
-                                            position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
-                                            backgroundColor: '#1E293B', color: 'white', padding: '0.5rem 0.75rem',
-                                            borderRadius: '0.5rem', fontSize: '0.7rem', fontWeight: 600,
-                                            whiteSpace: 'nowrap', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-                                            pointerEvents: 'none', marginBottom: '4px'
-                                          }}>
-                                            <div style={{ marginBottom: '0.25rem', color: '#F87171', fontWeight: 700 }}>
-                                              {blocked} pareja{blocked !== 1 ? 's' : ''} no disponible{blocked !== 1 ? 's' : ''}:
-                                            </div>
-                                            {blockedNames.map((name, i) => (
-                                              <div key={i} style={{ color: '#CBD5E1', fontSize: '0.65rem' }}>• {name}</div>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-
-                        {/* Court availability summary */}
-                        {tConfig.courtsCount >= 2 && Object.keys(tConfig.courtStartHours || {}).length > 0 && (
-                          <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', backgroundColor: '#FFFAF0', borderRadius: '0.625rem', border: '1px solid #FED7AA' }}>
-                            <p style={{ margin: '0 0 0.4rem', fontSize: '0.75rem', fontWeight: 800, color: '#9A3412' }}>🕐 Pistas disponibles por hora:</p>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                              {(() => {
-                                // Group hours by court count
-                                const groups = {};
-                                allGridHours.forEach(h => {
-                                  const courts = getAvailableCourtsForHour(h, tConfig.courtsCount, tConfig.courtStartHours);
-                                  if (!groups[courts]) groups[courts] = [];
-                                  groups[courts].push(h);
-                                });
-                                return Object.entries(groups).map(([count, hours]) => (
-                                  <span key={count} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#C2410C', backgroundColor: '#FFF7ED', padding: '0.2rem 0.6rem', borderRadius: '2rem', border: '1px solid #FED7AA' }}>
-                                    {hours[0]}–{hours[hours.length - 1]}: {count} pista{count > 1 ? 's' : ''}
-                                  </span>
-                                ));
-                              })()}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-          </div>
+          {renderMapaDisponibilidad()}
 
           <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
 
@@ -6780,6 +6789,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           )}
         </div>
       </div>
+
+      {/* Mapa de disponibilidad también en la zona de cuadros */}
+      {!isExporting && renderMapaDisponibilidad()}
 
       {Object.keys(rounds).map(cat => {
          const catRounds = rounds[cat] || [];
