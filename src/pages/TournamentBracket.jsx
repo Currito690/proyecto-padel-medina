@@ -309,6 +309,17 @@ export default function TournamentBracket() {
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: 'clamp(1rem, 3vw, 2rem) clamp(0.75rem, 3vw, 1.5rem)' }}>
 
+        {/* Aviso del club (config.avisoPublico): lo ve cualquiera que entre al torneo. */}
+        {typeof cfg.avisoPublico === 'string' && cfg.avisoPublico.trim() && (
+          <div role="status" style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '1rem 1.1rem', marginBottom: '1.25rem', backgroundColor: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: '1rem', color: '#78350F' }}>
+            <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1 }}>⚠️</span>
+            <div>
+              <p style={{ margin: 0, fontWeight: 800, fontSize: '0.95rem' }}>Aviso del club</p>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.95rem', lineHeight: 1.5, whiteSpace: 'pre-line' }}>{cfg.avisoPublico.trim()}</p>
+            </div>
+          </div>
+        )}
+
         {!hasBracket ? (
           <div style={{ textAlign: 'center', padding: '4rem 2rem', backgroundColor: 'white', borderRadius: '1.5rem', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
             <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#EBF0FA', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>

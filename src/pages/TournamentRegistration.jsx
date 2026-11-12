@@ -713,6 +713,17 @@ export default function TournamentRegistration() {
       </div>
       <main className="treg-main" style={{ maxWidth: '640px', margin: '0 auto', backgroundColor: 'white', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
 
+        {/* Aviso del club (config.avisoPublico): lo ve cualquiera que entre al torneo. */}
+        {typeof tournament.config.avisoPublico === 'string' && tournament.config.avisoPublico.trim() && (
+          <div role="status" style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '1rem 1.1rem', marginBottom: '1.5rem', backgroundColor: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: '1rem', color: '#78350F' }}>
+            <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1 }}>⚠️</span>
+            <div>
+              <p style={{ margin: 0, fontWeight: 800, fontSize: '0.95rem' }}>Aviso del club</p>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.95rem', lineHeight: 1.5, whiteSpace: 'pre-line' }}>{tournament.config.avisoPublico.trim()}</p>
+            </div>
+          </div>
+        )}
+
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
           {tournament.config.posterUrl && (
             <img src={tournament.config.posterUrl} alt={`Cartel: ${tournament.name}`} style={{ display: 'block', width: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: '1rem', marginBottom: '1.25rem', backgroundColor: '#F8FAFC' }} />

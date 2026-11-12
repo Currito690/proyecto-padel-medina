@@ -14,14 +14,17 @@ import TournamentBracket from '../src/pages/TournamentBracket';
 import { prepararCartel } from '../src/utils/cartel';
 import TournamentRegistration from '../src/pages/TournamentRegistration';
 
-const vista = new URLSearchParams(window.location.search).get('vista');
+const params = new URLSearchParams(window.location.search);
+const vista = params.get('vista');
+// ?aviso=texto → prueba el aviso del club (config.avisoPublico) en las páginas públicas.
+const aviso = params.get('aviso');
 window.__sim.prepararCartel = prepararCartel; // para probar el cartel desde fuera
 const raiz = createRoot(document.getElementById('root'));
 
 if (vista === 'cuadro') {
   fetch('/cuadro.json').then((r) => r.json()).then((config) => {
     const t = window.__SIM_DATOS.tournaments[0];
-    t.config = { ...config, bracketPublished: true };
+    t.config = { ...config, bracketPublished: true, ...(aviso ? { avisoPublico: aviso } : {}) };
     t.status = 'open';
     raiz.render(
       <MemoryRouter initialEntries={[`/torneos/${t.id}/cuadro`]}>
@@ -38,7 +41,7 @@ if (vista === 'cuadro') {
   const t = window.__SIM_DATOS.tournaments[0];
   t.status = 'open';
   // Abierta de verdad: datos.js viene de una simulación con la inscripción ya cerrada.
-  t.config = { ...t.config, posterUrl: '/cartel-prueba.jpg', registrationClosed: false, bracketPublished: false };
+  t.config = { ...t.config, posterUrl: '/cartel-prueba.jpg', registrationClosed: params.get('cerrada') === '1', bracketPublished: false, ...(aviso ? { avisoPublico: aviso } : {}) };
   raiz.render(
     <MemoryRouter initialEntries={[`/torneos/${t.id}`]}>
       <Routes>
