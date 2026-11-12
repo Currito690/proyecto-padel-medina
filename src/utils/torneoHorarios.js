@@ -250,7 +250,7 @@ export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
 // ── Sorteo por afinidad horaria ─────────────────────────────────────────────
 // El club pidió que, al generar el cuadro, las parejas que se pueden cruzar
 // tengan horarios compatibles. No solo las del primer partido (1 vs 2), sino
-// el bloque de cuatro (1-2 y 3-4): quien gane de esas cuatro sigue adelante,
+// el bloque de cuatro (1-2 y 3-4) y así hasta la final: quien gane de esas cuatro sigue adelante,
 // y los perdedores de 1-2 y 3-4 se cruzan en la consolación (es espejo).
 //
 // hojas: una entrada por plaza del cuadro principal (potencia de 2), con las
@@ -264,7 +264,10 @@ export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
 // mientras mejore: entre colocaciones igual de buenas manda el azar.
 // Modifica hojas y devuelve { antes, despues } (coste; menos es mejor).
 const costeHorasComunes = (c) => (c === 0 ? 100 : Math.max(0, 6 - c) ** 2);
-const PESO_RONDA = [4, 2, 1]; // primer cruce, segundo (y consolación), tercero; luego 0.5
+// Pesos por ronda: primer cruce, segundo (y consolación), y después cuartos,
+// semifinal y final: el club quiere que cada pareja encaje con TODAS las que
+// se puede encontrar hasta la final, no solo con las de su bloque.
+const PESO_RONDA = [4, 3, 3, 3];
 
 export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math.random } = {}) {
   const N = hojas.length;
@@ -297,7 +300,7 @@ export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math
     for (const h of hojas) if (h.length === 2) t += PESO_RONDA[0] * cc(h[0], h[1]);
     // Cruces posibles por ronda: mitad izquierda contra mitad derecha de cada bloque.
     for (let b = 2, nivel = 0; b <= N; b *= 2, nivel++) {
-      const peso = PESO_RONDA[nivel] ?? 0.5;
+      const peso = PESO_RONDA[nivel] ?? 3;
       for (let s = 0; s < N; s += b) {
         let suma = 0;
         let cruces = 0;
