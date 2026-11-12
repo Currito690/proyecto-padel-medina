@@ -260,6 +260,12 @@ export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
 // (cabezas de serie, byes) se quedan fijas, pero cuentan: a una cabeza de
 // serie le caen al lado parejas que encajan con ella.
 //
+// Las horas en común se cuentan SOLO en los días en que se jugaría ese cruce
+// (diaMinimo: { previa, niveles: [día mínimo de cada ronda del cuadro] }, con
+// el mismo reparto de días que usa el programador). Dos parejas con muchas
+// horas en común el viernes pero ninguna el domingo no "encajan" para una
+// final de domingo. Sin diaMinimo se cuentan todos los días del torneo.
+//
 // Se parte del orden que llega (sorteo al azar) y se intercambian parejas
 // mientras mejore: entre colocaciones igual de buenas manda el azar.
 // Modifica hojas y devuelve { antes, despues } (coste; menos es mejor).
@@ -268,8 +274,15 @@ const costeHorasComunes = (c) => (c === 0 ? 100 : Math.max(0, 6 - c) ** 2);
 // semifinal y final: el club quiere que cada pareja encaje con TODAS las que
 // se puede encontrar hasta la final, no solo con las de su bloque.
 const PESO_RONDA = [4, 3, 3, 3];
+// Cada cruce posible SIN ninguna hora en común los días de su ronda (ese
+// partido no se podría jugar) suma esto aparte, sin promediar: en la final de
+// un cuadro de 16 hay 49 finales posibles y, con solo la media, una imposible
+// apenas pesaba. Como cada par de parejas solo se puede cruzar en una ronda,
+// esto empuja a que las parejas que solo coinciden los primeros días se crucen
+// pronto (sin diaMinimo no cambia nada: el total de imposibles es fijo).
+const PENALIZA_IMPOSIBLE = 30;
 
-export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math.random } = {}) {
+export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math.random, diaMinimo = {} } = {}) {
   const N = hojas.length;
   if (!movibles.length || N < 2) return { antes: 0, despues: 0 };
 
@@ -284,37 +297,62 @@ export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math
     mascaras.push(huecos.map((s) => disponibleEn(b, s.dia, s.ini, s.ini + dur)));
   });
   const n = mascaras.length;
-  const coste = Array.from({ length: n }, () => new Float64Array(n));
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      let c = 0;
-      for (let k = 0; k < huecos.length; k++) if (mascaras[i][k] && mascaras[j][k]) c++;
-      coste[i][j] = coste[j][i] = costeHorasComunes(c);
+  // Coste de cada par de parejas contando solo los huecos desde el día d
+  // (una matriz por día mínimo distinto; se calculan cuando hacen falta).
+  const porDia = new Map();
+  const matriz = (d) => {
+    if (porDia.has(d)) return porDia.get(d);
+    const ks = [];
+    huecos.forEach((s, k) => { if ((s.idxDia ?? 0) >= d) ks.push(k); });
+    const coste = Array.from({ length: n }, () => new Float64Array(n));
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let c = 0;
+        for (const k of ks) if (mascaras[i][k] && mascaras[j][k]) c++;
+        coste[i][j] = coste[j][i] = costeHorasComunes(c);
+      }
     }
-  }
-  const cc = (a, b) => coste[idx.get(a.id)][idx.get(b.id)];
+    porDia.set(d, coste);
+    return coste;
+  };
+  const IMPOSIBLE = costeHorasComunes(0);
+  const diaPrevia = diaMinimo.previa ?? 0;
+  const diaNivel = (nivel) => diaMinimo.niveles?.[nivel] ?? 0;
 
   const puntuar = () => {
     let t = 0;
     // Partido de ronda previa (las dos parejas de la plaza).
-    for (const h of hojas) if (h.length === 2) t += PESO_RONDA[0] * cc(h[0], h[1]);
+    const Mp = matriz(diaPrevia);
+    for (const h of hojas) {
+      if (h.length !== 2) continue;
+      const v = Mp[idx.get(h[0].id)][idx.get(h[1].id)];
+      t += PESO_RONDA[0] * v + (v >= IMPOSIBLE ? PENALIZA_IMPOSIBLE : 0);
+    }
     // Cruces posibles por ronda: mitad izquierda contra mitad derecha de cada bloque.
     for (let b = 2, nivel = 0; b <= N; b *= 2, nivel++) {
       const peso = PESO_RONDA[nivel] ?? 3;
+      const M = matriz(diaNivel(nivel));
       for (let s = 0; s < N; s += b) {
         let suma = 0;
         let cruces = 0;
+        let imposibles = 0;
         for (let x = s; x < s + b / 2; x++) {
           if (!hojas[x].length) continue;
           for (let y = s + b / 2; y < s + b; y++) {
             if (!hojas[y].length) continue;
             let m = 0;
-            for (const a of hojas[x]) for (const c of hojas[y]) m += cc(a, c);
+            for (const a of hojas[x]) {
+              for (const c of hojas[y]) {
+                const v = M[idx.get(a.id)][idx.get(c.id)];
+                m += v;
+                if (v >= IMPOSIBLE) imposibles++;
+              }
+            }
             suma += m / (hojas[x].length * hojas[y].length);
             cruces++;
           }
         }
-        if (cruces) t += (peso * suma) / cruces;
+        if (cruces) t += (peso * suma) / cruces + PENALIZA_IMPOSIBLE * imposibles;
       }
     }
     return t;
@@ -341,9 +379,14 @@ export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math
   const antes = puntuar();
   let mejor = escalar();
   let mejorOrden = movibles.map(leer);
-  // Varios intentos desde otros sorteos (menos si el cuadro es grande).
-  const intentos = movibles.length > 40 ? 2 : 6;
-  for (let r = 0; r < intentos; r++) {
+  // Varios intentos desde otros sorteos. Con los cuadros del club cada uno
+  // tarda milisegundos, y con 6 se quedaba 1 de cada 5 veces en una colocación
+  // mala que solo se arregla moviendo dos parejas a la vez (una final femenina
+  // imposible el domingo). Con cuadros enormes se limita por tiempo para no
+  // dejar el panel colgado.
+  const intentos = movibles.length > 40 ? 2 : 30;
+  const limite = Date.now() + 2000;
+  for (let r = 0; r < intentos && Date.now() < limite; r++) {
     const vals = movibles.map(leer);
     for (let i = vals.length - 1; i > 0; i--) {
       const j = Math.floor(azar() * (i + 1));

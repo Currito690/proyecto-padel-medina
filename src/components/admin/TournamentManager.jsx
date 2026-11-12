@@ -1545,6 +1545,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     agenda.vinculos = vinculosDeParejas(tConfig);
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
     const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
+    // Día mínimo de cada ronda: el mismo reparto que usa el programador más
+    // abajo (y al llegar un resultado). La afinidad horaria cuenta las horas
+    // en común de dos parejas desde el día en que se jugaría su cruce.
+    const diaMinimoRonda = (r, numRounds) => ((activeDateList.length <= 1 || numRounds <= 1)
+      ? 0
+      : Math.round((r * (activeDateList.length - 1)) / (numRounds - 1)));
 
     // finalSlots: horas del torneo en las que puede cada pareja. Va en la copia
     // de la pareja que se guarda dentro de cada partido (la lee el editor de
@@ -1862,12 +1868,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          }
          // Sorteo por afinidad horaria: las parejas sin cabeza de serie se
          // recolocan para que las que se pueden cruzar (1-2, y el bloque 1-2-3-4,
-         // también en la consolación) tengan horas en común.
+         // también en la consolación, y así hasta la final) tengan horas en
+         // común el día en que se jugaría ese cruce.
          {
            const hojas = slot.map(x => (x && !x.isBye ? [x] : []));
            const movibles = [];
            slot.forEach((x, i) => { if (x && !x.isBye && !seededHere.some(s => s.id === x.id)) movibles.push([i, 0]); });
-           colocarPorAfinidad(hojas, movibles, parrilla, durationMin);
+           const totalRondas = Math.log2(mainBracketSize);
+           colocarPorAfinidad(hojas, movibles, parrilla, durationMin, {
+             diaMinimo: { niveles: Array.from({ length: totalRondas }, (_, r) => diaMinimoRonda(r, totalRondas)) },
+           });
            movibles.forEach(([i]) => { slot[i] = hojas[i][0]; });
          }
          catParts = slot;
@@ -1940,7 +1950,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              if (x?.isPrelimPlaceholder) hojas[i].forEach((_, k) => movibles.push([i, k]));
              else if (x && !x.isBye && !seededHere.some(s => s.id === x.id)) movibles.push([i, 0]);
            });
-           colocarPorAfinidad(hojas, movibles, parrilla, durationMin);
+           // La previa es la ronda 0 y el cuadro principal empieza en la 1.
+           const totalRondas = 1 + Math.log2(floorPow);
+           colocarPorAfinidad(hojas, movibles, parrilla, durationMin, {
+             diaMinimo: {
+               previa: diaMinimoRonda(0, totalRondas),
+               niveles: Array.from({ length: totalRondas - 1 }, (_, r) => diaMinimoRonda(r + 1, totalRondas)),
+             },
+           });
            slot.forEach((x, i) => {
              if (x?.isPrelimPlaceholder) {
                hojas[i].forEach((p, k) => { prelimPairs[x.prelimMatchIdx * 2 + k] = p; });
