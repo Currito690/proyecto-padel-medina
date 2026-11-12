@@ -358,6 +358,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // agrupados por día y ordenados por hora. Útil para imprimir el "parte del
   // día" o llamar a las parejas en orden.
   const [showMatchesList, setShowMatchesList] = useState(false);
+  // Lista de jugadores por categoría (con teléfonos de la inscripción) y PDF.
+  const [showJugadores, setShowJugadores] = useState(false);
+  const [jugadoresRegs, setJugadoresRegs] = useState([]);
   const [matchesListDayFilter, setMatchesListDayFilter] = useState('all');
   const [matchesListPdfLoading, setMatchesListPdfLoading] = useState(false);
   // Modal pre-generación: deja al admin elegir/confirmar el formato
@@ -5115,6 +5118,134 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     );
   }
 
+  // ── Lista de jugadores por categoría (botón "👥 Jugadores") ──────────────
+  // Sale de la lista de parejas del torneo (participants); los teléfonos, de
+  // su inscripción online si la tienen (las añadidas a mano no traen).
+  const abrirJugadores = async () => {
+    setShowJugadores(true);
+    if (!publishedId) { setJugadoresRegs([]); return; }
+    const { data, error } = await supabase.from('tournament_registrations')
+      .select('id, player1_name, player2_name, player1_phone, player2_phone')
+      .eq('tournament_id', publishedId);
+    if (error) console.warn('No se pudieron leer los teléfonos:', error.message);
+    setJugadoresRegs(data || []);
+  };
+  const listaJugadores = () => {
+    const cats = (tConfig.categories || '').split(',').map(s => s.trim()).filter(Boolean);
+    participants.forEach(p => catsOf(p).forEach(c => { if (!cats.some(x => sameCat(x, c))) cats.push(c); }));
+    const regPorId = Object.fromEntries((jugadoresRegs || []).map(r => [String(r.id), r]));
+    return cats.map(cat => ({
+      cat,
+      parejas: participants
+        .filter(p => playsInCat(p, cat))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'))
+        .map(p => {
+          const reg = regPorId[String(p.id)];
+          const [j1 = '', ...resto] = jugadoresDe(p);
+          return {
+            id: p.id,
+            j1: reg?.player1_name || j1,
+            j2: reg?.player2_name || resto.join(' y '),
+            t1: (reg?.player1_phone || '').trim(),
+            t2: (reg?.player2_phone || '').trim(),
+          };
+        }),
+    })).filter(g => g.parejas.length > 0);
+  };
+  const descargarJugadoresPdf = async () => {
+    try {
+      const grupos = listaJugadores();
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const mX = 12;
+      const usable = pageW - 2 * mX;
+      const totalParejas = grupos.reduce((n, g) => n + g.parejas.length, 0);
+      let y = 0;
+      const cabecera = () => {
+        pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); pdf.setTextColor(15, 23, 42);
+        pdf.text(tConfig.name || 'Torneo', mX, 13);
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(100, 116, 139);
+        pdf.text(`Jugadores por categoría · ${totalParejas} pareja${totalParejas === 1 ? '' : 's'} · ${totalParejas * 2} jugadores`, mX, 18.5);
+        y = 25;
+      };
+      const salto = (alto) => { if (y + alto > pageH - 12) { pdf.addPage(); cabecera(); } };
+      cabecera();
+      grupos.forEach(g => {
+        salto(18);
+        pdf.setFillColor(15, 23, 42); pdf.rect(mX, y, usable, 8, 'F');
+        pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
+        pdf.text(`${g.cat}  -  ${g.parejas.length} pareja${g.parejas.length === 1 ? '' : 's'}`, mX + 2.5, y + 5.5);
+        y += 10;
+        g.parejas.forEach((p, i) => {
+          salto(11);
+          if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(mX, y - 1, usable, 10, 'F'); }
+          pdf.setTextColor(100, 116, 139); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9);
+          pdf.text(`${i + 1}.`, mX + 1.5, y + 3.5);
+          pdf.setTextColor(15, 23, 42); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
+          pdf.text(pdf.splitTextToSize(p.j1 || '-', 105)[0], mX + 10, y + 3.5);
+          pdf.text(pdf.splitTextToSize(p.j2 || '-', 105)[0], mX + 10, y + 8);
+          pdf.setTextColor(71, 85, 105); pdf.setFontSize(9);
+          if (p.t1) pdf.text(p.t1, mX + 125, y + 3.5);
+          if (p.t2) pdf.text(p.t2, mX + 125, y + 8);
+          y += 11;
+        });
+        y += 3;
+      });
+      const nombre = (tConfig.name || 'Torneo').replace(/[^\wÀ-ſ-]+/g, '_');
+      await descargarBlob(pdf.output('blob'), `Jugadores_${nombre}.pdf`);
+    } catch (e) {
+      console.error('PDF de jugadores:', e);
+      toast('No se pudo generar el PDF de jugadores: ' + (e.message || e), 'error');
+    }
+  };
+  const renderModalJugadores = () => {
+    if (!showJugadores) return null;
+    const grupos = listaJugadores();
+    const total = grupos.reduce((n, g) => n + g.parejas.length, 0);
+    return (
+      <div onClick={() => setShowJugadores(false)} className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
+        <div onClick={e => e.stopPropagation()} className="tm-modal-box" style={{ background: 'white', borderRadius: '1.25rem', width: '100%', maxWidth: '760px', marginTop: '2rem', marginBottom: '2rem', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+          <div style={{ padding: '1.1rem 1.5rem', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>👥 Jugadores por categoría · {tConfig.name}</h3>
+              <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: '#64748B' }}>{total} pareja{total === 1 ? '' : 's'} · {total * 2} jugadores</p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button onClick={descargarJugadoresPdf} disabled={total === 0} style={{ padding: '0.55rem 1rem', borderRadius: '0.5rem', border: 'none', backgroundColor: total === 0 ? '#CBD5E1' : '#DC2626', color: 'white', fontWeight: 800, cursor: total === 0 ? 'not-allowed' : 'pointer', fontSize: '0.85rem' }}>
+                ⬇ Descargar PDF
+              </button>
+              <button onClick={() => setShowJugadores(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '1.4rem', lineHeight: 1, padding: '0.2rem' }}>✕</button>
+            </div>
+          </div>
+          <div style={{ padding: '1rem 1.5rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {grupos.length === 0 && <p style={{ color: '#94A3B8', fontSize: '0.9rem', margin: 0 }}>Todavía no hay parejas en el torneo.</p>}
+            {grupos.map(g => (
+              <div key={g.cat} style={{ border: '1px solid #E2E8F0', borderRadius: '0.75rem', overflow: 'hidden' }}>
+                <div style={{ background: '#0F172A', color: 'white', padding: '0.55rem 0.9rem', fontWeight: 800, fontSize: '0.9rem' }}>
+                  {g.cat} <span style={{ fontWeight: 600, color: '#94A3B8', fontSize: '0.8rem' }}>· {g.parejas.length} pareja{g.parejas.length === 1 ? '' : 's'}</span>
+                </div>
+                {g.parejas.map((p, i) => (
+                  <div key={p.id} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '0.5rem 0.9rem', background: i % 2 === 0 ? '#F8FAFC' : 'white', fontSize: '0.85rem' }}>
+                    <span style={{ color: '#94A3B8', fontWeight: 800, minWidth: '1.6rem' }}>{i + 1}.</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: '#0F172A', fontWeight: 600 }}>{p.j1 || '—'}</div>
+                      <div style={{ color: '#0F172A', fontWeight: 600 }}>{p.j2 || '—'}</div>
+                    </div>
+                    <div style={{ color: '#475569', fontSize: '0.8rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <div>{p.t1 || ''}</div>
+                      <div>{p.t2 || ''}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Mapa de disponibilidad en tiempo real: se usa en la inscripción y en la
   // zona de cuadros (lo pidió el club el 12/11/2026).
   const renderMapaDisponibilidad = () => (
@@ -5622,6 +5753,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 Sincronizar (Web)
               </button>
             )}
+            <button onClick={abrirJugadores} title="Lista de jugadores por categoría (se puede descargar en PDF)" style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#DC2626', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              👥 Jugadores (PDF)
+            </button>
             {publishedId && (
               <button onClick={openRegistrationsPanel} style={{ padding: '0.5rem 1rem', borderRadius: '0.75rem', backgroundColor: '#7C3AED', color: 'white', border: 'none', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 📋 Inscripciones
@@ -5872,6 +6006,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           </div>
 
           {renderMapaDisponibilidad()}
+          {renderModalJugadores()}
 
           <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
 
@@ -6683,6 +6818,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 📅 Partidos por día
               </button>
               <button
+                onClick={abrirJugadores}
+                title="Lista de todos los jugadores por categoría, con sus teléfonos. Se puede descargar en PDF."
+                style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #FECACA', backgroundColor: '#FEF2F2', color: '#B91C1C', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+              >
+                👥 Jugadores (PDF)
+              </button>
+              <button
                 onClick={recomputeAllAutoTimes}
                 title="Re-asigna horarios de todos los partidos respetando afinidad de jugadores, orden entre rondas y cupo de pistas. No toca los horarios que hayas puesto manualmente."
                 style={{ padding: '0.6rem 1rem', borderRadius: '0.5rem', border: '1.5px solid #BFDBFE', backgroundColor: '#EFF6FF', color: '#1D4ED8', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
@@ -6856,6 +6998,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
       {/* Mapa de disponibilidad también en la zona de cuadros */}
       {!isExporting && renderMapaDisponibilidad()}
+      {renderModalJugadores()}
 
       {Object.keys(rounds).map(cat => {
          const catRounds = rounds[cat] || [];
