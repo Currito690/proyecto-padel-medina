@@ -6448,7 +6448,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const blocksFor = (p) => {
           if (!p || p.isBye || p.isPlaceholder || p.isPrelimPlaceholder) return new Set();
           const out = new Set();
-          (p.prefRules || []).forEach(rule => (rule.slots || []).forEach(s => out.add(s)));
+          // Una hora que la pareja no puede bloquea también los inicios cuyo
+          // partido la pisaría (en partidos de 90 min, la hora anterior).
+          (p.prefRules || []).forEach(rule => (rule.slots || []).forEach(s => {
+            out.add(s);
+            const [diaB, horaB] = String(s).split(' ');
+            const hb = aMinutos(horaB);
+            HOURS.forEach(h => {
+              const ini = aMinutos(h);
+              if (ini < hb + 60 && hb < ini + durEste) out.add(`${diaB} ${h}`);
+            });
+          }));
           partidosVinculados(p).forEach(l => HOURS.forEach(h => {
             const ini = aMinutos(h);
             if (ini < l.ini + l.dur + descansoEditor && l.ini < ini + durEste + descansoEditor) out.add(`${l.dia} ${h}`);
@@ -6468,6 +6478,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         // Partido del que sale quien ocupa el lado `side` del partido (r, m).
         const partidoAnterior = (cons, r, m, side) => {
           const rs = rondasDe(cons);
+          if (rs[r]?.[m]?.isRR) return null;
           const p = rs[r]?.[m]?.[side];
           if (p?.isPrelimPlaceholder) return { cons, r: 0, m: p.prelimMatchIdx, pierde: false };
           if (cons && p?.sourceMain) return { cons: false, r: p.sourceMain.round, m: p.sourceMain.matchIndex, pierde: true };
@@ -6504,11 +6515,56 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           return todas;
         };
         // Minuto (del torneo) desde el que puede jugar quien llegue a ese lado.
+        const huecosValidos = parrillaEditor.slots.filter(s => s.ini + durEste <= parrillaEditor.finDia).map(s => s.abs);
+        const alPrimerHueco = (x) => huecosValidos.find(a => a >= x) ?? x;
+        const textoAbs = (x) => { const d = parrillaEditor.dias[Math.floor(x / 1440)]; const mn = x % 1440; return `${d} ${String(Math.floor(mn / 60)).padStart(2, '0')}:${String(mn % 60).padStart(2, '0')}`; };
+        const ultimoConHora = (pid, cons, r) => {
+          let mejor = null;
+          const mirar = (rs, hasta) => rs.forEach((ronda, ri) => { if (ri >= hasta) return; (ronda || []).forEach(x => {
+            if (!x?.time || x.isRR || x.p1?.isBye || x.p2?.isBye) return;
+            if (String(x.p1?.id) !== pid && String(x.p2?.id) !== pid) return;
+            const a = parrillaEditor.absDeTiempo(x.time);
+            if (a != null && (!mejor || a > mejor.abs)) mejor = { abs: a, pm: x };
+          }); });
+          mirar(rondasDe(false), cons ? Infinity : r);
+          if (cons) mirar(rondasDe(true), r);
+          return mejor;
+        };
+        // Minuto más temprano en que puede EMPEZAR el partido (cons, r, m) y el partido que lo marca.
+        const inicioMin = (cons, r, m, prof) => {
+          const pm = rondasDe(cons)[r]?.[m];
+          if (!pm || prof > 12) return null;
+          if (pm.time) { const a = parrillaEditor.absDeTiempo(pm.time); return a == null ? null : { abs: a, pm }; }
+          const v = ['p1', 'p2'].map(s => llegaDesde(cons, r, m, s, prof + 1)).filter(Boolean);
+          if (!v.length) return null;
+          const peor = v.reduce((a, b) => (b.abs > a.abs ? b : a));
+          return { abs: alPrimerHueco(peor.abs), pm: peor.pm };
+        };
+        // Minuto desde el que puede jugar quien llegue al lado `side` de (cons, r, m).
+        const llegaDesde = (cons, r, m, side, prof = 0) => {
+          if (prof > 12) return null;
+          const p = rondasDe(cons)[r]?.[m]?.[side];
+          if (p?.isBye) return null;
+          if (rondasDe(cons)[r]?.[m]?.isRR) return null;
+          if (esPareja(p)) {
+            const u = ultimoConHora(String(p.id), cons, r);
+            return u ? { abs: u.abs + durEste + descansoEditor, pm: u.pm } : null;
+          }
+          const ant = partidoAnterior(cons, r, m, side);
+          if (!ant) return null;
+          const pm = rondasDe(ant.cons)[ant.r]?.[ant.m];
+          if (!pm) return null;
+          if (!ant.pierde && (pm.p1?.isBye || pm.p2?.isBye)) {
+            if (pm.p1?.isBye && pm.p2?.isBye) return null;
+            return llegaDesde(ant.cons, ant.r, ant.m, pm.p1?.isBye ? 'p2' : 'p1', prof + 1);
+          }
+          const ini = inicioMin(ant.cons, ant.r, ant.m, prof + 1);
+          return ini ? { abs: ini.abs + durEste + descansoEditor, pm: ini.pm } : null;
+        };
         const desdeLado = (side) => {
-          const ant = partidoAnterior(isCons, match.round, match.matchIndex, side);
-          const pm = ant ? rondasDe(ant.cons)[ant.r]?.[ant.m] : null;
-          const abs = pm?.time ? parrillaEditor.absDeTiempo(pm.time) : null;
-          return abs == null ? null : { abs: abs + durEste + descansoEditor, texto: `${pm.time.split(' - Pista')[0]} (${pm.p1?.name || '?'} vs ${pm.p2?.name || '?'})` };
+          const d = llegaDesde(isCons, match.round, match.matchIndex, side);
+          if (!d) return null;
+          return { abs: d.abs, texto: `como pronto ${textoAbs(alPrimerHueco(d.abs))} (después de ${d.pm.p1?.name || '?'} vs ${d.pm.p2?.name || '?'}${d.pm.time ? ', ' + d.pm.time.split(' - Pista')[0] : ''})` };
         };
         const lados = [
           { side: 'p1', badge: '🅰', lista: candidatosLado(isCons, match.round, match.matchIndex, 'p1'), desde: desdeLado('p1'), bye: !!match.p1?.isBye },
@@ -6561,7 +6617,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     </div>
                     {l.desde && (
                       <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#5B21B6', fontWeight: 600 }}>
-                        ⏳ No antes de que acabe su partido anterior más el descanso: {l.desde.texto}
+                        ⏳ Puede jugar {l.desde.texto}
                       </div>
                     )}
                     {l.lista.length === 0 ? (
@@ -6709,7 +6765,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             const noPuedenParcial = ladosParcial.flatMap(e => e.noPueden.map(p => ({ p, badge: e.badge })));
                             const label = occupied ? info.label
                               : isCurrent ? 'Actual'
-                              : soloPorHora ? `⏳ ${blockBadge} aún jugando`
+                              : soloPorHora ? `⏳ ${blockBadge} aún no llega`
                               : pairBlocked ? `${blockBadge} No disp.`
                               : parcial ? (noPuedenParcial.length <= 2
                                 ? `⚠ No: ${noPuedenParcial.map(x => nombreCorto(x.p.name)).join(' · ')}`
@@ -6720,7 +6776,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             const tooltip = occupied ? `Ocupada: ${info.label}`
                               : isCurrent ? 'Asignada a este partido'
                               : pairBlocked ? ladosNadie.map(e => (e.porHora
-                                ? `${e.badge} Es antes de que acabe su partido anterior más el descanso (${e.desde?.texto || ''})`
+                                ? `${e.badge} Aún no puede llegar: puede jugar ${e.desde?.texto || ''}`
                                 : `${e.badge} ${nombresLado(e)}: no ${e.lista.length === 1 ? 'puede' : 'puede ninguna'} a esta hora`)).join('\n')
                               : parcial ? `Libre, pero NO podrían jugar a esta hora:\n${noPuedenParcial.map(x => `${x.badge} ${x.p.name}`).join('\n')}\nSí valdría si llega cualquier otra.`
                               : hayDudas ? 'Libre: vale gane quien gane — pulsa para asignar'
