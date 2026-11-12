@@ -5179,6 +5179,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         {item.label}
                       </div>
                     ))}
+                    <span style={{ color: '#475569', fontWeight: 700, marginLeft: '0.5rem' }}>Pistas (cuadraditos, una por pista):</span>
+                    {[
+                      { c: '#22C55E', label: 'libre' },
+                      { c: '#EF4444', label: 'partido' },
+                      { c: '#64748B', label: 'reserva / entreno' },
+                      { c: '#CBD5E1', label: 'cerrada' },
+                    ].map(item => (
+                      <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <div style={{ width: '9px', height: '9px', borderRadius: '2px', backgroundColor: item.c }} />
+                        {item.label}
+                      </div>
+                    ))}
                   </div>
   
                   {/* Grid */}
@@ -5197,6 +5209,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         return filteredP.filter(p => p.prefRules?.some(r => r.slots?.includes(slot))).map(p => p.name);
                       };
   
+                      // Estado de cada pista del torneo en esa hora (lo pidió el
+                      // club: ver también las pistas). Partido del torneo (con su
+                      // duración real), reserva/entreno del club, cerrada (hora
+                      // de apertura de la pista) o libre. Los bloqueos del admin
+                      // no ocupan: son pistas guardadas para el torneo.
+                      const totalPistas = tConfig.courtsCount || 1;
+                      const durCatMapa = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+                      const partidosPorDia = {};
+                      [[rounds, false], [consRounds, true]].forEach(([obj, cons]) => Object.entries(obj || {}).forEach(([ct, rs]) => (rs || []).forEach(r => (r || []).forEach(m => {
+                        const t = parsearTiempo(m?.time);
+                        if (!t) return;
+                        const ini = aMinutos(t.hora);
+                        (partidosPorDia[t.dia] = partidosPorDia[t.dia] || []).push({ pista: t.pista, ini, fin: ini + durCatMapa(ct), texto: `${ct}${cons ? ' (consolación)' : ''}: ${m.p1?.name || '?'} vs ${m.p2?.name || '?'}` });
+                      }))));
+                      const estadoPistas = (day, hour) => {
+                        const h = aMinutos(hour);
+                        return Array.from({ length: totalPistas }, (_, i) => {
+                          const c = i + 1;
+                          const abre = tConfig.courtStartHours?.[c] || tConfig.courtStartHours?.[String(c)];
+                          if (abre && hour < abre) return { c, estado: 'cerrada', texto: `abre a las ${abre}` };
+                          const p = (partidosPorDia[day] || []).find(x => x.pista === c && x.ini < h + 60 && h < x.fin);
+                          if (p) return { c, estado: 'partido', texto: p.texto };
+                          if (externalBookings[`${day} ${hour}`]?.has(c)) return { c, estado: 'club', texto: 'reserva o entreno del club' };
+                          return { c, estado: 'libre', texto: 'libre' };
+                        });
+                      };
+                      const colorPista = { libre: '#22C55E', partido: '#EF4444', club: '#64748B', cerrada: '#CBD5E1' };
+
                       const getColor = (blocked) => {
                         if (blocked === 0) return { bg: '#DCFCE7', border: '#86EFAC', text: '#16A34A' };
                         const pct = totalP > 0 ? blocked / totalP : 0;
@@ -5240,33 +5280,44 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                       const color = isValid ? getColor(blocked) : { bg: '#F1F5F9', border: '#E2E8F0', text: '#CBD5E1' };
                                       const isHovered = hoveredSlot === slot;
                                       const blockedNames = isHovered ? getBlockedNames(slot) : [];
-  
+                                      const pistas = isValid ? estadoPistas(day, hour) : [];
+                                      const libres = pistas.filter(p => p.estado === 'libre').length;
+
                                       return (
                                         <td key={day} style={{ padding: '0.15rem 0.3rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0', position: 'relative' }}>
                                           <div
                                             onMouseEnter={isValid ? () => setHoveredSlot(slot) : undefined}
                                             onMouseLeave={() => setHoveredSlot(null)}
                                             style={{
-                                              height: '28px',
+                                              height: '38px',
                                               borderRadius: '4px',
                                               backgroundColor: color.bg,
                                               border: `1px solid ${color.border}`,
                                               display: 'flex',
+                                              flexDirection: 'column',
                                               alignItems: 'center',
                                               justifyContent: 'center',
+                                              gap: '3px',
                                               cursor: isValid ? 'help' : 'default',
                                               transition: 'all 0.1s',
                                               transform: isHovered ? 'scale(1.05)' : 'scale(1)',
                                             }}
                                           >
                                             {isValid && totalP > 0 && (
-                                              <span style={{ fontSize: '0.68rem', fontWeight: 800, color: color.text }}>
+                                              <span style={{ fontSize: '0.68rem', fontWeight: 800, color: color.text, lineHeight: 1 }}>
                                                 {blocked}
                                               </span>
                                             )}
+                                            {isValid && (
+                                              <span title={`${libres} de ${totalPistas} pistas libres`} style={{ display: 'flex', gap: '2px' }}>
+                                                {pistas.map(p => (
+                                                  <span key={p.c} style={{ width: '7px', height: '7px', borderRadius: '2px', backgroundColor: colorPista[p.estado] }} />
+                                                ))}
+                                              </span>
+                                            )}
                                           </div>
-                                          {/* Tooltip */}
-                                          {isHovered && isValid && blocked > 0 && (
+                                          {/* Tooltip: parejas que no pueden y estado de cada pista */}
+                                          {isHovered && isValid && (
                                             <div style={{
                                               position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
                                               backgroundColor: '#1E293B', color: 'white', padding: '0.5rem 0.75rem',
@@ -5274,12 +5325,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                                               whiteSpace: 'nowrap', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
                                               pointerEvents: 'none', marginBottom: '4px'
                                             }}>
-                                              <div style={{ marginBottom: '0.25rem', color: '#F87171', fontWeight: 700 }}>
-                                                {blocked} pareja{blocked !== 1 ? 's' : ''} no disponible{blocked !== 1 ? 's' : ''}:
+                                              <div style={{ marginBottom: '0.25rem', color: '#86EFAC', fontWeight: 700 }}>
+                                                {slot} · {libres} de {totalPistas} pista{totalPistas !== 1 ? 's' : ''} libre{libres !== 1 ? 's' : ''}
                                               </div>
-                                              {blockedNames.map((name, i) => (
-                                                <div key={i} style={{ color: '#CBD5E1', fontSize: '0.65rem' }}>• {name}</div>
+                                              {pistas.map(p => (
+                                                <div key={p.c} style={{ color: '#CBD5E1', fontSize: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                  <span style={{ width: '7px', height: '7px', borderRadius: '2px', backgroundColor: colorPista[p.estado], display: 'inline-block' }} />
+                                                  {getCourtName(p.c)}: {p.texto}
+                                                </div>
                                               ))}
+                                              {blocked > 0 && (
+                                                <>
+                                                  <div style={{ margin: '0.4rem 0 0.25rem', color: '#F87171', fontWeight: 700 }}>
+                                                    {blocked} pareja{blocked !== 1 ? 's' : ''} no disponible{blocked !== 1 ? 's' : ''}:
+                                                  </div>
+                                                  {blockedNames.map((name, i) => (
+                                                    <div key={i} style={{ color: '#CBD5E1', fontSize: '0.65rem' }}>• {name}</div>
+                                                  ))}
+                                                </>
+                                              )}
                                             </div>
                                           )}
                                         </td>
