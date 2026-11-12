@@ -6432,8 +6432,72 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           }));
           return out;
         };
-        const blockedByP1 = blocksFor(match.p1);
-        const blockedByP2 = blocksFor(match.p2);
+        // ── Adelantarse a lo que pueda pasar ───────────────────────────────
+        // En un partido con "?" (o con los dos lados por decidir) se mira QUIÉN
+        // puede llegar a cada lado: las parejas que pueden ganar el partido
+        // anterior (o perderlo, en la consolación), y desde cuándo (su partido
+        // anterior + duración + descanso). Así cada hora dice si vale gane
+        // quien gane, o qué pareja no podría.
+        const esPareja = (p) => !!p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
+        const rondasDe = (cons) => ((cons ? consRounds : rounds) || {})[cat] || [];
+        const parrillaEditor = crearParrilla(tConfig);
+        const sinRepetir = (lista) => { const vistos = new Set(); return lista.filter(p => (vistos.has(String(p.id)) ? false : (vistos.add(String(p.id)), true))); };
+        // Partido del que sale quien ocupa el lado `side` del partido (r, m).
+        const partidoAnterior = (cons, r, m, side) => {
+          const rs = rondasDe(cons);
+          const p = rs[r]?.[m]?.[side];
+          if (p?.isPrelimPlaceholder) return { cons, r: 0, m: p.prelimMatchIdx, pierde: false };
+          if (cons && p?.sourceMain) return { cons: false, r: p.sourceMain.round, m: p.sourceMain.matchIndex, pierde: true };
+          if (r === 0) return null;
+          const hueco = m * 2 + (side === 'p1' ? 0 : 1);
+          if (!cons && r === 1 && rs[0]?.[0]?.isPrelim) {
+            const pm = rs[0].find(x => x?.isPrelim && x.nextSlot === hueco);
+            return pm ? { cons, r: 0, m: pm.matchIndex, pierde: false } : null;
+          }
+          return rs[r - 1]?.[hueco] ? { cons, r: r - 1, m: hueco, pierde: false } : null;
+        };
+        // Parejas que pueden acabar en el lado `side` del partido (r, m).
+        const candidatosLado = (cons, r, m, side, prof = 0) => {
+          const p = rondasDe(cons)[r]?.[m]?.[side];
+          if (esPareja(p)) return [p];
+          if (p?.isBye || prof > 10) return [];
+          const ant = partidoAnterior(cons, r, m, side);
+          if (!ant) return [];
+          const pm = rondasDe(ant.cons)[ant.r]?.[ant.m];
+          if (!pm) return [];
+          let todas = sinRepetir([...candidatosLado(ant.cons, ant.r, ant.m, 'p1', prof + 1), ...candidatosLado(ant.cons, ant.r, ant.m, 'p2', prof + 1)]);
+          if (ant.pierde && ant.r >= 1) {
+            // A la consolación solo baja quien pierde su PRIMER partido: sin
+            // ronda previa, de la segunda ronda solo las que pasaron por bye.
+            const r0 = rondasDe(false)[0] || [];
+            if (!r0[0]?.isPrelim) {
+              const vieneDeBye = (x) => r0.some(mm => [mm?.p1, mm?.p2].some(y => y && String(y.id) === String(x.id)) && (mm.p1?.isBye || mm.p2?.isBye));
+              todas = todas.filter(vieneDeBye);
+            }
+          }
+          if (esPareja(pm.winner)) {
+            return ant.pierde ? todas.filter(x => String(x.id) !== String(pm.winner.id)) : [pm.winner];
+          }
+          return todas;
+        };
+        // Minuto (del torneo) desde el que puede jugar quien llegue a ese lado.
+        const desdeLado = (side) => {
+          const ant = partidoAnterior(isCons, match.round, match.matchIndex, side);
+          const pm = ant ? rondasDe(ant.cons)[ant.r]?.[ant.m] : null;
+          const abs = pm?.time ? parrillaEditor.absDeTiempo(pm.time) : null;
+          return abs == null ? null : { abs: abs + durEste + descansoEditor, texto: `${pm.time.split(' - Pista')[0]} (${pm.p1?.name || '?'} vs ${pm.p2?.name || '?'})` };
+        };
+        const lados = [
+          { side: 'p1', badge: '🅰', lista: candidatosLado(isCons, match.round, match.matchIndex, 'p1'), desde: desdeLado('p1'), bye: !!match.p1?.isBye },
+          { side: 'p2', badge: '🅱', lista: candidatosLado(isCons, match.round, match.matchIndex, 'p2'), desde: desdeLado('p2'), bye: !!match.p2?.isBye },
+        ];
+        const bloqueosDe = new Map();
+        lados.forEach(l => l.lista.forEach(p => { if (!bloqueosDe.has(String(p.id))) bloqueosDe.set(String(p.id), blocksFor(p)); }));
+        // ¿Puede la pareja p (que llega por el lado l) jugar a esa hora?
+        const puedeJugar = (p, l, slot, absCelda) => !(bloqueosDe.get(String(p.id))?.has(slot))
+          && !(l.desde && absCelda != null && absCelda < l.desde.abs);
+        const hayDudas = lados.some(l => l.lista.length > 1 || (l.lista.length > 0 && !esPareja(match[l.side])));
+        const nombreCorto = (n) => (String(n || '').length > 26 ? `${String(n).slice(0, 25)}…` : String(n || ''));
 
         return (
           <div
@@ -6463,6 +6527,39 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                     </button>
                   ))}
                 </div>
+
+                {/* Lados que aún no se saben ("?"): quién puede llegar y desde
+                    cuándo. Las celdas dicen si la hora vale gane quien gane. */}
+                {lados.filter(l => !l.bye && !esPareja(match[l.side])).map(l => (
+                  <div key={`cand-${l.side}`} style={{ padding: '0.6rem 0.85rem', borderRadius: '0.6rem', background: '#F5F3FF', border: '1px solid #DDD6FE' }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0F172A' }}>
+                      {l.badge} <span style={{ marginLeft: '0.2rem' }}>Por decidir</span>
+                      {l.lista.length > 0 && <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6D28D9' }}> · puede llegar {l.lista.length === 1 ? 'esta pareja' : `cualquiera de estas ${l.lista.length} parejas`}</span>}
+                    </div>
+                    {l.desde && (
+                      <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#5B21B6', fontWeight: 600 }}>
+                        ⏳ No antes de que acabe su partido anterior más el descanso: {l.desde.texto}
+                      </div>
+                    )}
+                    {l.lista.length === 0 ? (
+                      <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#64748B' }}>Todavía no se sabe qué parejas pueden llegar.</div>
+                    ) : (
+                      <div style={{ marginTop: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        {l.lista.map(p => (
+                          <div key={p.id} style={{ fontSize: '0.74rem', color: '#334155', lineHeight: 1.45 }}>
+                            <strong>{p.name}</strong>
+                            {(p.prefRules || []).length === 0
+                              ? <span style={{ color: '#15803D', fontWeight: 700 }}> · siempre disponible</span>
+                              : <span style={{ color: '#9A3412', fontWeight: 600 }}> · NO puede: {(p.prefRules || []).map(r => r.label || r.day).join(' · ')}</span>}
+                            {partidosVinculados(p).length > 0 && (
+                              <span style={{ color: '#3730A3', fontWeight: 600 }}> · 🔗 también juega: {partidosVinculados(p).map(v => `${v.cat} ${v.dia} ${v.hora}`).join(', ')}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
 
                 {/* Resumen de disponibilidad de cada pareja por separado.
                     🅰 = pareja 1, 🅱 = pareja 2 — los mismos iconos aparecen
@@ -6520,6 +6617,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
                     <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#FB923C', border: '1.5px solid #C2410C' }} /> 🅰🅱 ambas bloquean
                   </span>
+                  {hayDudas && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#FEF9C3', border: '1.5px solid #FACC15' }} /> ⚠ vale según quién gane
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '0.75rem' }}>
@@ -6544,38 +6646,61 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             const isCurrent = currentSlot === slot && currentCourt === c;
                             const isThisMatch = info?.matchId === match.id;
                             const occupied = !!info && !isThisMatch;
-                            const byP1 = blockedByP1.has(slot);
-                            const byP2 = blockedByP2.has(slot);
-                            const pairBlocked = (byP1 || byP2) && !occupied && !isCurrent;
-                            // Color más fuerte si ambas parejas bloquean ese slot
-                            const bothBlocked = byP1 && byP2 && pairBlocked;
+                            // Para cada lado: qué parejas de las que pueden llegar NO
+                            // podrían a esta hora (no disponibles, o su partido anterior
+                            // aún no ha terminado más el descanso).
+                            const absCelda = parrillaEditor.abs(day, hour);
+                            const estado = lados.map(l => {
+                              const noPueden = l.lista.filter(p => !puedeJugar(p, l, slot, absCelda));
+                              const porHora = !!(l.desde && absCelda != null && absCelda < l.desde.abs);
+                              return { ...l, noPueden, nadie: l.lista.length > 0 && noPueden.length === l.lista.length, porHora };
+                            });
+                            const ladosNadie = estado.filter(e => e.nadie);
+                            const ladosParcial = estado.filter(e => !e.nadie && e.noPueden.length > 0);
+                            const pairBlocked = ladosNadie.length > 0 && !occupied && !isCurrent;
+                            // Color más fuerte si ninguno de los dos lados puede
+                            const bothBlocked = ladosNadie.length > 1 && pairBlocked;
+                            const parcial = !pairBlocked && ladosParcial.length > 0 && !occupied && !isCurrent;
+                            const soloPorHora = pairBlocked && ladosNadie.every(e => e.porHora);
                             const bg = occupied ? '#FEE2E2'
                               : isCurrent ? '#DBEAFE'
                               : bothBlocked ? '#FB923C'
                               : pairBlocked ? '#FED7AA'
+                              : parcial ? '#FEF9C3'
                               : '#F0FDF4';
                             const border = occupied ? '1.5px solid #FECACA'
                               : isCurrent ? '1.5px solid #93C5FD'
                               : bothBlocked ? '1.5px solid #C2410C'
                               : pairBlocked ? '1.5px solid #F97316'
+                              : parcial ? '1.5px solid #FACC15'
                               : '1.5px solid #BBF7D0';
                             const textColor = occupied ? '#B91C1C'
                               : isCurrent ? '#1D4ED8'
                               : bothBlocked ? '#7C2D12'
                               : pairBlocked ? '#9A3412'
+                              : parcial ? '#854D0E'
                               : '#15803D';
                             // Etiqueta visual: indica QUIÉN bloquea
-                            //   🅰 = solo pareja 1, 🅱 = solo pareja 2, 🅰🅱 = las dos
-                            const blockBadge = bothBlocked ? '🅰🅱' : byP1 ? '🅰' : byP2 ? '🅱' : '';
+                            //   🅰 = lado 1, 🅱 = lado 2, 🅰🅱 = los dos
+                            const blockBadge = ladosNadie.map(e => e.badge).join('');
+                            const noPuedenParcial = ladosParcial.flatMap(e => e.noPueden.map(p => ({ p, badge: e.badge })));
                             const label = occupied ? info.label
                               : isCurrent ? 'Actual'
+                              : soloPorHora ? `⏳ ${blockBadge} aún jugando`
                               : pairBlocked ? `${blockBadge} No disp.`
+                              : parcial ? (noPuedenParcial.length <= 2
+                                ? `⚠ No: ${noPuedenParcial.map(x => nombreCorto(x.p.name)).join(' · ')}`
+                                : `⚠ No podrían ${noPuedenParcial.length} parejas`)
+                              : hayDudas ? 'Libre · gane quien gane'
                               : 'Libre';
+                            const nombresLado = (e) => e.lista.map(p => p.name).join(' / ');
                             const tooltip = occupied ? `Ocupada: ${info.label}`
                               : isCurrent ? 'Asignada a este partido'
-                              : bothBlocked ? `Ambas parejas marcaron esta hora como NO disponible (${match.p1?.name || '🅰'} + ${match.p2?.name || '🅱'})`
-                              : byP1 ? `🅰 ${match.p1?.name || 'Pareja 1'} marcó esta hora como NO disponible`
-                              : byP2 ? `🅱 ${match.p2?.name || 'Pareja 2'} marcó esta hora como NO disponible`
+                              : pairBlocked ? ladosNadie.map(e => (e.porHora
+                                ? `${e.badge} Es antes de que acabe su partido anterior más el descanso (${e.desde?.texto || ''})`
+                                : `${e.badge} ${nombresLado(e)}: no ${e.lista.length === 1 ? 'puede' : 'puede ninguna'} a esta hora`)).join('\n')
+                              : parcial ? `Libre, pero NO podrían jugar a esta hora:\n${noPuedenParcial.map(x => `${x.badge} ${x.p.name}`).join('\n')}\nSí valdría si llega cualquier otra.`
+                              : hayDudas ? 'Libre: vale gane quien gane — pulsa para asignar'
                               : 'Libre — pulsa para asignar';
                             return (
                               <td key={c} style={{ padding: '0.25rem', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #E2E8F0' }}>
