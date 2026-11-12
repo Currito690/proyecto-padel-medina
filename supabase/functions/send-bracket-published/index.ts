@@ -49,9 +49,18 @@ async function callerAutorizado(req: Request): Promise<AuthResult> {
   return { ok: true };
 }
 
-function bracketHtml(tournamentNameRaw: string, tournamentUrlRaw: string, isUpdate: boolean): string {
+function bracketHtml(tournamentNameRaw: string, tournamentUrlRaw: string, isUpdate: boolean, notaRaw = ''): string {
   const tournamentName = escapeHtml(tournamentNameRaw);
   const tournamentUrl = escapeHtml(tournamentUrlRaw);
+  // Mensaje del club (opcional), destacado debajo de la introducción.
+  const nota = escapeHtml(notaRaw).replace(/\r?\n/g, '<br>');
+  const notaHtml = nota
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;margin:0 0 20px">
+        <tr><td style="padding:14px 16px">
+          <p style="margin:0;font-size:14px;color:#78350F;line-height:1.6">⚠️ <strong>Aviso del club:</strong> ${nota}</p>
+        </td></tr>
+      </table>`
+    : '';
   const heroLabel = isUpdate ? 'Cuadro actualizado' : '¡Cuadro publicado!';
   const title = isUpdate ? 'El cuadro se ha actualizado' : '¡Ya está el cuadro!';
   const intro = isUpdate
@@ -79,6 +88,7 @@ function bracketHtml(tournamentNameRaw: string, tournamentUrlRaw: string, isUpda
       <p style="color:#64748B;margin:0 0 20px;font-size:15px;line-height:1.6">
         ${intro}
       </p>
+      ${notaHtml}
       <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0">
         <tr><td align="center">
           <a href="${tournamentUrl}" style="display:inline-block;background:#16A34A;color:#ffffff;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:10px;box-shadow:0 4px 12px rgba(22,163,74,0.25)">
@@ -124,10 +134,11 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { emails, tournamentName: tournamentNameIn, tournamentUrl: tournamentUrlIn, kind } = await req.json();
+    const { emails, tournamentName: tournamentNameIn, tournamentUrl: tournamentUrlIn, kind, nota: notaIn } = await req.json();
     const isUpdate = kind === 'updated';
     const tournamentName = String(tournamentNameIn ?? '').trim().slice(0, 200);
     const tournamentUrl = String(tournamentUrlIn ?? '').trim();
+    const nota = typeof notaIn === 'string' ? notaIn.trim().slice(0, 600) : '';
 
     if (!Array.isArray(emails) || emails.length === 0 || !tournamentName || !tournamentUrl) {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), {
@@ -172,7 +183,7 @@ Deno.serve(async (req: Request) => {
     const subject = isUpdate
       ? `🔄 Cuadro actualizado — ${tournamentName}`
       : `🏆 Cuadro publicado — ${tournamentName}`;
-    const html = bracketHtml(tournamentName, tournamentUrl, isUpdate);
+    const html = bracketHtml(tournamentName, tournamentUrl, isUpdate, nota);
 
     // Tandas de BATCH_SIZE en paralelo con espera entre tandas: sin ráfagas
     // para no parecer spam a Gmail/Hotmail (y Resend, de reserva, limita a 2

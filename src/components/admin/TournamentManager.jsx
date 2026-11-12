@@ -382,6 +382,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [recipientPickerSelected, setRecipientPickerSelected] = useState(() => new Set());
   const [recipientPickerKind, setRecipientPickerKind] = useState('published');
   const [recipientPickerSending, setRecipientPickerSending] = useState(false);
+  // Mensaje del club que va destacado en el correo del cuadro (opcional).
+  const [recipientPickerNota, setRecipientPickerNota] = useState('');
   // Si true, al generar el cuadro NO se auto-asignan horarios a la primera
   // ronda. El admin los pone a mano viendo la disponibilidad de los jugadores.
   const [pickerManualR0, setPickerManualR0] = useState(false);
@@ -1231,7 +1233,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       // Si ya estaba publicado (re-publicar = solo notificar), saltamos
       // este paso porque la flag y el config ya están actualizados.
       if (!wasPublished) {
-        const tConfigWithFlag = { ...tConfig, bracketPublished: true };
+        // Si en la web hay un aviso del club (p. ej. "problemas técnicos"),
+        // se pregunta si se quita al volver a publicar el cuadro.
+        let quitarAviso = false;
+        if (typeof tConfig.avisoPublico === 'string' && tConfig.avisoPublico.trim()) {
+          quitarAviso = await confirmDialog(
+            `En la web del torneo se ve este aviso:\n\n«${tConfig.avisoPublico.trim()}»\n\n¿Lo quitamos al publicar el cuadro?`,
+            { title: 'Aviso en la web', okText: 'Sí, quitarlo', cancelText: 'No, dejarlo' }
+          );
+        }
+        const { avisoPublico: _avisoAnterior, ...sinAviso } = tConfig;
+        const tConfigWithFlag = { ...(quitarAviso ? sinAviso : tConfig), bracketPublished: true };
         const config = { ...tConfigWithFlag, rounds, consRounds, participants, phase };
         const { error } = await supabase.from('tournaments')
           .update({ config, status: 'open' })
@@ -1278,6 +1290,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       setRecipientPickerKind(kind);
       setRecipientPickerData(withEmails);
       setRecipientPickerSelected(new Set(withEmails.map(r => r.id)));
+      // Si el torneo tiene un mensaje preparado para el próximo correo del
+      // cuadro (config.notaCorreoCuadro), sale ya escrito y se puede cambiar.
+      setRecipientPickerNota(typeof tConfig.notaCorreoCuadro === 'string' ? tConfig.notaCorreoCuadro : '');
       setRecipientPickerOpen(true);
     } catch (e) {
       toast('Error al cargar parejas: ' + (e.message || e), 'error');
@@ -1306,6 +1321,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           tournamentName: tConfig.name || 'Torneo',
           tournamentUrl,
           kind: recipientPickerKind,
+          ...(recipientPickerNota.trim() ? { nota: recipientPickerNota.trim().slice(0, 600) } : {}),
         },
       });
       if (fnErr || (fnData && fnData.error)) {
@@ -1315,6 +1331,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const failed = fnData?.failed ?? 0;
         toast(`📧 Enviado a ${sent} jugador${sent === 1 ? '' : 'es'}${failed > 0 ? ` (${failed} fallido${failed === 1 ? '' : 's'})` : ''}`, 'success');
         setRecipientPickerOpen(false);
+        // El mensaje preparado era para ESTE correo: no se repite en el siguiente.
+        if (tConfig.notaCorreoCuadro) {
+          setTConfig(prev => {
+            const { notaCorreoCuadro: _usada, ...resto } = prev;
+            return resto;
+          });
+        }
       }
     } catch (e) {
       toast('Error al enviar correos: ' + (e.message || e), 'error');
@@ -7097,6 +7120,27 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               </button>
             )}
           </div>
+          {!isExporting && typeof tConfig.avisoPublico === 'string' && tConfig.avisoPublico.trim() && (
+            <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.45rem 0.7rem', borderRadius: '0.5rem', background: '#FFFBEB', border: '1px solid #FCD34D', fontSize: '0.78rem', color: '#78350F' }}>
+              <span style={{ fontWeight: 800 }}>📢 Aviso en la web:</span>
+              <span style={{ flex: 1, minWidth: '12rem' }}>«{tConfig.avisoPublico.trim()}»</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await confirmDialog('¿Quitar el aviso de la web del torneo?', { title: 'Quitar aviso', okText: 'Quitar aviso', cancelText: 'No' });
+                  if (!ok) return;
+                  setTConfig(prev => {
+                    const { avisoPublico: _quitado, ...resto } = prev;
+                    return resto;
+                  });
+                  toast('Aviso quitado de la web.', 'success');
+                }}
+                style={{ padding: '0.25rem 0.6rem', borderRadius: '0.4rem', border: '1.5px solid #F59E0B', background: 'white', color: '#92400E', fontWeight: 700, fontSize: '0.74rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                Quitar aviso
+              </button>
+            </div>
+          )}
         </div>
         <div className="tm-btn-group">
           {!isExporting && (
@@ -7895,6 +7939,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0F172A' }}>
                   {selectedCount} de {recipientPickerData.length} parejas · {emailCount} correos
                 </span>
+              </div>
+              <div style={{ padding: '0.75rem 1.5rem', borderBottom: '1px solid #E2E8F0' }}>
+                <label htmlFor="nota-correo-cuadro" style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, color: '#0F172A', marginBottom: '0.35rem' }}>
+                  ✏️ Mensaje para los jugadores <span style={{ fontWeight: 600, color: '#64748B' }}>(opcional, sale destacado en el correo)</span>
+                </label>
+                <textarea
+                  id="nota-correo-cuadro"
+                  value={recipientPickerNota}
+                  onChange={e => setRecipientPickerNota(e.target.value.slice(0, 600))}
+                  disabled={recipientPickerSending}
+                  rows={2}
+                  placeholder="Ej.: Por motivos de afinidad horaria de las parejas, hemos tenido que modificar el cuadro."
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '0.55rem 0.7rem', borderRadius: '0.6rem', border: '1.5px solid #CBD5E1', fontSize: '0.85rem', fontFamily: 'inherit', resize: 'vertical' }}
+                />
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1.5rem' }}>
                 {Object.entries(byCat).map(([cat, list]) => {
