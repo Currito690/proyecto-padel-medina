@@ -246,3 +246,110 @@ export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
   }
   return mejor;
 }
+
+// ── Sorteo por afinidad horaria ─────────────────────────────────────────────
+// El club pidió que, al generar el cuadro, las parejas que se pueden cruzar
+// tengan horarios compatibles. No solo las del primer partido (1 vs 2), sino
+// el bloque de cuatro (1-2 y 3-4): quien gane de esas cuatro sigue adelante,
+// y los perdedores de 1-2 y 3-4 se cruzan en la consolación (es espejo).
+//
+// hojas: una entrada por plaza del cuadro principal (potencia de 2), con las
+// parejas que pueden llegar a esa plaza: [] (bye), [pareja] o [p1, p2] (las
+// dos parejas de una ronda previa). movibles: [[plaza, k], …] las posiciones
+// que se pueden intercambiar (las parejas sin cabeza de serie). Las demás
+// (cabezas de serie, byes) se quedan fijas, pero cuentan: a una cabeza de
+// serie le caen al lado parejas que encajan con ella.
+//
+// Se parte del orden que llega (sorteo al azar) y se intercambian parejas
+// mientras mejore: entre colocaciones igual de buenas manda el azar.
+// Modifica hojas y devuelve { antes, despues } (coste; menos es mejor).
+const costeHorasComunes = (c) => (c === 0 ? 100 : Math.max(0, 6 - c) ** 2);
+const PESO_RONDA = [4, 2, 1]; // primer cruce, segundo (y consolación), tercero; luego 0.5
+
+export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math.random } = {}) {
+  const N = hojas.length;
+  if (!movibles.length || N < 2) return { antes: 0, despues: 0 };
+
+  // Disponibilidad de cada pareja: huecos de la parrilla en los que puede.
+  const huecos = parrilla.slots.filter((s) => s.ini + dur <= parrilla.finDia);
+  const idx = new Map();
+  const mascaras = [];
+  hojas.flat().forEach((p) => {
+    if (!p || idx.has(p.id)) return;
+    const b = horasBloqueadas(p);
+    idx.set(p.id, mascaras.length);
+    mascaras.push(huecos.map((s) => disponibleEn(b, s.dia, s.ini, s.ini + dur)));
+  });
+  const n = mascaras.length;
+  const coste = Array.from({ length: n }, () => new Float64Array(n));
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let c = 0;
+      for (let k = 0; k < huecos.length; k++) if (mascaras[i][k] && mascaras[j][k]) c++;
+      coste[i][j] = coste[j][i] = costeHorasComunes(c);
+    }
+  }
+  const cc = (a, b) => coste[idx.get(a.id)][idx.get(b.id)];
+
+  const puntuar = () => {
+    let t = 0;
+    // Partido de ronda previa (las dos parejas de la plaza).
+    for (const h of hojas) if (h.length === 2) t += PESO_RONDA[0] * cc(h[0], h[1]);
+    // Cruces posibles por ronda: mitad izquierda contra mitad derecha de cada bloque.
+    for (let b = 2, nivel = 0; b <= N; b *= 2, nivel++) {
+      const peso = PESO_RONDA[nivel] ?? 0.5;
+      for (let s = 0; s < N; s += b) {
+        let suma = 0;
+        let cruces = 0;
+        for (let x = s; x < s + b / 2; x++) {
+          if (!hojas[x].length) continue;
+          for (let y = s + b / 2; y < s + b; y++) {
+            if (!hojas[y].length) continue;
+            let m = 0;
+            for (const a of hojas[x]) for (const c of hojas[y]) m += cc(a, c);
+            suma += m / (hojas[x].length * hojas[y].length);
+            cruces++;
+          }
+        }
+        if (cruces) t += (peso * suma) / cruces;
+      }
+    }
+    return t;
+  };
+
+  const leer = ([h, k]) => hojas[h][k];
+  const poner = ([h, k], v) => { hojas[h][k] = v; };
+  const cambiar = (a, b) => { const v = leer(a); poner(a, leer(b)); poner(b, v); };
+  const escalar = () => {
+    let actual = puntuar();
+    for (let mejora = true, vueltas = 0; mejora && vueltas < 50; vueltas++) {
+      mejora = false;
+      for (let i = 0; i < movibles.length; i++) {
+        for (let j = i + 1; j < movibles.length; j++) {
+          cambiar(movibles[i], movibles[j]);
+          const s = puntuar();
+          if (s < actual - 1e-9) { actual = s; mejora = true; } else cambiar(movibles[i], movibles[j]);
+        }
+      }
+    }
+    return actual;
+  };
+
+  const antes = puntuar();
+  let mejor = escalar();
+  let mejorOrden = movibles.map(leer);
+  // Varios intentos desde otros sorteos (menos si el cuadro es grande).
+  const intentos = movibles.length > 40 ? 2 : 6;
+  for (let r = 0; r < intentos; r++) {
+    const vals = movibles.map(leer);
+    for (let i = vals.length - 1; i > 0; i--) {
+      const j = Math.floor(azar() * (i + 1));
+      [vals[i], vals[j]] = [vals[j], vals[i]];
+    }
+    movibles.forEach((m, i) => poner(m, vals[i]));
+    const s = escalar();
+    if (s < mejor - 1e-9) { mejor = s; mejorOrden = movibles.map(leer); }
+  }
+  movibles.forEach((m, i) => poner(m, mejorOrden[i]));
+  return { antes, despues: mejor };
+}

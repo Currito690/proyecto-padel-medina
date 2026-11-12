@@ -12,7 +12,7 @@ import { useServerTime, formatNowShort, isServerTimeSynced, serverNowMs } from '
 import CuadroArbol from '../CuadroArbol';
 import { descargarBlob, descargarDataUrl, descargarTexto } from '../../utils/descargas';
 import { prepararCartel } from '../../utils/cartel';
-import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, toMin as aMinutos } from '../../utils/torneoHorarios';
+import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, colocarPorAfinidad, toMin as aMinutos } from '../../utils/torneoHorarios';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -1860,6 +1860,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
              }
            }
          }
+         // Sorteo por afinidad horaria: las parejas sin cabeza de serie se
+         // recolocan para que las que se pueden cruzar (1-2, y el bloque 1-2-3-4,
+         // también en la consolación) tengan horas en común.
+         {
+           const hojas = slot.map(x => (x && !x.isBye ? [x] : []));
+           const movibles = [];
+           slot.forEach((x, i) => { if (x && !x.isBye && !seededHere.some(s => s.id === x.id)) movibles.push([i, 0]); });
+           colocarPorAfinidad(hojas, movibles, parrilla, durationMin);
+           movibles.forEach(([i]) => { slot[i] = hojas[i][0]; });
+         }
          catParts = slot;
 
          const numRounds = Math.log2(mainBracketSize);
@@ -1917,6 +1927,25 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
            if (slot[i]) continue;
            // Red de seguridad: un hueco sin pareja nunca llega como undefined
            slot[i] = directUnseeded[dui++] || { id: `bye-${cat}-${i}`, name: '---', isBye: true };
+         }
+         // Sorteo por afinidad horaria (ver arriba). Una plaza de "Ganador
+         // previa" cuenta con las dos parejas de esa previa; las parejas sin
+         // cabeza de serie pueden cambiar entre plaza directa y previa.
+         {
+           const hojas = slot.map(x => x?.isPrelimPlaceholder
+             ? [prelimPairs[x.prelimMatchIdx * 2], prelimPairs[x.prelimMatchIdx * 2 + 1]].filter(Boolean)
+             : (x && !x.isBye ? [x] : []));
+           const movibles = [];
+           slot.forEach((x, i) => {
+             if (x?.isPrelimPlaceholder) hojas[i].forEach((_, k) => movibles.push([i, k]));
+             else if (x && !x.isBye && !seededHere.some(s => s.id === x.id)) movibles.push([i, 0]);
+           });
+           colocarPorAfinidad(hojas, movibles, parrilla, durationMin);
+           slot.forEach((x, i) => {
+             if (x?.isPrelimPlaceholder) {
+               hojas[i].forEach((p, k) => { prelimPairs[x.prelimMatchIdx * 2 + k] = p; });
+             } else if (movibles.some(([h]) => h === i)) slot[i] = hojas[i][0];
+           });
          }
          catParts = slot;
 
