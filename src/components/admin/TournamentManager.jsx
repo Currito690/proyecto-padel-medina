@@ -12,7 +12,7 @@ import { useServerTime, formatNowShort, isServerTimeSynced, serverNowMs } from '
 import CuadroArbol from '../CuadroArbol';
 import { descargarBlob, descargarDataUrl, descargarTexto } from '../../utils/descargas';
 import { prepararCartel } from '../../utils/cartel';
-import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, elegirHuecoCobertura, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, toMin as aMinutos } from '../../utils/torneoHorarios';
+import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, toMin as aMinutos } from '../../utils/torneoHorarios';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -150,6 +150,25 @@ const vincularParejas = (lista, idA, idB, jugador) => {
 const desvincularPareja = (lista, id) => (lista || [])
   .map(g => ({ ...g, parejas: (g.parejas || []).map(String).filter(x => x !== String(id)) }))
   .filter(g => g.parejas.length >= 2);
+
+// Quita la hora AUTOMÁTICA a los partidos que aún no tienen sus dos parejas
+// ("? vs ?", "X vs ?"): antes se les reservaba hora provisional y el club
+// prefiere esos huecos libres. Se respetan las horas puestas a mano y los
+// partidos ya jugados. Se aplica al cargar el torneo (cuadros antiguos).
+const esParejaDeVerdad = (p) => !!p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
+const sinHorasProvisionales = (obj) => {
+  if (!obj || typeof obj !== 'object') return obj;
+  let cambia = false;
+  const out = Object.fromEntries(Object.entries(obj).map(([cat, rs]) => [cat, (rs || []).map(r => (r || []).map(m => {
+    if (!m || !m.time || m.timeManual || m.winner || m.score) return m;
+    if (esParejaDeVerdad(m.p1) && esParejaDeVerdad(m.p2)) return m;
+    cambia = true;
+    const c = { ...m, time: null };
+    delete c.sinHueco;
+    return c;
+  }))]));
+  return cambia ? out : obj;
+};
 
 // Cabeza de serie POR CATEGORÍA. Una pareja con doble inscripción puede ser
 // #1 en una categoría y no serlo en la otra, así que el número vive en
@@ -418,8 +437,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           const { rounds: dbRounds, consRounds: dbConsRounds, participants: dbParticipants, phase: dbPhase, ...dbTConfig } = cfg;
           if (data.name && !dbTConfig.name) dbTConfig.name = data.name;
           setTConfig(prev => ({ ...prev, ...dbTConfig }));
-          if (dbRounds && typeof dbRounds === 'object') setRounds(dbRounds);
-          if (dbConsRounds && typeof dbConsRounds === 'object') setConsRounds(dbConsRounds);
+          if (dbRounds && typeof dbRounds === 'object') setRounds(sinHorasProvisionales(dbRounds));
+          if (dbConsRounds && typeof dbConsRounds === 'object') setConsRounds(sinHorasProvisionales(dbConsRounds));
           if (Array.isArray(dbParticipants)) setParticipants(dbParticipants);
           if (dbPhase) setPhase(dbPhase);
         } else if (data.name) {
@@ -1563,26 +1582,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Partidos de liguilla pendientes de programar (junto con las primeras rondas).
     const liguillas = [];
 
-    // Parejas que pueden acabar jugando el partido (r, mIdx) de un cuadro: las
-    // reales de sus dos lados y, hacia atrás, las de los partidos que lo
-    // alimentan (incluida la previa si un lado es "Ganador previa N").
-    const candidatosDe = (catRounds, r, mIdx, hasPrelim, vistos = new Map()) => {
-      const match = catRounds[r]?.[mIdx];
-      if (!match) return [];
-      [match.p1, match.p2].forEach(side => {
-        if (isRealPair(side)) vistos.set(side.id, side);
-        else if (side?.isPrelimPlaceholder) {
-          const pm = catRounds[0]?.[side.prelimMatchIdx];
-          [pm?.p1, pm?.p2].filter(isRealPair).forEach(x => vistos.set(x.id, x));
-        }
-      });
-      if (r > 0 && !(r === 1 && hasPrelim)) {
-        candidatosDe(catRounds, r - 1, mIdx * 2, hasPrelim, vistos);
-        candidatosDe(catRounds, r - 1, mIdx * 2 + 1, hasPrelim, vistos);
-      }
-      return [...vistos.values()];
-    };
-
     // Los cuadros que se CONSERVAN (categorías no marcadas para regenerar o
     // con menos de 2 parejas) entran en la agenda ANTES de programar nada:
     // sus partidos (y los de su consolación) ya tienen pista y hora y nadie
@@ -1644,27 +1643,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
          match.sinHueco = true;
          return null;
        };
-       // Igual, para un partido entre parejas aún por decidir: entre los
-       // huecos válidos, el que más candidatas (las parejas de esa parte del
-       // cuadro) tienen libre; a igualdad, el más temprano.
-       const programarProvisional = (match, desdeAbs, candidatos, hastaAbs = Infinity) => {
-         const opcionesHueco = (hasta) => ({
-           desdeAbs, hastaAbs: hasta, dur: durationMin, descanso: restMin, pistas: allowedCourtsForCat,
-           parejas: [match.p1, match.p2], courtStartHours: tConfig.courtStartHours,
-         });
-         // Primero con el tope de fecha; si así no cabe, sin él.
-         const hueco = elegirHuecoCobertura(agenda, parrilla, opcionesHueco(hastaAbs), candidatos)
-           || (hastaAbs !== Infinity ? elegirHuecoCobertura(agenda, parrilla, opcionesHueco(Infinity), candidatos) : null);
-         if (hueco) {
-           match.time = textoTiempo(hueco);
-           delete match.sinHueco;
-           ocupar(agenda, parrilla, { ...hueco, dur: durationMin, parejas: [match.p1, match.p2], etiqueta: match.id });
-         } else {
-           match.time = null;
-           match.sinHueco = true;
-         }
-       };
-
        if (format === 'liguilla' || format === 'liguilla_ko') {
          // Round-robin: circle method. "Liguilla + eliminatorias finales"
          // empieza igual (la KO se genera luego con sus propias rondas).
@@ -1974,7 +1952,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
        }
 
        // La programación se hace abajo, con todas las categorías a la vez.
-       pendientes.push({ cat, catRounds, durationMin, programar, programarProvisional });
+       pendientes.push({ cat, catRounds, durationMin, programar });
        newAllRounds[cat] = catRounds;
        generatedAny = true;
     });
@@ -2042,14 +2020,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                 : [catRounds[r - 1][mIdx * 2], catRounds[r - 1][mIdx * 2 + 1]];
               const predAbs = Math.max(0, ...preds.map(absDe).filter(v => v != null).map(v => v + gap));
               const desde = Math.max(predAbs, barrera, parrilla.absInicioDia(minDay));
+              // Solo se programa cuando se conocen las DOS parejas. Los partidos
+              // con "?" se quedan sin hora (huecos libres para hacer apaños) y
+              // se programan solos al meter el resultado del que les da pareja
+              // (autoScheduleNextMatch). Lo pidió el club el 12/11/2026.
               if (isRealPair(match.p1) && isRealPair(match.p2)) {
                 pd.programar(match, desde);
-              } else {
-                // Las rondas que no son la final se intentan ANTES del último
-                // día, que se deja para las finales (si no caben, cualquier día).
-                const esFinal = r === numRoundsTotal - 1;
-                const hasta = (!esFinal && numDaysTotal > 1) ? parrilla.absInicioDia(numDaysTotal - 1) : Infinity;
-                pd.programarProvisional(match, desde, candidatosDe(catRounds, r, mIdx, hasPrelim), hasta);
               }
               if (match.sinHueco && isRealPair(match.p1) && isRealPair(match.p2)) {
                 sinHueco.push({ cat, ronda: getRoundName(r, catRounds), match });
