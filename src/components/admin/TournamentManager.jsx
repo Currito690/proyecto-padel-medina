@@ -4163,7 +4163,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         warnIfDrawn(newCat, 'La nueva categoría ya tiene cuadro y la pareja no está en él.');
       } catch (e) {
         console.error('changeRegCategory error:', e);
-        toast('Error al cambiar la categoría: ' + (e.message || e), 'error');
+        // 23505 = uq_tournament_registrations_pareja_categoria: esa misma
+        // pareja ya tiene otra inscripción en la categoría de destino.
+        if (e?.code === '23505') {
+          toast(`No se puede mover: "${reg.player1_name} y ${reg.player2_name}" ya está inscrita en ${newCat}. Son dos inscripciones de la misma pareja: borra la que sobre (botón Borrar).`, 'error');
+        } else {
+          toast('Error al cambiar la categoría: ' + (e.message || e), 'error');
+        }
       }
     };
 
