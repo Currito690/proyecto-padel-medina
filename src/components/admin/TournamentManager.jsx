@@ -249,7 +249,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       firstDayStartHour: '16:00',
       courtsCount: 2,
       courtStartHours: {},
-      matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 },
+      matchDurationByCategory: { 'Masculino': 60, 'Femenino': 60 },
       formatByCategory: {},
       dualCategoryMaxMatches: 1,
       restMinutesBetweenMatches: 30,
@@ -528,7 +528,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       if (Object.keys(porNum).length === 0) return;
       const toMin = (t) => { const [h, m] = String(t).trim().split(':').map(Number); return h * 60 + (m || 0); };
       const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
-      const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+      const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
       // dd/mm → yyyy-mm-dd con el año del torneo (vale aunque cruce de año)
       const anioDe = (mm) => {
         const [y1, m1] = startDate.split('-');
@@ -864,7 +864,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       { title: 'Reiniciar torneo', okText: 'Borrar y empezar', danger: true }
     );
     if (!ok) return;
-    const freshConfig = { name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', registrationDeadlineTime: '23:59', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, courtStartHours: {}, matchDurationByCategory: { 'Masculino': 90, 'Femenino': 90 }, formatByCategory: {}, dualCategoryMaxMatches: 1, restMinutesBetweenMatches: 30 };
+    const freshConfig = { name: '', categories: 'Masculino, Femenino', startDate: '', endDate: '', registrationDeadline: '', registrationDeadlineTime: '23:59', startHour: '09:00', endHour: '22:00', firstDayStartHour: '16:00', courtsCount: 2, courtStartHours: {}, matchDurationByCategory: { 'Masculino': 60, 'Femenino': 60 }, formatByCategory: {}, dualCategoryMaxMatches: 1, restMinutesBetweenMatches: 30 };
     // La fila sigue existiendo en Supabase: hay que reiniciarla ahí también
     // (y pasarla a borrador). Antes solo se vaciaba el estado local, el
     // autosave escribía la config vacía y el torneo seguía público con
@@ -1544,7 +1544,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const agenda = crearAgenda(externalIntervals);
     agenda.vinculos = vinculosDeParejas(tConfig);
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
-    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
 
     // finalSlots: horas del torneo en las que puede cada pareja. Va en la copia
     // de la pareja que se guarda dentro de cada partido (la lee el editor de
@@ -2279,7 +2279,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const parrilla = crearParrilla(tConfig);
     if (parrilla.slots.length === 0) { toast('Configura las fechas del torneo antes de recalcular.', 'error'); return; }
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
-    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
 
     // Clonar todo y limpiar las horas automáticas. Se respetan las puestas a
     // mano y los partidos ya jugados (con o sin hora): esos no se mueven.
@@ -2495,7 +2495,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (!nextMatch || !isRealPair(nextMatch.p1) || !isRealPair(nextMatch.p2)) return;
 
     const parrilla = crearParrilla(tConfig);
-    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
     const durationMin = durDe(cat);
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
     const gap = durationMin + restMin;
@@ -3237,7 +3237,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // categorías, salvo la consolación de esta, que se regenera), más los
     // bloqueos y reservas del club. Pistas de CONSOLACIÓN (getAllowedCourts).
     const parrilla = crearParrilla(tConfig);
-    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+    const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
     const durationMin = durDe(cat);
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
     const gap = durationMin + restMin;
@@ -4945,7 +4945,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <span style={{ minWidth: '100px', fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>{cat}</span>
                     <select
-                      value={tConfig.matchDurationByCategory?.[cat] ?? 90}
+                      value={tConfig.matchDurationByCategory?.[cat] ?? 60}
                       onChange={e => setTConfig({
                         ...tConfig,
                         matchDurationByCategory: {
@@ -5416,7 +5416,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                       // de apertura de la pista) o libre. Los bloqueos del admin
                       // no ocupan: son pistas guardadas para el torneo.
                       const totalPistas = tConfig.courtsCount || 1;
-                      const durCatMapa = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+                      const durCatMapa = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
                       const partidosPorDia = {};
                       [[rounds, false], [consRounds, true]].forEach(([obj, cons]) => Object.entries(obj || {}).forEach(([ct, rs]) => (rs || []).forEach(r => (r || []).forEach(m => {
                         const t = parsearTiempo(m?.time);
@@ -6388,7 +6388,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         // Partidos con hora de las parejas VINCULADAS a p (comparten jugador
         // en otra categoría): ese jugador no puede estar en dos pistas a la vez.
         const vincEditor = vinculosDeParejas(tConfig);
-        const durCat = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 90;
+        const durCat = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
         const durEste = durCat(cat);
         const descansoEditor = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
         const partidosVinculados = (p) => {
@@ -6937,7 +6937,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           <p style={{ margin: '0.1rem 0', fontSize: '0.8rem', color: '#64748B', fontWeight: 600 }}>
             {tConfig.matchDurationByCategory
               ? Object.entries(tConfig.matchDurationByCategory).map(([cat, dur]) => `${cat}: ${dur} min`).join(' · ')
-              : `${tConfig.matchDuration ?? 90} min`}
+              : `${tConfig.matchDuration ?? 60} min`}
           </p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94A3B8' }}>Introduce el resultado de cada partido (ej. 6-4 6-3) y el ganador avanza solo.</p>
           <div className="tm-deadline-row">
