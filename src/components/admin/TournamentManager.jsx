@@ -296,6 +296,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   });
 
   const [editingParticipant, setEditingParticipant] = useState(null);
+  const [nombresEdit, setNombresEdit] = useState({ j1: '', j2: '' });
   const [gridBlockedSlots, setGridBlockedSlots] = useState(new Set());
   const [gridDragging, setGridDragging] = useState(false);
   const [showAvailability, setShowAvailability] = useState(false);
@@ -3778,6 +3779,43 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     (participant.prefRules || []).forEach(rule => rule.slots.forEach(slot => blocked.add(slot)));
     setGridBlockedSlots(blocked);
     setEditingParticipant(participant);
+    const [j1 = '', ...resto] = jugadoresDe(participant);
+    setNombresEdit({ j1, j2: resto.join(' y ') });
+  };
+
+  // Cambiar el nombre de los jugadores de una pareja (p. ej. un sustituto):
+  // en la lista, en todos los partidos de los cuadros y en su inscripción
+  // online si la tiene. Se hace desde el panel para que el autoguardado no lo
+  // pise. Lo pidió el club el 12/11/2026.
+  const guardarNombresPareja = async () => {
+    const ep = editingParticipant;
+    if (!ep) return;
+    const j1 = toTitleCase(nombresEdit.j1 || '').trim();
+    const j2 = toTitleCase(nombresEdit.j2 || '').trim();
+    if (!j1 || !j2) { toast('Pon el nombre de los dos jugadores.', 'error'); return; }
+    const nuevo = `${j1} y ${j2}`;
+    if (nuevo === ep.name) return;
+    const id = String(ep.id);
+    // Inscripción online (si la hay): primero, por si choca con otra igual.
+    const esOnline = regsList.some(r => String(r.id) === id) || /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(id);
+    if (esOnline) {
+      const { error } = await supabase.from('tournament_registrations')
+        .update({ player1_name: j1, player2_name: j2 }).eq('id', ep.id);
+      if (error) {
+        toast(error.code === '23505' ? `Ya hay otra inscripción de "${nuevo}" en esa categoría.` : 'No se pudo cambiar el nombre en la inscripción: ' + error.message, 'error');
+        return;
+      }
+      setRegsList(prev => prev.map(r => String(r.id) === id ? { ...r, player1_name: j1, player2_name: j2 } : r));
+    }
+    const renombrar = (p) => (p && String(p.id) === id ? { ...p, name: nuevo } : p);
+    const enCuadros = (obj) => Object.fromEntries(Object.entries(obj || {}).map(([c, rs]) => [c, (rs || []).map(r => (r || []).map(m => (
+      m ? { ...m, p1: renombrar(m.p1), p2: renombrar(m.p2), winner: renombrar(m.winner) } : m
+    )))]));
+    setParticipants(prev => prev.map(renombrar));
+    setRounds(prev => enCuadros(prev));
+    setConsRounds(prev => enCuadros(prev));
+    setEditingParticipant(prev => (prev ? { ...prev, name: nuevo } : prev));
+    toast(`✓ Pareja renombrada: ${nuevo}`, 'success');
   };
 
   const hoursToRanges = (hours) => {
@@ -5625,18 +5663,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               <div style={{ padding: '1.25rem 1.5rem' }}>
                 {/* Players */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                  {[{ label: 'Jugador 1', name: p1 }, { label: 'Jugador 2', name: p2 }].map(({ label, name }) => (
+                  {[{ label: 'Jugador 1', name: p1, k: 'j1' }, { label: 'Jugador 2', name: p2, k: 'j2' }].map(({ label, name, k }) => (
                     <div key={label} style={{ border: '1.5px solid #E2E8F0', borderRadius: '0.875rem', padding: '1rem' }}>
                       <p style={{ margin: '0 0 0.35rem', fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</p>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                         <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 800, fontSize: '1rem', flexShrink: 0 }}>
-                          {name.charAt(0).toUpperCase()}
+                          {(nombresEdit[k] || name).charAt(0).toUpperCase()}
                         </div>
-                        <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.9rem' }}>{name}</span>
+                        <input
+                          type="text"
+                          value={nombresEdit[k]}
+                          onChange={e => setNombresEdit(prev => ({ ...prev, [k]: e.target.value }))}
+                          placeholder={name}
+                          style={{ flex: 1, minWidth: 0, padding: '0.45rem 0.6rem', border: '1.5px solid #CBD5E1', borderRadius: '0.5rem', fontWeight: 700, color: '#0F172A', fontSize: '0.9rem' }}
+                        />
                       </div>
                     </div>
                   ))}
                 </div>
+                {`${toTitleCase(nombresEdit.j1 || '').trim()} y ${toTitleCase(nombresEdit.j2 || '').trim()}` !== editingParticipant.name && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginTop: '-0.5rem', marginBottom: '1.25rem', padding: '0.6rem 0.8rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '0.6rem' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600 }}>
+                      Nuevo nombre: <strong>{toTitleCase(nombresEdit.j1 || '').trim() || '?'} y {toTitleCase(nombresEdit.j2 || '').trim() || '?'}</strong> (se cambia en la lista, en el cuadro y en su inscripción)
+                    </span>
+                    <button type="button" onClick={guardarNombresPareja} style={{ padding: '0.45rem 0.9rem', borderRadius: '0.5rem', border: 'none', background: '#16A34A', color: 'white', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer' }}>
+                      Guardar nombres
+                    </button>
+                  </div>
+                )}
 
                 {/* Jugador que juega también en otra categoría con OTRA pareja */}
                 {(() => {
