@@ -451,6 +451,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setDbStatus(data.status || 'draft');
     aplicarConfigBD(data.config || {}, data.name);
     sincronizadoRef.current = jsonEstable(data.config || {});
+    intentadosRef.current.clear();
   };
   const leerFilaBD = async () => {
     const { data, error } = await conTiempo(supabase.from('tournaments').select('config, status, name').eq('id', tournamentKey).single());
@@ -462,17 +463,24 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // propia puede traer la foto de antes y no vale para comparar.
   const colaEscrituraRef = useRef(Promise.resolve());
   const escriturasHechasRef = useRef(0);
-  // Huella de lo último que esta pantalla ha mandado a guardar: si la
-  // respuesta se perdió pero la base de datos lo tiene, es nuestro (no de
-  // otro dispositivo) y no debe dar la barra roja.
-  const intentadoRef = useRef(null);
+  // Huellas de lo que esta pantalla ha mandado a guardar desde la última vez
+  // que supo qué hay en la base de datos (todas, no solo la última: con la red
+  // cortándose puede llegar la primera y perderse la segunda). Si la
+  // respuesta se perdió pero la base de datos tiene una de ellas, es nuestro
+  // (no de otro dispositivo) y no debe dar la barra roja.
+  const intentadosRef = useRef(new Set());
+  // El último autoguardado falló: al volver a la pestaña se manda lo ÚLTIMO
+  // de la pantalla (ultimaFotoRef), nunca una copia vieja.
+  const guardadoFallidoRef = useRef(false);
+  const ultimaFotoRef = useRef(null);
   const avisoGuardadoRef = useRef(0);
   const exportandoRef = useRef(false); // un PDF del cuadro en marcha
   // Ninguna petición del guardado puede quedarse colgada para siempre (la
-  // fila de escrituras esperaría sin fin): se corta a los 20 s.
-  const conTiempo = (q) => {
+  // fila de escrituras esperaría sin fin): se corta a los 20 s (o a lo que
+  // se diga, para escrituras grandes).
+  const conTiempo = (q, ms = 20000) => {
     try {
-      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return q.abortSignal(AbortSignal.timeout(20000));
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return q.abortSignal(AbortSignal.timeout(ms));
     } catch { /* navegador sin AbortSignal.timeout: sin límite, como antes */ }
     return q;
   };
@@ -483,7 +491,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     conflictoRemotoRef.current = true;
     setConflictoRemoto(mensaje);
   };
-  const escribirConfigAhora = async (config, extra = {}) => {
+  // recordar = false en los botones que solo cambian la pantalla si el
+  // guardado sale bien (cerrar inscripciones, publicar, reiniciar): si fallan,
+  // lo enviado no queda en esta pantalla y no se puede dar por propio (sería
+  // pisar el mismo cambio hecho desde otro dispositivo).
+  const escribirConfigAhora = async (config, extra = {}, recordar = true) => {
     // Bloqueada por un conflicto, o sin haber podido cargar el torneo: no se
     // guarda nada (sería guardar datos viejos encima de los buenos).
     if (conflictoRemotoRef.current || sincronizadoRef.current == null) {
@@ -502,10 +514,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           // La base de datos ya tiene justo esto (p. ej. otra pantalla ha
           // guardado lo mismo): no es un conflicto.
           sincronizadoRef.current = nuevo;
+          intentadosRef.current.clear();
           if (!conEstado) return { error: null };
-        } else if (enBD === intentadoRef.current) {
+        } else if (intentadosRef.current.has(enBD)) {
           // Es lo que esta pantalla mandó antes (se perdió la respuesta).
           sincronizadoRef.current = enBD;
+          intentadosRef.current.clear();
         } else if (enBD !== sincronizadoRef.current) {
           marcarConflicto();
           return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
@@ -514,16 +528,26 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     } catch {
       // Si no se puede leer (sin conexión), se intenta guardar como siempre.
     }
-    intentadoRef.current = nuevo;
+    if (recordar) intentadosRef.current.add(nuevo);
     let error = null;
     try {
-      ({ error } = await conTiempo(supabase.from('tournaments').update({ config, ...extra }).eq('id', tournamentKey)));
+      // El torneo entero pesa ~94 KB: con poca cobertura tarda en subir, así
+      // que la escritura tiene más margen (40 s) que las lecturas (20 s).
+      ({ error } = await conTiempo(supabase.from('tournaments').update({ config, ...extra }).eq('id', tournamentKey), 40000));
     } catch (e) {
       error = { message: e?.message || String(e) };
+    }
+    if (error && !recordar) {
+      // ¿Se guardó y solo se perdió la respuesta? Se mira una vez.
+      try {
+        const { data: tras, error: e2 } = await conTiempo(supabase.from('tournaments').select('config').eq('id', tournamentKey).single());
+        if (!e2 && tras && jsonEstable(tras.config || {}) === nuevo) error = null;
+      } catch { /* sin conexión: sigue siendo un fallo */ }
     }
     if (!error) {
       sincronizadoRef.current = nuevo;
       escriturasHechasRef.current += 1;
+      intentadosRef.current.clear();
     }
     return { error };
   };
@@ -531,8 +555,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // la dejó; si otro dispositivo lo ha cambiado, no escribe y avisa. Devuelve
   // { error } como supabase (con conflicto: true si no se ha guardado por eso).
   // Las escrituras de esta pantalla van en fila, nunca dos a la vez.
-  const escribirConfig = (config, extra = {}) => {
-    const p = colaEscrituraRef.current.then(() => escribirConfigAhora(config, extra));
+  const escribirConfig = (config, extra = {}, recordar = true) => {
+    const p = colaEscrituraRef.current.then(() => escribirConfigAhora(config, extra, recordar));
     colaEscrituraRef.current = p.then(() => {}, () => {});
     return p;
   };
@@ -607,16 +631,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // escribirConfig no guarda si otro dispositivo ha cambiado el torneo.
     return escribirConfig(snap.config, snap.name ? { name: snap.name } : {})
       .then(({ error, conflicto }) => {
+        if (!error) guardadoFallidoRef.current = false;
         if (error && !conflicto) {
+          guardadoFallidoRef.current = true;
           console.warn('Autosave torneo falló:', error.message);
           // No se reintenta con esta copia (podría ser más vieja que otra ya
-          // guardada): el siguiente cambio vuelve a mandar el torneo entero.
-          // Se avisa, como mucho una vez cada 30 s.
-          const ahora = Date.now();
-          if (ahora - avisoGuardadoRef.current > 30000) {
-            avisoGuardadoRef.current = ahora;
-            toast('No se ha podido guardar el último cambio (¿sin conexión?). Se guardará con el siguiente cambio; si no tocas nada más, repítelo cuando vuelva la conexión.', 'warning', 9000);
-          }
+          // guardada): el siguiente cambio vuelve a mandar el torneo entero, y
+          // al volver a esta pestaña se manda lo último de la pantalla. Se
+          // avisa en cada fallo.
+          avisoGuardadoRef.current = Date.now();
+          toast('No se ha podido guardar el último cambio (¿sin conexión?). Se guardará con el siguiente cambio; si no tocas nada más, repítelo cuando vuelva la conexión.', 'warning', 9000);
         }
       });
   };
@@ -640,7 +664,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const enBD = data ? jsonEstable(data.config || {}) : null;
       if (enBD != null && sincronizadoRef.current != null && enBD !== sincronizadoRef.current) {
         // Lo que esta pantalla mandó antes y cuya respuesta se perdió es suyo.
-        if (enBD === intentadoRef.current) { sincronizadoRef.current = enBD; return null; }
+        if (intentadosRef.current.has(enBD)) { sincronizadoRef.current = enBD; intentadosRef.current.clear(); return null; }
         return { data };
       }
     } catch {
@@ -668,6 +692,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const comprobandoRef = useRef(false);
   const comprobarAlVolverRef = useRef(null);
   comprobarAlVolverRef.current = async () => {
+    // El último autoguardado falló: se vuelve a mandar lo ÚLTIMO de la pantalla.
+    if (guardadoFallidoRef.current && !pendingSaveRef.current && ultimaFotoRef.current && !conflictoRemotoRef.current) {
+      pendingSaveRef.current = ultimaFotoRef.current;
+      flushTournamentSave();
+      return;
+    }
     if (comprobandoRef.current || pendingSaveRef.current || conflictoRemotoRef.current) return;
     comprobandoRef.current = true;
     try {
@@ -717,6 +747,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       config: { ...tConfig, rounds, consRounds, participants, phase },
       name: tConfig.name || '',
     };
+    ultimaFotoRef.current = pendingSaveRef.current;
     const timer = setTimeout(flushTournamentSave, 1200);
     return () => clearTimeout(timer);
   }, [dbLoaded, tournamentKey, tConfig, rounds, consRounds, participants, phase]);
@@ -1103,7 +1134,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (alDia && alDia.data) { marcarConflicto(MENSAJE_CAMBIOS_FUERA); avisarNoHecho('reiniciado el torneo', 'fuera'); return; }
     const { error: regErr } = await supabase.from('tournament_registrations').delete().eq('tournament_id', tournamentKey);
     if (regErr) { toast('Error al borrar inscripciones: ' + regErr.message, 'error'); return; }
-    const { error } = await escribirConfig({ ...freshConfig, rounds: {}, consRounds: {}, participants: [], phase: 'config' }, { name: 'Torneo', status: 'draft' });
+    const { error } = await escribirConfig({ ...freshConfig, rounds: {}, consRounds: {}, participants: [], phase: 'config' }, { name: 'Torneo', status: 'draft' }, false);
     if (error) { toast('Error al reiniciar el torneo: ' + error.message, 'error'); return; }
     localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
     setDbStatus('draft');
@@ -1414,7 +1445,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     try {
       const newConfig = { ...tConfig, registrationClosed: closing };
       const config = { ...newConfig, rounds, consRounds, participants, phase };
-      const { error } = await escribirConfig(config);
+      const { error } = await escribirConfig(config, {}, false);
       if (error) throw error;
       setTConfig(newConfig);
       toast(closing ? '🔒 Inscripciones cerradas.' : '🔓 Inscripciones reabiertas.');
@@ -1473,7 +1504,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const { avisoPublico: _avisoAnterior, ...sinAviso } = tConfig;
         const tConfigWithFlag = { ...(quitarAviso ? sinAviso : tConfig), bracketPublished: true };
         const config = { ...tConfigWithFlag, rounds, consRounds, participants, phase };
-        const { error } = await escribirConfig(config, { status: 'open' });
+        const { error } = await escribirConfig(config, { status: 'open' }, false);
         if (error) throw error;
         setTConfig(tConfigWithFlag);
         toast('🏆 Cuadro publicado. Elige a qué parejas avisar por correo.', 'success');
