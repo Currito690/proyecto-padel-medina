@@ -238,7 +238,9 @@ const CONFIG_POR_DEFECTO = {
   restMinutesBetweenMatches: 30,
 };
 
-const MENSAJE_CONFLICTO = 'Este torneo se ha cambiado desde otro dispositivo (otra pestaña, el móvil o la app). Para no pisar esos cambios, lo último que has tocado aquí NO se ha guardado. Pulsa «Cargar lo último» y vuelve a hacerlo.';
+const MENSAJE_CONFLICTO = 'Este torneo se ha cambiado desde otro dispositivo (otra pestaña, el móvil o la app). Para no pisar esos cambios, desde que sale este aviso lo que cambies aquí NO se guarda. Pulsa «Cargar lo último» y repite lo último que hiciste.';
+const MENSAJE_CAMBIOS_FUERA = 'Hay cambios en este torneo hechos desde otro dispositivo (otra pestaña, el móvil o la app). Pulsa «Cargar lo último» para verlos; hasta entonces, lo que cambies aquí no se guarda.';
+const MENSAJE_CARGA_FALLIDA = 'No se ha podido cargar el torneo (¿sin conexión?). Para no guardar datos viejos, esta pantalla no guarda nada. Pulsa «Cargar lo último» cuando vuelva la conexión.';
 
 const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [isExporting, setIsExporting] = useState(false);
@@ -454,27 +456,61 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (error) throw error;
     return data;
   };
-  const marcarConflicto = () => {
+  // Escrituras del torneo de ESTA pantalla, en fila (una detrás de otra), y
+  // cuántas han terminado bien: una lectura que se cruza con una escritura
+  // propia puede traer la foto de antes y no vale para comparar.
+  const colaEscrituraRef = useRef(Promise.resolve());
+  const escriturasHechasRef = useRef(0);
+  const marcarConflicto = (mensaje = MENSAJE_CONFLICTO) => {
+    // El aviso flotante sale una vez, aunque esta pantalla no tenga la barra
+    // roja (o ya se haya cerrado el editor).
+    if (!conflictoRemotoRef.current) toast(mensaje, 'error', 9000);
     conflictoRemotoRef.current = true;
-    setConflictoRemoto(true);
+    setConflictoRemoto(mensaje);
   };
-  // Guarda el config entero SOLO si la base de datos sigue como esta pantalla
-  // la dejó; si otro dispositivo lo ha cambiado, no escribe y avisa. Devuelve
-  // { error } como supabase (con conflicto: true si no se ha guardado por eso).
-  const escribirConfig = async (config, extra = {}) => {
-    if (conflictoRemotoRef.current) return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
+  const escribirConfigAhora = async (config, extra = {}) => {
+    // Bloqueada por un conflicto, o sin haber podido cargar el torneo: no se
+    // guarda nada (sería guardar datos viejos encima de los buenos).
+    if (conflictoRemotoRef.current || sincronizadoRef.current == null) {
+      return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
+    }
+    const nuevo = jsonEstable(config);
+    const conEstado = 'status' in extra;
+    // Nada nuevo: no se escribe (una pantalla que no ha cambiado nada no
+    // vuelve a escribir lo que ya hay).
+    if (nuevo === sincronizadoRef.current && !conEstado) return { error: null };
     try {
       const { data: actual, error: errLeer } = await supabase.from('tournaments').select('config').eq('id', tournamentKey).single();
-      if (!errLeer && actual && sincronizadoRef.current != null && jsonEstable(actual.config || {}) !== sincronizadoRef.current) {
-        marcarConflicto();
-        return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
+      if (!errLeer && actual) {
+        const enBD = jsonEstable(actual.config || {});
+        if (enBD === nuevo) {
+          // La base de datos ya tiene justo esto (p. ej. otra pantalla ha
+          // guardado lo mismo): no es un conflicto.
+          sincronizadoRef.current = nuevo;
+          if (!conEstado) return { error: null };
+        } else if (enBD !== sincronizadoRef.current) {
+          marcarConflicto();
+          return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
+        }
       }
     } catch {
       // Si no se puede leer (sin conexión), se intenta guardar como siempre.
     }
     const { error } = await supabase.from('tournaments').update({ config, ...extra }).eq('id', tournamentKey);
-    if (!error) sincronizadoRef.current = jsonEstable(config);
+    if (!error) {
+      sincronizadoRef.current = nuevo;
+      escriturasHechasRef.current += 1;
+    }
     return { error };
+  };
+  // Guarda el config entero SOLO si la base de datos sigue como esta pantalla
+  // la dejó; si otro dispositivo lo ha cambiado, no escribe y avisa. Devuelve
+  // { error } como supabase (con conflicto: true si no se ha guardado por eso).
+  // Las escrituras de esta pantalla van en fila, nunca dos a la vez.
+  const escribirConfig = (config, extra = {}) => {
+    const p = colaEscrituraRef.current.then(() => escribirConfigAhora(config, extra));
+    colaEscrituraRef.current = p.then(() => {}, () => {});
+    return p;
   };
 
   // Fetch desde Supabase al montar. La DB es la fuente de verdad: si trae datos,
@@ -501,6 +537,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             return;
           }
           console.warn('No se pudo cargar el torneo desde DB:', error.message);
+          // Sin cargar no se guarda: lo que hay en pantalla puede ser la copia
+          // vieja de este navegador y pisaría lo bueno.
+          marcarConflicto(MENSAJE_CARGA_FALLIDA);
           setDbLoaded(true);
           return;
         }
@@ -521,6 +560,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         setDbLoaded(true);
       } catch (e) {
         console.warn('Error cargando torneo:', e);
+        marcarConflicto(MENSAJE_CARGA_FALLIDA);
         setDbLoaded(true);
       }
     })();
@@ -542,25 +582,37 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Sin nombre no se manda: así no se pisa el de la lista con "Torneo".
     // escribirConfig no guarda si otro dispositivo ha cambiado el torneo.
     return escribirConfig(snap.config, snap.name ? { name: snap.name } : {})
-      .then(({ error, conflicto }) => { if (error && !conflicto) console.warn('Autosave torneo falló:', error.message); });
+      .then(({ error, conflicto }) => {
+        if (error && !conflicto) {
+          console.warn('Autosave torneo falló:', error.message);
+          // Sin conexión: se vuelve a intentar a los 5 s (si mientras tanto no
+          // hay otro cambio, que ya lo llevaría).
+          if (!pendingSaveRef.current) {
+            pendingSaveRef.current = snap;
+            setTimeout(() => { flushTournamentSave(); }, 5000);
+          }
+        }
+      });
   };
 
-  // Antes de sacar un PDF (y al volver a esta pestaña): guarda lo pendiente
-  // de esta pantalla y, si otro dispositivo ha cambiado el torneo, carga lo
-  // último de la base de datos. Devuelve false si hay un conflicto sin
-  // resolver, la fila nueva si ha tenido que cargarla, o null si ya estaba al día.
-  const ponerseAlDia = async ({ avisar = true } = {}) => {
+  // Antes de un PDF o de avisar por correo: guarda lo pendiente de esta
+  // pantalla y mira si otro dispositivo ha cambiado el torneo. Devuelve
+  // false si esta pantalla está bloqueada por un conflicto, { data } con lo
+  // que hay en la base de datos si ha cambiado por otro lado, o null si está
+  // al día (o sin conexión, y entonces manda lo de la pantalla).
+  const comprobarAlDia = async () => {
     if (pendingSaveRef.current) await flushTournamentSave();
-    if (conflictoRemotoRef.current) {
-      if (avisar) toast(MENSAJE_CONFLICTO, 'error', 9000);
-      return false;
-    }
+    await colaEscrituraRef.current;
+    if (conflictoRemotoRef.current) return false;
+    if (pendingSaveRef.current) return null;
+    const escriturasAntes = escriturasHechasRef.current;
     try {
       const data = await leerFilaBD();
+      // Si mientras se leía esta pantalla ha guardado o se ha tocado algo, la
+      // foto puede ser de antes: no vale para comparar.
+      if (escriturasHechasRef.current !== escriturasAntes || pendingSaveRef.current) return null;
       if (data && sincronizadoRef.current != null && jsonEstable(data.config || {}) !== sincronizadoRef.current) {
-        aplicarFilaBD(data);
-        if (avisar) toast('He cargado los últimos cambios del torneo (hechos desde otro dispositivo).', 'info', 6000);
-        return data;
+        return { data };
       }
     } catch {
       // Sin conexión: se usa lo que hay en pantalla.
@@ -568,6 +620,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     return null;
   };
   const cargarLoUltimo = async () => {
+    await colaEscrituraRef.current;
     try {
       const data = await leerFilaBD();
       pendingSaveRef.current = null;
@@ -575,27 +628,59 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       conflictoRemotoRef.current = false;
       setConflictoRemoto(false);
       toast('Cargado lo último del torneo.', 'success');
-    } catch (e) {
-      toast('No se pudo cargar el torneo: ' + (e?.message || e), 'error');
+    } catch {
+      toast('No se pudo cargar el torneo. Revisa la conexión y vuelve a pulsar «Cargar lo último».', 'error', 8000);
     }
   };
-  // Al volver a esta pestaña (o a la app) se pone al día sola.
-  const ponerseAlDiaRef = useRef(ponerseAlDia);
-  ponerseAlDiaRef.current = ponerseAlDia;
+  // Al volver a esta pestaña (o a la app): si otro dispositivo ha cambiado el
+  // torneo, se avisa y esta pantalla deja de guardar hasta «Cargar lo último».
+  // No se recarga sola: así nunca pisa lo que se esté tocando ni reescribe
+  // nada por su cuenta. Al irse de la pestaña se guarda lo pendiente.
+  const comprobandoRef = useRef(false);
+  const comprobarAlVolverRef = useRef(null);
+  comprobarAlVolverRef.current = async () => {
+    if (comprobandoRef.current || pendingSaveRef.current || conflictoRemotoRef.current) return;
+    comprobandoRef.current = true;
+    try {
+      const r = await comprobarAlDia();
+      if (r && r.data) marcarConflicto(MENSAJE_CAMBIOS_FUERA);
+    } finally {
+      comprobandoRef.current = false;
+    }
+  };
   useEffect(() => {
     if (!dbLoaded) return;
-    const alVolver = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (pendingSaveRef.current || conflictoRemotoRef.current) return;
-      ponerseAlDiaRef.current();
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === 'hidden') { flushTournamentSave(); return; }
+      comprobarAlVolverRef.current?.();
     };
-    document.addEventListener('visibilitychange', alVolver);
-    window.addEventListener('focus', alVolver);
+    const alEnfocar = () => { comprobarAlVolverRef.current?.(); };
+    document.addEventListener('visibilitychange', alCambiarVisibilidad);
+    window.addEventListener('focus', alEnfocar);
     return () => {
-      document.removeEventListener('visibilitychange', alVolver);
-      window.removeEventListener('focus', alVolver);
+      document.removeEventListener('visibilitychange', alCambiarVisibilidad);
+      window.removeEventListener('focus', alEnfocar);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbLoaded]);
+  // Barra roja fija arriba mientras esta pantalla no guarda (conflicto con
+  // otro dispositivo o torneo sin cargar), con el botón para cargar lo último.
+  const bannerConflicto = conflictoRemoto ? (
+    <div role="alert" style={{ position: 'sticky', top: 0, zIndex: 1500, margin: '0 0 1rem', padding: '0.85rem 1rem', borderRadius: '0.75rem', background: '#FEF2F2', border: '2px solid #F87171', color: '#7F1D1D', display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', boxShadow: '0 6px 16px rgba(220,38,38,0.15)' }}>
+      <span style={{ fontSize: '1.3rem' }} aria-hidden="true">⚠️</span>
+      <span style={{ flex: 1, minWidth: '16rem', fontSize: '0.88rem', fontWeight: 600, lineHeight: 1.45 }}>{typeof conflictoRemoto === 'string' ? conflictoRemoto : MENSAJE_CONFLICTO}</span>
+      <button type="button" onClick={cargarLoUltimo} style={{ padding: '0.55rem 1rem', borderRadius: '0.6rem', border: 'none', background: '#DC2626', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        🔄 Cargar lo último
+      </button>
+    </div>
+  ) : null;
+  // Para los PDF y el correo: si hay que cargar lo último antes, se explica.
+  const avisarNoHecho = (que, motivo) => toast(
+    motivo === 'fuera'
+      ? `No se ha ${que}: hay cambios en el torneo hechos desde otro dispositivo. Pulsa «Cargar lo último» (arriba) y vuelve a intentarlo.`
+      : `No se ha ${que}: esta pantalla no está guardando. Pulsa «Cargar lo último» (arriba) y vuelve a intentarlo.`,
+    'error', 9000,
+  );
   useEffect(() => {
     if (!dbLoaded) return;
     pendingSaveRef.current = {
@@ -982,6 +1067,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // (y pasarla a borrador). Antes solo se vaciaba el estado local, el
     // autosave escribía la config vacía y el torneo seguía público con
     // status 'open', aceptando inscripciones, y con las viejas colgando.
+    // Antes de borrar inscripciones, que esta pantalla esté al día y guardando
+    // (si no, se borraban y luego no se podía reiniciar el torneo).
+    const alDia = await comprobarAlDia();
+    if (alDia === false) { avisarNoHecho('reiniciado el torneo'); return; }
+    if (alDia && alDia.data) { marcarConflicto(MENSAJE_CAMBIOS_FUERA); avisarNoHecho('reiniciado el torneo', 'fuera'); return; }
     const { error: regErr } = await supabase.from('tournament_registrations').delete().eq('tournament_id', tournamentKey);
     if (regErr) { toast('Error al borrar inscripciones: ' + regErr.message, 'error'); return; }
     const { error } = await escribirConfig({ ...freshConfig, rounds: {}, consRounds: {}, participants: [], phase: 'config' }, { name: 'Torneo', status: 'draft' });
@@ -1310,6 +1400,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       toast('Primero debes publicar el torneo (Fase 2).');
       return;
     }
+    // No se publica ni se avisa por correo desde una pantalla desactualizada
+    // o que no está guardando: el correo hablaría de un cuadro que no es el
+    // que ven los jugadores.
+    const alDia = await comprobarAlDia();
+    if (alDia === false) { avisarNoHecho('enviado nada'); return; }
+    if (alDia && alDia.data) { marcarConflicto(MENSAJE_CAMBIOS_FUERA); avisarNoHecho('enviado nada', 'fuera'); return; }
     const wasPublished = !!tConfig.bracketPublished;
     // Aviso si el plazo de inscripción aún está abierto: publicar el cuadro
     // antes de tiempo bloquea inscripciones que aún podrían llegar.
@@ -3478,15 +3574,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const handleDownloadPDF = async (elementId, title) => {
-    // El PDF es una foto del cuadro en pantalla: antes, lo último de la base
-    // de datos (si otro dispositivo cambió una hora, se pinta y sale bien).
-    const alDia = await ponerseAlDia();
-    if (alDia === false) return;
+    // El PDF es una foto del cuadro en pantalla: si otro dispositivo ha
+    // cambiado el torneo, esta pantalla está desactualizada y saldría mal
+    // (pasaba: horas viejas). Entonces no se hace y se pide cargar lo último.
+    const alDia = await comprobarAlDia();
+    if (alDia === false) { avisarNoHecho('descargado el PDF'); return; }
+    if (alDia && alDia.data) { marcarConflicto(MENSAJE_CAMBIOS_FUERA); avisarNoHecho('descargado el PDF', 'fuera'); return; }
     if (!document.getElementById(elementId)) return;
     setIsExporting(elementId);
 
-    // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones
-    // y, si se acaba de cargar lo último, con los datos nuevos ya pintados).
+    // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones).
     setTimeout(async () => {
       const element = document.getElementById(elementId);
       if (!element) { setIsExporting(false); return; }
@@ -3660,7 +3757,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         if (injected) injected.remove();
         setIsExporting(false);
       }
-    }, alDia ? 600 : 100);
+    }, 100);
   };
 
   // Genera un PDF nativo (no captura de pantalla) del listado de partidos.
@@ -3725,14 +3822,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   const handleDownloadMatchesPDF = async (items, byDay, dayKeys, filterDay) => {
     // Antes del PDF, lo último de la base de datos: si otro dispositivo ha
-    // cambiado alguna hora, el PDF sale con lo de ahora y no con lo de esta
-    // pantalla (antes salían horas viejas).
-    const alDia = await ponerseAlDia();
-    if (alDia === false) return;
-    if (alDia && alDia.config) {
+    // cambiado alguna hora, el PDF sale con lo de la base de datos y no con lo
+    // de esta pantalla (antes salían horas viejas). Esta pantalla se queda
+    // avisando de que tiene que cargar lo último.
+    const alDia = await comprobarAlDia();
+    if (alDia === false) { avisarNoHecho('descargado el PDF'); return; }
+    if (alDia && alDia.data) {
+      marcarConflicto(MENSAJE_CAMBIOS_FUERA);
       ({ items, byDay, dayKeys } = recogerPartidosPorDia(
-        sinHorasProvisionales(alDia.config.rounds || {}),
-        sinHorasProvisionales(alDia.config.consRounds || {}),
+        sinHorasProvisionales(alDia.data.config?.rounds || {}),
+        sinHorasProvisionales(alDia.data.config?.consRounds || {}),
       ));
     }
     // Si el día filtrado ya no tiene partidos (se recalcularon horarios,
@@ -4196,6 +4295,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
     return (
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '1rem' }}>
+        {bannerConflicto}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button onClick={() => setShowSeedsPanel(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0 }}>
             ← Volver al torneo
@@ -4543,6 +4643,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     };
     return (
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '1rem' }}>
+        {bannerConflicto}
         <button onClick={() => setShowRegistrations(false)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', padding: 0, marginBottom: '1rem' }}>
           ← Volver al torneo
         </button>
@@ -4945,18 +5046,6 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       </div>
     );
   }
-
-  // Aviso fijo arriba cuando otro dispositivo ha cambiado el torneo: esta
-  // pantalla deja de guardar hasta que se carga lo último.
-  const bannerConflicto = conflictoRemoto ? (
-    <div role="alert" style={{ position: 'sticky', top: 0, zIndex: 1500, margin: '0 0 1rem', padding: '0.85rem 1rem', borderRadius: '0.75rem', background: '#FEF2F2', border: '2px solid #F87171', color: '#7F1D1D', display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', boxShadow: '0 6px 16px rgba(220,38,38,0.15)' }}>
-      <span style={{ fontSize: '1.3rem' }} aria-hidden="true">⚠️</span>
-      <span style={{ flex: 1, minWidth: '16rem', fontSize: '0.88rem', fontWeight: 600, lineHeight: 1.45 }}>{MENSAJE_CONFLICTO}</span>
-      <button type="button" onClick={cargarLoUltimo} style={{ padding: '0.55rem 1rem', borderRadius: '0.6rem', border: 'none', background: '#DC2626', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-        🔄 Cargar lo último
-      </button>
-    </div>
-  ) : null;
 
   if (phase === 'config') {
     return (
@@ -5449,14 +5538,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     })).filter(g => g.parejas.length > 0);
   };
   const descargarJugadoresPdf = async () => {
-    // Antes del PDF, lo último de la base de datos (nombres cambiados desde
-    // otro dispositivo). Si había algo nuevo, se pinta y se vuelve a pulsar.
-    const alDia = await ponerseAlDia();
-    if (alDia === false) return;
-    if (alDia) {
-      toast('He cargado los últimos cambios del torneo. Vuelve a pulsar para descargar el PDF.', 'info', 7000);
-      return;
-    }
+    // Antes del PDF: si otro dispositivo ha cambiado el torneo (p. ej. un
+    // nombre), esta pantalla está desactualizada; se pide cargar lo último.
+    const alDia = await comprobarAlDia();
+    if (alDia === false) { avisarNoHecho('descargado el PDF'); return; }
+    if (alDia && alDia.data) { marcarConflicto(MENSAJE_CAMBIOS_FUERA); avisarNoHecho('descargado el PDF', 'fuera'); return; }
     try {
       const grupos = listaJugadores();
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
