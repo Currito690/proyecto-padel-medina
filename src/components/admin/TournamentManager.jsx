@@ -11,6 +11,7 @@ import { useServerTime, formatNowShort, isServerTimeSynced, serverNowMs } from '
 // Programador de partidos (parrilla y agenda en minutos de verdad).
 import CuadroArbol from '../CuadroArbol';
 import { descargarBlob, descargarDataUrl, descargarTexto } from '../../utils/descargas';
+import { dibujarCuadroPdf } from '../../utils/cuadroPdf';
 import { prepararCartel } from '../../utils/cartel';
 import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, colocarPorAfinidad, toMin as aMinutos } from '../../utils/torneoHorarios';
 
@@ -3599,6 +3600,75 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       }
     }
     setConsRounds(prev => ({...prev, [cat]: newRounds}));
+  };
+
+  // ── PDF del cuadro, dibujado para imprimir (src/utils/cuadroPdf.js) ──
+  // Cabecera de cada partido en el PDF: día, hora y pista, o en qué está.
+  const etiquetaPartidoPdf = (m) => {
+    const real = (p) => p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
+    if (m?.p1?.isBye || m?.p2?.isBye) return 'Pasa directo a la siguiente ronda';
+    const reales = (real(m?.p1) ? 1 : 0) + (real(m?.p2) ? 1 : 0);
+    const t = parsearTiempo(m?.time);
+    if (t && (m.timeManual || reales === 2)) {
+      const [dd, mm] = t.dia.split('/').map(Number);
+      const anio = Number(String(tConfig.startDate || '').slice(0, 4)) || new Date().getFullYear();
+      const fecha = new Date(anio, (mm || 1) - 1, dd || 1, 12);
+      const dia = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][fecha.getDay()];
+      return `${dia} ${t.dia} · ${t.hora} · ${getCourtName(t.pista)}`;
+    }
+    if (reales === 2) return m?.sinHueco ? 'Sin hueco en el torneo' : 'Horario por definir';
+    if (reales === 1) return 'Esperando rival';
+    return 'Esperando rondas previas';
+  };
+  const nombreParejaPdf = (p) => {
+    if (p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder) return p.name || '';
+    if (p?.isBye) return '(sin rival)';
+    if (p?.isPrelimPlaceholder) return p.name || 'Ganador de la previa';
+    if (p?.isPlaceholder) return p.name || 'Perdedor por definir';
+    return 'Por decidir';
+  };
+  const descargarCuadroPdf = async (cat, isCons) => {
+    if (exportandoRef.current) return;
+    exportandoRef.current = true;
+    try {
+      // Antes del PDF, lo último: si otro dispositivo ha cambiado el torneo,
+      // el PDF sale con lo de la base de datos (y esta pantalla avisa).
+      let alDia = null;
+      try { alDia = await comprobarAlDia(); } catch { alDia = null; }
+      if (alDia === false) { avisarNoHecho('descargado el PDF'); return; }
+      let fuente = isCons ? consRounds : rounds;
+      if (alDia && alDia.data) {
+        marcarConflicto(MENSAJE_CAMBIOS_FUERA);
+        const c = alDia.data.config || {};
+        fuente = sinHorasProvisionales((isCons ? c.consRounds : c.rounds) || {});
+      }
+      const datos = fuente?.[cat] || [];
+      if (!datos.length) { toast('Este cuadro está vacío.', 'warning'); return; }
+      let logo = null;
+      try {
+        const res = await fetch('/logo.png');
+        const blob = await res.blob();
+        logo = await new Promise(resolve => { const fr = new FileReader(); fr.onloadend = () => resolve(fr.result); fr.readAsDataURL(blob); });
+      } catch { logo = null; }
+      const esKO = isCons && tConfig.formatByCategory?.[cat] === 'liguilla_ko';
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
+      dibujarCuadroPdf(pdf, datos, {
+        titulo: tConfig.name || 'Torneo',
+        subtitulo: `${esKO ? 'Eliminatorias finales' : (isCons ? 'Consolación' : 'Cuadro principal')} · ${cat}`,
+        colorPrincipal: isCons ? [217, 119, 6] : [22, 163, 74],
+        logo,
+        nombreRonda: (r) => getRoundName(r, datos),
+        etiqueta: (m) => etiquetaPartidoPdf(m),
+        nombrePareja: (p) => nombreParejaPdf(p),
+      });
+      const limpio = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+      await descargarBlob(pdf.output('blob'), `Cuadro_${limpio(tConfig.name || 'Torneo')}_${isCons ? 'Consolacion' : 'Principal'}_${limpio(cat)}.pdf`);
+    } catch (e) {
+      console.error('Error generando el PDF del cuadro:', e);
+      toast('Hubo un error al generar el PDF.', 'error');
+    } finally {
+      exportandoRef.current = false;
+    }
   };
 
   const handleDownloadPDF = async (elementId, title) => {
@@ -7900,7 +7970,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             >
                               🔀 {isSwapping ? (selectedSwapSlot?.key === swapKey ? 'Selecciona 2ª pareja…' : 'Cancelar edición') : 'Editar orden'}
                             </button>
-                            <button onClick={() => handleDownloadPDF(bracket.id, bracket.title)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <button onClick={() => descargarCuadroPdf(cat, bracket.isCons)} style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                               Exportar PDF
                             </button>
