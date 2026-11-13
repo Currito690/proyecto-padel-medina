@@ -452,7 +452,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     sincronizadoRef.current = jsonEstable(data.config || {});
   };
   const leerFilaBD = async () => {
-    const { data, error } = await supabase.from('tournaments').select('config, status, name').eq('id', tournamentKey).single();
+    const { data, error } = await conTiempo(supabase.from('tournaments').select('config, status, name').eq('id', tournamentKey).single());
     if (error) throw error;
     return data;
   };
@@ -461,6 +461,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // propia puede traer la foto de antes y no vale para comparar.
   const colaEscrituraRef = useRef(Promise.resolve());
   const escriturasHechasRef = useRef(0);
+  // Huella de lo último que esta pantalla ha mandado a guardar: si la
+  // respuesta se perdió pero la base de datos lo tiene, es nuestro (no de
+  // otro dispositivo) y no debe dar la barra roja.
+  const intentadoRef = useRef(null);
+  const avisoGuardadoRef = useRef(0);
+  const exportandoRef = useRef(false); // un PDF del cuadro en marcha
+  // Ninguna petición del guardado puede quedarse colgada para siempre (la
+  // fila de escrituras esperaría sin fin): se corta a los 20 s.
+  const conTiempo = (q) => {
+    try {
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return q.abortSignal(AbortSignal.timeout(20000));
+    } catch { /* navegador sin AbortSignal.timeout: sin límite, como antes */ }
+    return q;
+  };
   const marcarConflicto = (mensaje = MENSAJE_CONFLICTO) => {
     // El aviso flotante sale una vez, aunque esta pantalla no tenga la barra
     // roja (o ya se haya cerrado el editor).
@@ -480,7 +494,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // vuelve a escribir lo que ya hay).
     if (nuevo === sincronizadoRef.current && !conEstado) return { error: null };
     try {
-      const { data: actual, error: errLeer } = await supabase.from('tournaments').select('config').eq('id', tournamentKey).single();
+      const { data: actual, error: errLeer } = await conTiempo(supabase.from('tournaments').select('config').eq('id', tournamentKey).single());
       if (!errLeer && actual) {
         const enBD = jsonEstable(actual.config || {});
         if (enBD === nuevo) {
@@ -488,6 +502,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           // guardado lo mismo): no es un conflicto.
           sincronizadoRef.current = nuevo;
           if (!conEstado) return { error: null };
+        } else if (enBD === intentadoRef.current) {
+          // Es lo que esta pantalla mandó antes (se perdió la respuesta).
+          sincronizadoRef.current = enBD;
         } else if (enBD !== sincronizadoRef.current) {
           marcarConflicto();
           return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
@@ -496,7 +513,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     } catch {
       // Si no se puede leer (sin conexión), se intenta guardar como siempre.
     }
-    const { error } = await supabase.from('tournaments').update({ config, ...extra }).eq('id', tournamentKey);
+    intentadoRef.current = nuevo;
+    let error = null;
+    try {
+      ({ error } = await conTiempo(supabase.from('tournaments').update({ config, ...extra }).eq('id', tournamentKey)));
+    } catch (e) {
+      error = { message: e?.message || String(e) };
+    }
     if (!error) {
       sincronizadoRef.current = nuevo;
       escriturasHechasRef.current += 1;
@@ -585,11 +608,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       .then(({ error, conflicto }) => {
         if (error && !conflicto) {
           console.warn('Autosave torneo falló:', error.message);
-          // Sin conexión: se vuelve a intentar a los 5 s (si mientras tanto no
-          // hay otro cambio, que ya lo llevaría).
-          if (!pendingSaveRef.current) {
-            pendingSaveRef.current = snap;
-            setTimeout(() => { flushTournamentSave(); }, 5000);
+          // No se reintenta con esta copia (podría ser más vieja que otra ya
+          // guardada): el siguiente cambio vuelve a mandar el torneo entero.
+          // Se avisa, como mucho una vez cada 30 s.
+          const ahora = Date.now();
+          if (ahora - avisoGuardadoRef.current > 30000) {
+            avisoGuardadoRef.current = ahora;
+            toast('No se ha podido guardar el último cambio (¿sin conexión?). Se guardará con el siguiente cambio; si no tocas nada más, repítelo cuando vuelva la conexión.', 'warning', 9000);
           }
         }
       });
@@ -611,7 +636,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       // Si mientras se leía esta pantalla ha guardado o se ha tocado algo, la
       // foto puede ser de antes: no vale para comparar.
       if (escriturasHechasRef.current !== escriturasAntes || pendingSaveRef.current) return null;
-      if (data && sincronizadoRef.current != null && jsonEstable(data.config || {}) !== sincronizadoRef.current) {
+      const enBD = data ? jsonEstable(data.config || {}) : null;
+      if (enBD != null && sincronizadoRef.current != null && enBD !== sincronizadoRef.current) {
+        // Lo que esta pantalla mandó antes y cuya respuesta se perdió es suyo.
+        if (enBD === intentadoRef.current) { sincronizadoRef.current = enBD; return null; }
         return { data };
       }
     } catch {
@@ -3574,19 +3602,28 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const handleDownloadPDF = async (elementId, title) => {
+    // Un segundo clic mientras se hace el PDF sacaba dos y dejaba el cuadro
+    // con el estilo de exportación: se ignora.
+    if (exportandoRef.current) return;
+    exportandoRef.current = true;
     // El PDF es una foto del cuadro en pantalla: si otro dispositivo ha
     // cambiado el torneo, esta pantalla está desactualizada y saldría mal
     // (pasaba: horas viejas). Entonces no se hace y se pide cargar lo último.
-    const alDia = await comprobarAlDia();
-    if (alDia === false) { avisarNoHecho('descargado el PDF'); return; }
-    if (alDia && alDia.data) { marcarConflicto(MENSAJE_CAMBIOS_FUERA); avisarNoHecho('descargado el PDF', 'fuera'); return; }
-    if (!document.getElementById(elementId)) return;
+    let alDia;
+    try {
+      alDia = await comprobarAlDia();
+    } catch {
+      alDia = null;
+    }
+    if (alDia === false) { exportandoRef.current = false; avisarNoHecho('descargado el PDF'); return; }
+    if (alDia && alDia.data) { exportandoRef.current = false; marcarConflicto(MENSAJE_CAMBIOS_FUERA); avisarNoHecho('descargado el PDF', 'fuera'); return; }
+    if (!document.getElementById(elementId)) { exportandoRef.current = false; return; }
     setIsExporting(elementId);
 
     // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones).
     setTimeout(async () => {
       const element = document.getElementById(elementId);
-      if (!element) { setIsExporting(false); return; }
+      if (!element) { exportandoRef.current = false; setIsExporting(false); return; }
       // Inyectamos estilos solo durante la captura para reforzar contraste y
       // saturación de los colores. Cuando se imprime una imagen JPEG/PNG en
       // papel los colores claros se ven lavados; estos ajustes los hacen más
@@ -3756,6 +3793,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const injected = document.getElementById('tm-pdf-export-styles');
         if (injected) injected.remove();
         setIsExporting(false);
+        exportandoRef.current = false;
       }
     }, 100);
   };
