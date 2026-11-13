@@ -3569,33 +3569,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     let p = [...consPlayers];
     // ⚠️ Antes aquí había un shuffle (perdedores reales) o un interleave
     // de mitades (placeholders). Ambos rompían la estructura espejo, así
-    // que los hemos eliminado. El orden viene tal cual de mainSources.
-    if (!hasPrelim) {
-      // Las parejas (o plazas) en el orden del cuadro principal, sin los
-      // huecos vacíos del espejo, en el cuadro más pequeño en que caben. Los
-      // BYE que hagan falta van primero a los que ya perdieron en la primera
-      // ronda (pasan directos, no juegan una ronda de más) y después a las
-      // plazas de más arriba; las demás se cruzan por orden. Cada partido va
-      // a la altura de su primera pareja: lo de abajo sigue abajo.
-      const entradas = consPlayers.map((x, pos) => ({ x, pos })).filter(e => !e.x.isBye);
-      let tam = 2;
-      while (tam < entradas.length) tam *= 2;
-      let quedan = tam - entradas.length;
-      const conBye = new Set();
-      for (const e of entradas) if (quedan > 0 && e.x.sourceMain?.round === 0) { conBye.add(e); quedan--; }
-      for (const e of entradas) if (quedan > 0 && !conBye.has(e)) { conBye.add(e); quedan--; }
-      const bye = (pos) => ({ id: `cons-bye-${cat}-${pos}`, name: '---', isBye: true });
-      const partidos = [];
-      let suelta = null;
-      for (const e of entradas) {
-        if (conBye.has(e)) partidos.push({ pos: e.pos, a: e.x, b: bye(e.pos) });
-        else if (suelta) { partidos.push({ pos: suelta.pos, a: suelta.x, b: e.x }); suelta = null; }
-        else suelta = e;
-      }
-      if (suelta) partidos.push({ pos: suelta.pos, a: suelta.x, b: bye(suelta.pos) });
-      partidos.sort((m1, m2) => m1.pos - m2.pos);
-      p = partidos.flatMap(m => [m.a, m.b]);
-    }
+    // que los hemos eliminado. El orden viene tal cual de mainSources: sin
+    // ronda previa, cada pareja juega contra la siguiente que pierda de su
+    // lado del cuadro (Fernando Candón, que perdió en dieciseisavos, contra
+    // quien pierda Carlos Dávila–Javier Prieto si tiene consolación).
 
     let pow = 2;
     while (pow < p.length) pow *= 2;
@@ -8177,17 +8154,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               // (header + 2 parejas + botón resultado + botón pasar). Sin esto
               // la columna se queda corta y las cards se cortan a mitad —
               // sobre todo en cuartos con muchos botones.
-              const r0RealCount = (bracket.data[0] || []).filter(m => {
-                if (!m) return false;
-                const bothBye = m.p1?.isBye && m.p2?.isBye;
-                const placeBye = (m.p1?.isBye && m.p2?.isPlaceholder) || (m.p2?.isBye && m.p1?.isPlaceholder);
-                return !bothBye && !placeBye;
-              }).length;
-              // Los partidos que no se pintan dejan su hueco (para que cada
-              // tarjeta quede a la altura de su partido siguiente), así que
-              // cuentan todos los de la primera ronda si hay alguno escondido.
-              const r0Todos = (bracket.data[0] || []).filter(Boolean).length;
-              const dynMinHeight = Math.max(350, (r0Todos > r0RealCount && r0RealCount > 0 ? r0Todos : r0RealCount) * 195);
+              // Se pintan todos los partidos de la primera ronda (solo BYE
+              // contra BYE deja un hueco, del mismo alto), así que cuentan todos.
+              const r0RealCount = (bracket.data[0] || []).filter(Boolean).length;
+              const dynMinHeight = Math.max(350, r0RealCount * 195);
               return (
             <>
             {rondaElegida !== null && (
@@ -8242,18 +8212,15 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                   </h4>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                   {roundMatches.map(match => {
-                    // Saltamos boxes sin partido real: bye-vs-bye o
-                    // placeholder + bye (el placeholder se auto-resuelve a
-                    // la siguiente ronda — no hay que mostrarlo aquí).
-                    const isBoth = (a, b) => a?.isBye && b?.isPlaceholder;
-                    const isPlaceholderBye = isBoth(match.p1, match.p2) || isBoth(match.p2, match.p1);
                     const isBothBye = match.p1?.isBye && match.p2?.isBye;
-                    // No se pinta, pero deja su hueco: si desapareciera, las
-                    // tarjetas de debajo subirían y no quedarían a la altura
-                    // de su partido de la ronda siguiente (Fernando salía
-                    // arriba en octavos aunque su partido de cuartos es el
-                    // de abajo).
-                    if (isPlaceholderBye || isBothBye) return <div key={`slot-${match.id}`} style={{ flex: 1 }} aria-hidden="true" />;
+                    // Se pintan TODOS los partidos, también «por definir
+                    // contra BYE» (como «pareja contra BYE» en el principal),
+                    // para que el cuadro sea uno normal y cada tarjeta quede a
+                    // la altura de su partido siguiente. Antes se escondían,
+                    // las de debajo subían y la consolación salía descolocada
+                    // (Fernando arriba aunque su partido es el de abajo). Solo
+                    // BYE contra BYE deja un hueco vacío.
+                    if (isBothBye) return <div key={`slot-${match.id}`} style={{ flex: 1 }} aria-hidden="true" />;
                     // BRACKET ALIGNMENT: cada match se envuelve en un slot
                     // `flex: 1`. Como todas las columnas tienen la misma
                     // altura (alignItems: stretch en el padre), cada match
