@@ -17,6 +17,9 @@
 // rondas: [[partido, …], …] como rounds[cat] / consRounds[cat] del panel.
 // opciones:
 //   titulo (texto de la cabecera), consolacion (bool, colores naranjas),
+//   espejo (bool; por defecto, si es consolación): el cuadro al revés, de
+//     derecha a izquierda, con el campeón a la izquierda, como la consolación
+//     en la app,
 //   logo (dataURL o null), textoCampeon ("CAMPEÓN ABSOLUTO"…)
 //   nombreRonda(indiceReal) → "Cuartos de Final"…
 //   etiqueta(partido) → cabecera de cada partido ("Sáb 14/11 16:00 - Pista 1"…)
@@ -49,7 +52,7 @@ const PALETA = {
 
 export function dibujarCuadroPdf(pdf, rondas, opciones) {
   const {
-    titulo = '', consolacion = false, logo = null, textoCampeon = 'CAMPEÓN ABSOLUTO',
+    titulo = '', consolacion = false, espejo = consolacion, logo = null, textoCampeon = 'CAMPEÓN ABSOLUTO',
     nombreRonda = (r) => `Ronda ${r + 1}`, etiqueta = () => '', nombrePareja = (p) => p?.name || '',
   } = opciones || {};
   const col = consolacion ? PALETA.consolacion : PALETA.principal;
@@ -114,6 +117,11 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
     const xCol = (c) => x0 + anchos.slice(0, c).reduce((a, b) => a + b, 0) + c * hueco; // c = 0 es la previa si la hay
     const anchoCol = (c) => anchos[c];
     const xCampeon = x0 + anchoTotal - anchoCampeon;
+    // Al revés (consolación): las posiciones se calculan como siempre y se
+    // reflejan al dibujar. caja(x, ancho) da el borde izquierdo de una caja;
+    // punto(x), un punto de una línea. Los textos no se reflejan.
+    const enX = (x, ancho) => (espejo ? W - x - ancho : x);
+    const punto = (x) => (espejo ? W - x : x);
     const colDeRonda = (r) => primera + (r - hoja.r0);
 
     // Partidos de esta hoja por ronda: [{ m (índice en la ronda), partido }]
@@ -198,10 +206,10 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       encoger(t, ancho - 3, 9.5, 6.5);
       pdf.text(t, x + ancho / 2, 28.7, { align: 'center' });
     };
-    if (conPrevia) pastilla(nombreRonda(0), xCol(0), anchoCol(0));
+    if (conPrevia) pastilla(nombreRonda(0), enX(xCol(0), anchoCol(0)), anchoCol(0));
     for (let k = 0; k < hoja.rondas; k++) {
       const c = colDeRonda(hoja.r0 + k);
-      pastilla(nombreRonda(realIdx(hoja.r0 + k)), xCol(c), anchoCol(c));
+      pastilla(nombreRonda(realIdx(hoja.r0 + k)), enX(xCol(c), anchoCol(c)), anchoCol(c));
     }
 
     // ── Posiciones: primera ronda repartida en filas, las demás en medio ──
@@ -306,7 +314,7 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       const xb = xCol(colDeRonda(hoja.r0 + k + 1));
       porRonda[k].forEach(({ m, partido }) => {
         if (!partido || (partido.p1?.isBye && partido.p2?.isBye)) return;
-        linea(xa, centro[k][m], xb, centro[k + 1][Math.floor(m / 2)]);
+        linea(punto(xa), centro[k][m], punto(xb), centro[k + 1][Math.floor(m / 2)]);
       });
     }
 
@@ -315,7 +323,7 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       const c = colDeRonda(hoja.r0 + k);
       lista.forEach(({ m, partido }) => {
         if (!partido || (partido.p1?.isBye && partido.p2?.isBye)) return;
-        caja(partido, xCol(c), centro[k][m], anchoCol(c));
+        caja(partido, enX(xCol(c), anchoCol(c)), centro[k][m], anchoCol(c));
       });
     });
 
@@ -326,8 +334,8 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
         const t = Math.floor(pm.nextSlot / 2);
         if (centro[0][t] == null) return;
         const yObj = centro[0][t] + (pm.nextSlot % 2 === 0 ? -1 : 1) * Math.min(filaH / 4, 6);
-        caja(pm, xCol(0), yObj, anchoCol(0));
-        linea(xCol(0) + anchoCol(0), yObj, xCol(1), yObj);
+        caja(pm, enX(xCol(0), anchoCol(0)), yObj, anchoCol(0));
+        linea(punto(xCol(0) + anchoCol(0)), yObj, punto(xCol(1)), yObj);
       });
     }
 
@@ -336,7 +344,7 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       const kFin = porRonda.length - 1;
       const fin = porRonda[kFin]?.[0];
       const yc = fin ? centro[kFin][fin.m] : (arribaArea + abajoArea) / 2;
-      const x = xCampeon;
+      const x = enX(xCampeon, anchoCampeon);
       const ganador = fin?.partido?.winner;
       const nombre = latin1(ganador?.name || 'TBD');
       // El nombre ENTERO, en hasta 4 líneas y sin partir palabras: se baja la
@@ -370,7 +378,7 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       if (ganador) pdf.setTextColor(21, 128, 61); else pdf.setTextColor(180, 83, 9);
       l.forEach((t, j) => pdf.text(t, x + anchoCampeon / 2, yc - (l.length - 1) * lhC / 2 + j * lhC + 1.3, { align: 'center' }));
       const cF = colDeRonda(hoja.r0 + kFin);
-      linea(xCol(cF) + anchoCol(cF), yc, x, yc);
+      linea(punto(xCol(cF) + anchoCol(cF)), yc, punto(xCampeon), yc);
     }
 
     // ── Pie ──
