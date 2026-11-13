@@ -3603,10 +3603,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   // ── PDF del cuadro, dibujado para imprimir (src/utils/cuadroPdf.js) ──
-  // Cabecera de cada partido en el PDF: día, hora y pista, o en qué está.
+  // Cabecera de cada partido en el PDF, como en el cuadro de la app: día,
+  // hora y pista ("SÁB 14/11 16:00 - PISTA 1"), o en qué está.
   const etiquetaPartidoPdf = (m) => {
     const real = (p) => p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
-    if (m?.p1?.isBye || m?.p2?.isBye) return 'Pasa directo a la siguiente ronda';
     const reales = (real(m?.p1) ? 1 : 0) + (real(m?.p2) ? 1 : 0);
     const t = parsearTiempo(m?.time);
     if (t && (m.timeManual || reales === 2)) {
@@ -3614,18 +3614,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const anio = Number(String(tConfig.startDate || '').slice(0, 4)) || new Date().getFullYear();
       const fecha = new Date(anio, (mm || 1) - 1, dd || 1, 12);
       const dia = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][fecha.getDay()];
-      return `${dia} ${t.dia} · ${t.hora} · ${getCourtName(t.pista)}`;
+      return `${dia} ${t.dia} ${t.hora} - ${getCourtName(t.pista)}`;
     }
     if (reales === 2) return m?.sinHueco ? 'Sin hueco en el torneo' : 'Horario por definir';
     if (reales === 1) return 'Esperando rival';
     return 'Esperando rondas previas';
   };
+  // Nombre de cada lado, como en la app: la pareja, '---' si es un bye y
+  // vacío si aún no se sabe (la fila sale en verde claro).
   const nombreParejaPdf = (p) => {
     if (p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder) return p.name || '';
-    if (p?.isBye) return '(sin rival)';
+    if (p?.isBye) return '---';
     if (p?.isPrelimPlaceholder) return p.name || 'Ganador de la previa';
     if (p?.isPlaceholder) return p.name || 'Perdedor por definir';
-    return 'Por decidir';
+    return '';
   };
   const descargarCuadroPdf = async (cat, isCons) => {
     if (exportandoRef.current) return;
@@ -3653,9 +3655,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const esKO = isCons && tConfig.formatByCategory?.[cat] === 'liguilla_ko';
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
       dibujarCuadroPdf(pdf, datos, {
-        titulo: tConfig.name || 'Torneo',
-        subtitulo: `${esKO ? 'Eliminatorias finales' : (isCons ? 'Consolación' : 'Cuadro principal')} · ${cat}`,
-        colorPrincipal: isCons ? [217, 119, 6] : [22, 163, 74],
+        titulo: `${tConfig.name || 'Torneo'} - ${esKO ? 'Eliminatorias finales' : (isCons ? 'Consolación' : 'Principal')} · ${cat}`,
+        consolacion: isCons && !esKO,
+        textoCampeon: isCons && !esKO ? 'CAMPEÓN CONSOLACIÓN' : 'CAMPEÓN ABSOLUTO',
         logo,
         nombreRonda: (r) => getRoundName(r, datos),
         etiqueta: (m) => etiquetaPartidoPdf(m),
