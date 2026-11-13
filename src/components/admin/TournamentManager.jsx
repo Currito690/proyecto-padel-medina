@@ -3421,7 +3421,45 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // el orden del cuadro principal.
     const mainSources = [];
 
-    catRounds[0].forEach((m, mIdx) => {
+    // Helper: dice si una pareja vino a R1 vía BYE en R0 (solo jugó 1 partido).
+    const cameFromBye = (player) => {
+      if (!player || player.isBye || player.isPlaceholder) return false;
+      const r0Match = catRounds[0].find(r0m => r0m.p1?.id === player.id || r0m.p2?.id === player.id);
+      return r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye);
+    };
+
+    if (!hasPrelim) {
+      // ESPEJO EXACTO: un hueco por cada partido de la primera ronda del
+      // principal, en SU MISMA POSICIÓN (lo de arriba arriba y lo de abajo
+      // abajo). Antes iban primero todos los perdedores de R0 y luego las
+      // plazas de los del bye, y una pareja de abajo del cuadro salía arriba
+      // en la consolación.
+      //  · Partido normal → su perdedor.
+      //  · Partido con BYE → la pareja del bye, si pierde su primer partido
+      //    (el de R1). Si su hermano también era BYE, el R1 enfrenta a las dos
+      //    del bye y solo hay un perdedor: va en el hueco de arriba y el de
+      //    abajo queda BYE. Si la del bye ya ganó su R1, el hueco queda BYE.
+      const r0m = catRounds[0];
+      const esByeR0 = (m) => !!(m && (m.p1?.isBye || m.p2?.isBye));
+      r0m.forEach((m, mIdx) => {
+        if (!m || !m.p1 || !m.p2 || (m.p1.isBye && m.p2.isBye)) { mainSources.push({ bye: true }); return; }
+        if (!esByeR0(m)) {
+          const loser = m.winner ? (m.winner.id === m.p1.id ? m.p2 : m.p1) : null;
+          mainSources.push({ sourceMain: { round: 0, matchIndex: mIdx }, loser });
+          return;
+        }
+        const k = Math.floor(mIdx / 2);
+        if (mIdx % 2 === 1 && esByeR0(r0m[mIdx - 1])) { mainSources.push({ bye: true }); return; }
+        const r1 = (catRounds[1] || [])[k];
+        let loser = null;
+        if (r1?.winner && r1.p1 && r1.p2 && !r1.p1.isBye && !r1.p2.isBye) {
+          const perdedor = r1.winner.id === r1.p1.id ? r1.p2 : r1.p1;
+          if (!cameFromBye(perdedor)) { mainSources.push({ bye: true }); return; } // ganó la del bye
+          loser = perdedor;
+        }
+        mainSources.push({ sourceMain: { round: 1, matchIndex: k }, loser });
+      });
+    } else catRounds[0].forEach((m, mIdx) => {
       if (!m.p1 || !m.p2) return;
       if (m.p1.isBye || m.p2.isBye) return; // bye en R0 → no produce perdedor real aquí
       let loser = null;
@@ -3431,14 +3469,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       mainSources.push({ sourceMain: { round: 0, matchIndex: mIdx }, loser });
     });
 
-    // Helper: dice si una pareja vino a R1 vía BYE en R0 (solo jugó 1 partido).
-    const cameFromBye = (player) => {
-      if (!player || player.isBye || player.isPlaceholder) return false;
-      const r0Match = catRounds[0].find(r0m => r0m.p1?.id === player.id || r0m.p2?.id === player.id);
-      return r0Match && (r0Match.p1?.isBye || r0Match.p2?.isBye);
-    };
-
-    (catRounds[1] || []).forEach((m, mIdx) => {
+    if (hasPrelim) (catRounds[1] || []).forEach((m, mIdx) => {
       // OJO: no exigimos las dos parejas. Una pareja con BYE en R0 ya está
       // en su match de R1 (generateBracket la avanza al crear el cuadro)
       // mientras el otro lado sigue null hasta que se juegue su R0. Ese es
@@ -3489,7 +3520,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const seenIds = new Set();
       const dedup = [];
       for (const src of mainSources) {
-        if (src.loser && seenIds.has(src.loser.id)) continue;
+        // En el espejo cada hueco tiene su sitio: un repetido pasa a BYE en
+        // vez de desaparecer (si desapareciera, se correría todo lo de abajo).
+        if (src.loser && seenIds.has(src.loser.id)) { if (!hasPrelim) dedup.push({ bye: true }); continue; }
         if (src.loser) seenIds.add(src.loser.id);
         dedup.push(src);
       }
@@ -3514,7 +3547,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // anclado a ese sourceMain — cuando llegue el loser real desde
     // pushLoserToConsPure, se ubicará en ESE slot concreto (no en el primero
     // libre).
-    let consPlayers = mainSources.map((src) => {
+    let consPlayers = mainSources.map((src, i) => {
+      if (src.bye) return { id: `cons-bye-${cat}-espejo-${i}`, name: '---', isBye: true };
       if (src.loser && !src.loser.isBye) {
         return { ...src.loser, sourceMain: src.sourceMain };
       }
@@ -3527,7 +3561,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     });
 
     // Fallback final: si por algún motivo no hay nada, abortar.
-    if (consPlayers.length < 2) {
+    if (consPlayers.filter(x => !x.isBye).length < 2) {
       toast(`No hay suficientes parejas para generar el cuadro de consolación de "${cat}".`);
       return;
     }
