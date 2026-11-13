@@ -214,6 +214,32 @@ const fmtDateDisplay = (iso) => {
   return d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
 };
 
+// JSON con las claves ordenadas: la base de datos (jsonb) devuelve las claves
+// en otro orden que el panel, así se pueden comparar dos configs por contenido.
+const jsonEstable = (v) => JSON.stringify(v, (_k, x) => (
+  x && typeof x === 'object' && !Array.isArray(x)
+    ? Object.keys(x).sort().reduce((o, k) => { o[k] = x[k]; return o; }, {})
+    : x
+));
+
+// Valores por defecto de la configuración de un torneo.
+const CONFIG_POR_DEFECTO = {
+  name: '',
+  categories: 'Masculino, Femenino',
+  startDate: '', endDate: '',
+  registrationDeadline: '',
+  startHour: '09:00', endHour: '22:00',
+  firstDayStartHour: '16:00',
+  courtsCount: 2,
+  courtStartHours: {},
+  matchDurationByCategory: { 'Masculino': 60, 'Femenino': 60 },
+  formatByCategory: {},
+  dualCategoryMaxMatches: 1,
+  restMinutesBetweenMatches: 30,
+};
+
+const MENSAJE_CONFLICTO = 'Este torneo se ha cambiado desde otro dispositivo (otra pestaña, el móvil o la app). Para no pisar esos cambios, lo último que has tocado aquí NO se ha guardado. Pulsa «Cargar lo último» y vuelve a hacerlo.';
+
 const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [editingScoreId, setEditingScoreId] = useState(null);
@@ -239,21 +265,17 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const [dbLoaded, setDbLoaded] = useState(false);
   const [dbStatus, setDbStatus] = useState('draft');
   
+  // ── Sincronización con la base de datos ──
+  // sincronizadoRef: el config tal como está en la base de datos según ESTA
+  // pantalla (lo último que cargó o guardó), en JSON estable. Si la base de
+  // datos ya no coincide, alguien lo ha cambiado desde otro sitio (otra
+  // pestaña, el móvil, la app, un cambio a mano) y esta pantalla no lo pisa.
+  const sincronizadoRef = useRef(null);
+  const conflictoRemotoRef = useRef(false);
+  const [conflictoRemoto, setConflictoRemoto] = useState(false);
+
   const [tConfig, setTConfig] = useState(() => {
-    const fallback = {
-      name: '',
-      categories: 'Masculino, Femenino',
-      startDate: '', endDate: '',
-      registrationDeadline: '',
-      startHour: '09:00', endHour: '22:00',
-      firstDayStartHour: '16:00',
-      courtsCount: 2,
-      courtStartHours: {},
-      matchDurationByCategory: { 'Masculino': 60, 'Femenino': 60 },
-      formatByCategory: {},
-      dualCategoryMaxMatches: 1,
-      restMinutesBetweenMatches: 30,
-    };
+    const fallback = { ...CONFIG_POR_DEFECTO };
     if (savedData?.tConfig) {
       return { ...fallback, ...savedData.tConfig, categories: savedData.tConfig.categories || 'Masculino, Femenino' };
     }
@@ -410,6 +432,51 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     localStorage.setItem(`padel_medina_tournament_${tournamentKey}`, JSON.stringify({ phase, tConfig, participants, rounds, consRounds, publishedId }));
   }, [phase, tConfig, participants, rounds, consRounds, publishedId, tournamentKey]);
 
+  // Pone en pantalla el config que hay en la base de datos. La base de datos
+  // manda: las claves que ya no están allí (p. ej. un aviso quitado desde otro
+  // dispositivo) no se conservan de lo que hubiera guardado este navegador.
+  const aplicarConfigBD = (cfg, name) => {
+    const { rounds: dbRounds, consRounds: dbConsRounds, participants: dbParticipants, phase: dbPhase, ...dbTConfig } = cfg || {};
+    if (name && !dbTConfig.name) dbTConfig.name = name;
+    setTConfig({ ...CONFIG_POR_DEFECTO, ...dbTConfig, categories: dbTConfig.categories || CONFIG_POR_DEFECTO.categories });
+    setRounds(dbRounds && typeof dbRounds === 'object' ? sinHorasProvisionales(dbRounds) : {});
+    setConsRounds(dbConsRounds && typeof dbConsRounds === 'object' ? sinHorasProvisionales(dbConsRounds) : {});
+    if (Array.isArray(dbParticipants)) setParticipants(dbParticipants);
+    if (dbPhase) setPhase(dbPhase);
+  };
+  const aplicarFilaBD = (data) => {
+    setDbStatus(data.status || 'draft');
+    aplicarConfigBD(data.config || {}, data.name);
+    sincronizadoRef.current = jsonEstable(data.config || {});
+  };
+  const leerFilaBD = async () => {
+    const { data, error } = await supabase.from('tournaments').select('config, status, name').eq('id', tournamentKey).single();
+    if (error) throw error;
+    return data;
+  };
+  const marcarConflicto = () => {
+    conflictoRemotoRef.current = true;
+    setConflictoRemoto(true);
+  };
+  // Guarda el config entero SOLO si la base de datos sigue como esta pantalla
+  // la dejó; si otro dispositivo lo ha cambiado, no escribe y avisa. Devuelve
+  // { error } como supabase (con conflicto: true si no se ha guardado por eso).
+  const escribirConfig = async (config, extra = {}) => {
+    if (conflictoRemotoRef.current) return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
+    try {
+      const { data: actual, error: errLeer } = await supabase.from('tournaments').select('config').eq('id', tournamentKey).single();
+      if (!errLeer && actual && sincronizadoRef.current != null && jsonEstable(actual.config || {}) !== sincronizadoRef.current) {
+        marcarConflicto();
+        return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
+      }
+    } catch {
+      // Si no se puede leer (sin conexión), se intenta guardar como siempre.
+    }
+    const { error } = await supabase.from('tournaments').update({ config, ...extra }).eq('id', tournamentKey);
+    if (!error) sincronizadoRef.current = jsonEstable(config);
+    return { error };
+  };
+
   // Fetch desde Supabase al montar. La DB es la fuente de verdad: si trae datos,
   // sobrescribe el estado local para que lo que se haya guardado desde otro
   // dispositivo se refleje al abrir el editor aquí.
@@ -439,17 +506,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         }
         setDbStatus(data.status || 'draft');
         const cfg = data.config || {};
+        sincronizadoRef.current = jsonEstable(cfg);
         const hasDbData = !!(cfg.startDate || cfg.name || cfg.categories
           || (cfg.rounds && Object.keys(cfg.rounds).length)
           || (cfg.participants && cfg.participants.length));
         if (hasDbData) {
-          const { rounds: dbRounds, consRounds: dbConsRounds, participants: dbParticipants, phase: dbPhase, ...dbTConfig } = cfg;
-          if (data.name && !dbTConfig.name) dbTConfig.name = data.name;
-          setTConfig(prev => ({ ...prev, ...dbTConfig }));
-          if (dbRounds && typeof dbRounds === 'object') setRounds(sinHorasProvisionales(dbRounds));
-          if (dbConsRounds && typeof dbConsRounds === 'object') setConsRounds(sinHorasProvisionales(dbConsRounds));
-          if (Array.isArray(dbParticipants)) setParticipants(dbParticipants);
-          if (dbPhase) setPhase(dbPhase);
+          aplicarConfigBD(cfg, data.name);
         } else if (data.name) {
           // Torneo recién creado (config vacía): el nombre de la lista
           // ("Nuevo Torneo" o el que puso el admin) pasa al editor para que
@@ -477,14 +539,63 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const snap = pendingSaveRef.current;
     if (!snap) return Promise.resolve();
     pendingSaveRef.current = null;
-    const upd = { config: snap.config };
     // Sin nombre no se manda: así no se pisa el de la lista con "Torneo".
-    if (snap.name) upd.name = snap.name;
-    return supabase.from('tournaments')
-      .update(upd)
-      .eq('id', snap.key)
-      .then(({ error }) => { if (error) console.warn('Autosave torneo falló:', error.message); });
+    // escribirConfig no guarda si otro dispositivo ha cambiado el torneo.
+    return escribirConfig(snap.config, snap.name ? { name: snap.name } : {})
+      .then(({ error, conflicto }) => { if (error && !conflicto) console.warn('Autosave torneo falló:', error.message); });
   };
+
+  // Antes de sacar un PDF (y al volver a esta pestaña): guarda lo pendiente
+  // de esta pantalla y, si otro dispositivo ha cambiado el torneo, carga lo
+  // último de la base de datos. Devuelve false si hay un conflicto sin
+  // resolver, la fila nueva si ha tenido que cargarla, o null si ya estaba al día.
+  const ponerseAlDia = async ({ avisar = true } = {}) => {
+    if (pendingSaveRef.current) await flushTournamentSave();
+    if (conflictoRemotoRef.current) {
+      if (avisar) toast(MENSAJE_CONFLICTO, 'error', 9000);
+      return false;
+    }
+    try {
+      const data = await leerFilaBD();
+      if (data && sincronizadoRef.current != null && jsonEstable(data.config || {}) !== sincronizadoRef.current) {
+        aplicarFilaBD(data);
+        if (avisar) toast('He cargado los últimos cambios del torneo (hechos desde otro dispositivo).', 'info', 6000);
+        return data;
+      }
+    } catch {
+      // Sin conexión: se usa lo que hay en pantalla.
+    }
+    return null;
+  };
+  const cargarLoUltimo = async () => {
+    try {
+      const data = await leerFilaBD();
+      pendingSaveRef.current = null;
+      aplicarFilaBD(data);
+      conflictoRemotoRef.current = false;
+      setConflictoRemoto(false);
+      toast('Cargado lo último del torneo.', 'success');
+    } catch (e) {
+      toast('No se pudo cargar el torneo: ' + (e?.message || e), 'error');
+    }
+  };
+  // Al volver a esta pestaña (o a la app) se pone al día sola.
+  const ponerseAlDiaRef = useRef(ponerseAlDia);
+  ponerseAlDiaRef.current = ponerseAlDia;
+  useEffect(() => {
+    if (!dbLoaded) return;
+    const alVolver = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (pendingSaveRef.current || conflictoRemotoRef.current) return;
+      ponerseAlDiaRef.current();
+    };
+    document.addEventListener('visibilitychange', alVolver);
+    window.addEventListener('focus', alVolver);
+    return () => {
+      document.removeEventListener('visibilitychange', alVolver);
+      window.removeEventListener('focus', alVolver);
+    };
+  }, [dbLoaded]);
   useEffect(() => {
     if (!dbLoaded) return;
     pendingSaveRef.current = {
@@ -873,9 +984,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // status 'open', aceptando inscripciones, y con las viejas colgando.
     const { error: regErr } = await supabase.from('tournament_registrations').delete().eq('tournament_id', tournamentKey);
     if (regErr) { toast('Error al borrar inscripciones: ' + regErr.message, 'error'); return; }
-    const { error } = await supabase.from('tournaments')
-      .update({ name: 'Torneo', status: 'draft', config: { ...freshConfig, rounds: {}, consRounds: {}, participants: [], phase: 'config' } })
-      .eq('id', tournamentKey);
+    const { error } = await escribirConfig({ ...freshConfig, rounds: {}, consRounds: {}, participants: [], phase: 'config' }, { name: 'Torneo', status: 'draft' });
     if (error) { toast('Error al reiniciar el torneo: ' + error.message, 'error'); return; }
     localStorage.removeItem(`padel_medina_tournament_${tournamentKey}`);
     setDbStatus('draft');
@@ -893,9 +1002,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const handlePublish = async () => {
     try {
       const config = { ...tConfig, rounds, consRounds, participants, phase };
-      const { error } = await supabase.from('tournaments')
-        .update({ name: tConfig.name || 'Torneo', config, status: 'open' })
-        .eq('id', tournamentKey);
+      const { error } = await escribirConfig(config, { name: tConfig.name || 'Torneo', status: 'open' });
       if (error) throw error;
       setPublishedId(tournamentKey);
       setDbStatus('open');
@@ -1163,9 +1270,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (!publishedId) return;
     try {
       const config = { ...tConfig, rounds, consRounds, participants, phase };
-      const { error } = await supabase.from('tournaments')
-        .update({ config })
-        .eq('id', publishedId);
+      const { error } = await escribirConfig(config);
       if (error) throw error;
       toast('Plazo de inscripción actualizado.');
     } catch (e) {
@@ -1190,9 +1295,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     try {
       const newConfig = { ...tConfig, registrationClosed: closing };
       const config = { ...newConfig, rounds, consRounds, participants, phase };
-      const { error } = await supabase.from('tournaments')
-        .update({ config })
-        .eq('id', publishedId);
+      const { error } = await escribirConfig(config);
       if (error) throw error;
       setTConfig(newConfig);
       toast(closing ? '🔒 Inscripciones cerradas.' : '🔓 Inscripciones reabiertas.');
@@ -1245,9 +1348,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const { avisoPublico: _avisoAnterior, ...sinAviso } = tConfig;
         const tConfigWithFlag = { ...(quitarAviso ? sinAviso : tConfig), bracketPublished: true };
         const config = { ...tConfigWithFlag, rounds, consRounds, participants, phase };
-        const { error } = await supabase.from('tournaments')
-          .update({ config, status: 'open' })
-          .eq('id', publishedId);
+        const { error } = await escribirConfig(config, { status: 'open' });
         if (error) throw error;
         setTConfig(tConfigWithFlag);
         toast('🏆 Cuadro publicado. Elige a qué parejas avisar por correo.', 'success');
@@ -3377,12 +3478,18 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   };
 
   const handleDownloadPDF = async (elementId, title) => {
-    const element = document.getElementById(elementId);
-    if (!element) return;
+    // El PDF es una foto del cuadro en pantalla: antes, lo último de la base
+    // de datos (si otro dispositivo cambió una hora, se pinta y sale bien).
+    const alDia = await ponerseAlDia();
+    if (alDia === false) return;
+    if (!document.getElementById(elementId)) return;
     setIsExporting(elementId);
 
-    // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones).
+    // Pequeño retardo para asegurar que la UI se actualizó (escondiendo botones
+    // y, si se acaba de cargar lo último, con los datos nuevos ya pintados).
     setTimeout(async () => {
+      const element = document.getElementById(elementId);
+      if (!element) { setIsExporting(false); return; }
       // Inyectamos estilos solo durante la captura para reforzar contraste y
       // saturación de los colores. Cuando se imprime una imagen JPEG/PNG en
       // papel los colores claros se ven lavados; estos ajustes los hacen más
@@ -3553,13 +3660,81 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         if (injected) injected.remove();
         setIsExporting(false);
       }
-    }, 100);
+    }, alDia ? 600 : 100);
   };
 
   // Genera un PDF nativo (no captura de pantalla) del listado de partidos.
   // Texto seleccionable, búsqueda en visor de PDF, tipografía nítida en
   // papel y paginación automática. Acepta filtro por día.
+  // Todos los partidos con hora (cuadro y consolación), agrupados por día y
+  // ordenados por hora y pista. Lo usan el listado "Partidos por día" y su PDF.
+  const recogerPartidosPorDia = (roundsObj, consObj) => {
+    const items = [];
+    const collect = (rObj, isCons) => {
+      Object.entries(rObj || {}).forEach(([cat, catRs]) => {
+        (catRs || []).forEach((round, rIdx) => {
+          (round || []).forEach(m => {
+            if (!m.time || m.time === 'A convenir') return;
+            if (m.p1?.isBye && m.p2?.isBye) return; // skip bye-vs-bye
+            const parts = m.time.split(' - Pista');
+            const slot = parts[0]?.trim();
+            const court = parseInt(parts[1], 10);
+            if (!slot) return;
+            const [day, hour] = slot.split(' ');
+            items.push({
+              day, hour, court,
+              cat, isCons,
+              round: rIdx,
+              // Mismo nombre de ronda que en el cuadro (Cuartos, Semis…);
+              // antes pantalla y PDF ponían R{n} con un desfase de 1.
+              roundName: getRoundName(rIdx, catRs),
+              isPrelim: !!m.p1?.isPrelim || !!m.isPrelim || !!round[0]?.isPrelim,
+              p1: m.p1?.name || (m.p1?.isBye ? 'BYE' : (m.p1?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
+              p2: m.p2?.name || (m.p2?.isBye ? 'BYE' : (m.p2?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
+              winner: m.winner?.name || null,
+              score: m.score || null,
+              matchId: m.id,
+            });
+          });
+        });
+      });
+    };
+    collect(roundsObj, false);
+    collect(consObj, true);
+    // Agrupar por día
+    const byDay = {};
+    items.forEach(it => {
+      if (!byDay[it.day]) byDay[it.day] = [];
+      byDay[it.day].push(it);
+    });
+    // Orden de días: por fecha real (DD/MM)
+    const dayKeys = Object.keys(byDay).sort((a, b) => {
+      const [da, ma] = a.split('/').map(Number);
+      const [db, mb] = b.split('/').map(Number);
+      return (ma * 31 + da) - (mb * 31 + db);
+    });
+    // Dentro de cada día: orden por hora, luego por pista
+    dayKeys.forEach(d => {
+      byDay[d].sort((a, b) => {
+        if (a.hour !== b.hour) return a.hour < b.hour ? -1 : 1;
+        return (a.court || 0) - (b.court || 0);
+      });
+    });
+    return { items, byDay, dayKeys };
+  };
+
   const handleDownloadMatchesPDF = async (items, byDay, dayKeys, filterDay) => {
+    // Antes del PDF, lo último de la base de datos: si otro dispositivo ha
+    // cambiado alguna hora, el PDF sale con lo de ahora y no con lo de esta
+    // pantalla (antes salían horas viejas).
+    const alDia = await ponerseAlDia();
+    if (alDia === false) return;
+    if (alDia && alDia.config) {
+      ({ items, byDay, dayKeys } = recogerPartidosPorDia(
+        sinHorasProvisionales(alDia.config.rounds || {}),
+        sinHorasProvisionales(alDia.config.consRounds || {}),
+      ));
+    }
     // Si el día filtrado ya no tiene partidos (se recalcularon horarios,
     // cambiaron las fechas…) se comporta como "Todos los días".
     const targetDays = (filterDay === 'all' || !dayKeys.includes(filterDay)) ? dayKeys : dayKeys.filter(d => d === filterDay);
@@ -4010,9 +4185,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       }
       try {
         const config = { ...tConfig, rounds, consRounds, participants, phase };
-        const { error } = await supabase.from('tournaments')
-          .update({ config })
-          .eq('id', publishedId);
+        const { error } = await escribirConfig(config);
         if (error) throw error;
         toast('🏆 Cabezas de serie guardados.', 'success');
       } catch (e) {
@@ -4773,9 +4946,22 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     );
   }
 
+  // Aviso fijo arriba cuando otro dispositivo ha cambiado el torneo: esta
+  // pantalla deja de guardar hasta que se carga lo último.
+  const bannerConflicto = conflictoRemoto ? (
+    <div role="alert" style={{ position: 'sticky', top: 0, zIndex: 1500, margin: '0 0 1rem', padding: '0.85rem 1rem', borderRadius: '0.75rem', background: '#FEF2F2', border: '2px solid #F87171', color: '#7F1D1D', display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', boxShadow: '0 6px 16px rgba(220,38,38,0.15)' }}>
+      <span style={{ fontSize: '1.3rem' }} aria-hidden="true">⚠️</span>
+      <span style={{ flex: 1, minWidth: '16rem', fontSize: '0.88rem', fontWeight: 600, lineHeight: 1.45 }}>{MENSAJE_CONFLICTO}</span>
+      <button type="button" onClick={cargarLoUltimo} style={{ padding: '0.55rem 1rem', borderRadius: '0.6rem', border: 'none', background: '#DC2626', color: 'white', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        🔄 Cargar lo último
+      </button>
+    </div>
+  ) : null;
+
   if (phase === 'config') {
     return (
       <div>
+      {bannerConflicto}
       <style>{`
         .tm-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
         .tm-header-info { flex: 1; min-width: 0; }
@@ -5263,6 +5449,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     })).filter(g => g.parejas.length > 0);
   };
   const descargarJugadoresPdf = async () => {
+    // Antes del PDF, lo último de la base de datos (nombres cambiados desde
+    // otro dispositivo). Si había algo nuevo, se pinta y se vuelve a pulsar.
+    const alDia = await ponerseAlDia();
+    if (alDia === false) return;
+    if (alDia) {
+      toast('He cargado los últimos cambios del torneo. Vuelve a pulsar para descargar el PDF.', 'info', 7000);
+      return;
+    }
     try {
       const grupos = listaJugadores();
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
@@ -5704,6 +5898,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   if (phase === 'setup') {
     return (
       <div onMouseUp={() => setGridDragging(false)}>
+      {bannerConflicto}
       <style>{`
         .tm-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
         .tm-header-info { flex: 1; min-width: 0; }
@@ -6005,9 +6200,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
               onClick={async () => {
                 try {
                   const fullConfig = { ...tConfig, rounds, consRounds, participants, phase };
-                  const { error } = await supabase.from('tournaments')
-                    .update({ config: fullConfig, name: tConfig.name || 'Torneo' })
-                    .eq('id', publishedId);
+                  const { error } = await escribirConfig(fullConfig, { name: tConfig.name || 'Torneo' });
                   if (error) throw error;
                   toast('✅ Enlace actualizado con la configuración actual (fechas, horarios, categorías, pistas, cuadros).', 'success');
                 } catch (e) {
@@ -6408,6 +6601,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
 
   return (
     <div>
+      {bannerConflicto}
       {/* ── Modal editor de horario con cuadrante día × pista × hora ── */}
       {editingTime && (() => {
         const occ = buildOccupancyMap();
@@ -6818,60 +7012,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       {/* ── Editor de pistas durante el torneo ── */}
       {/* ── Modal admin: listado de partidos por día ─────────────────────── */}
       {showMatchesList && (() => {
-        // Recolectamos todos los matches (rounds + consRounds) con time set,
-        // los agrupamos por día y los ordenamos por hora.
-        const items = [];
-        const collect = (roundsObj, isCons) => {
-          Object.entries(roundsObj || {}).forEach(([cat, catRs]) => {
-            (catRs || []).forEach((round, rIdx) => {
-              (round || []).forEach(m => {
-                if (!m.time || m.time === 'A convenir') return;
-                if (m.p1?.isBye && m.p2?.isBye) return; // skip bye-vs-bye
-                const parts = m.time.split(' - Pista');
-                const slot = parts[0]?.trim();
-                const court = parseInt(parts[1], 10);
-                if (!slot) return;
-                const [day, hour] = slot.split(' ');
-                items.push({
-                  day, hour, court,
-                  cat, isCons,
-                  round: rIdx,
-                  // Mismo nombre de ronda que en el cuadro (Cuartos, Semis…);
-                  // antes pantalla y PDF ponían R{n} con un desfase de 1.
-                  roundName: getRoundName(rIdx, catRs),
-                  isPrelim: !!m.p1?.isPrelim || !!m.isPrelim || !!round[0]?.isPrelim,
-                  p1: m.p1?.name || (m.p1?.isBye ? 'BYE' : (m.p1?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
-                  p2: m.p2?.name || (m.p2?.isBye ? 'BYE' : (m.p2?.isPrelimPlaceholder ? 'Ganador previa' : 'TBD')),
-                  winner: m.winner?.name || null,
-                  score: m.score || null,
-                  matchId: m.id,
-                });
-              });
-            });
-          });
-        };
-        collect(rounds, false);
-        collect(consRounds, true);
-
-        // Agrupar por día
-        const byDay = {};
-        items.forEach(it => {
-          if (!byDay[it.day]) byDay[it.day] = [];
-          byDay[it.day].push(it);
-        });
-        // Orden de días: por fecha real (DD/MM)
-        const dayKeys = Object.keys(byDay).sort((a, b) => {
-          const [da, ma] = a.split('/').map(Number);
-          const [db, mb] = b.split('/').map(Number);
-          return (ma * 31 + da) - (mb * 31 + db);
-        });
-        // Dentro de cada día: orden por hora, luego por pista
-        dayKeys.forEach(d => {
-          byDay[d].sort((a, b) => {
-            if (a.hour !== b.hour) return a.hour < b.hour ? -1 : 1;
-            return (a.court || 0) - (b.court || 0);
-          });
-        });
+        const { items, byDay, dayKeys } = recogerPartidosPorDia(rounds, consRounds);
 
         return (
           <div onClick={() => setShowMatchesList(false)} className="tm-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}>
@@ -7369,9 +7510,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         if (publishedId) {
                           try {
                             const config = { ...newTConfig, rounds: {}, consRounds: {}, participants, phase: 'setup' };
-                            const { error } = await supabase.from('tournaments')
-                              .update({ config })
-                              .eq('id', publishedId);
+                            const { error } = await escribirConfig(config);
                             if (error) throw error;
                             toast('Sorteo deshecho. Las parejas siguen inscritas y puedes volver a sortear cuando quieras.', 'success');
                           } catch (e) {
