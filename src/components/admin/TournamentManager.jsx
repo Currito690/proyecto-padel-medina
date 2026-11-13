@@ -3845,13 +3845,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const pdfHeight = pdf.internal.pageSize.getHeight();
         const imgRatio = canvas.width / canvas.height;
 
-        // Margen pequeño para que no quede pegado al borde del papel
-        const margin = 6;
-        let finalWidth = pdfWidth - margin * 2;
+        // Márgenes para imprimir: el papel entra en la impresora por el lado
+        // corto y en los extremos de ese recorrido muchas impresoras no
+        // imprimen los últimos 12-15 mm (en apaisado son la izquierda y la
+        // derecha de la hoja; en vertical, arriba y abajo). En los cantos
+        // del papel solo se pierden 3-5 mm.
+        const apaisado = pdfWidth > pdfHeight;
+        const mLado = apaisado ? 16 : 8; // izquierda y derecha
+        const mAlto = apaisado ? 8 : 16; // arriba y abajo
+        let finalWidth = pdfWidth - mLado * 2;
         let finalHeight = finalWidth / imgRatio;
 
-        if (finalHeight > pdfHeight - margin * 2) {
-           finalHeight = pdfHeight - margin * 2;
+        if (finalHeight > pdfHeight - mAlto * 2) {
+           finalHeight = pdfHeight - mAlto * 2;
            finalWidth = finalHeight * imgRatio;
         }
 
@@ -3870,12 +3876,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             const aspect = props.width / props.height; // ej. 1.83 para padelmedina
             const logoWidth = 45; // mm
             const logoHeight = logoWidth / aspect;
-            const logoMargin = 8;
             pdf.addImage(
               logoDataUrl,
               'PNG',
-              pdfWidth - logoWidth - logoMargin,
-              logoMargin,
+              pdfWidth - logoWidth - mLado,
+              mAlto,
               logoWidth,
               logoHeight,
               undefined,
@@ -4001,7 +4006,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const pageH = pdf.internal.pageSize.getHeight();
       const marginX = 10;
       const marginTop = 22;
-      const marginBottom = 14;
+      // Abajo, 22 mm: muchas impresoras no imprimen los últimos 12-15 mm del
+      // final de la hoja (la del club cortaba 14 mm en el cuadro).
+      const marginBottom = 22;
       const usableW = pageW - 2 * marginX;
 
       // Anchos en mm: total 190 (cabe en A4 con margen 10)
@@ -4168,8 +4175,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         pdf.setFont('helvetica', 'normal');
         pdf.setFontSize(8);
         pdf.setTextColor(148, 163, 184);
-        pdf.text(`Página ${i} de ${pageCount}`, pageW - marginX, pageH - 6, { align: 'right' });
-        pdf.text('Padel Medina', marginX, pageH - 6);
+        pdf.text(`Página ${i} de ${pageCount}`, pageW - marginX, pageH - 17, { align: 'right' });
+        pdf.text('Padel Medina', marginX, pageH - 17);
       }
 
       const safeName = (tConfig.name || 'Torneo').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
@@ -5700,7 +5707,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         pdf.text(`Jugadores por categoría · ${totalParejas} pareja${totalParejas === 1 ? '' : 's'} · ${totalParejas * 2} jugadores`, mX, 18.5);
         y = 25;
       };
-      const salto = (alto) => { if (y + alto > pageH - 12) { pdf.addPage(); cabecera(); } };
+      // Nada en los últimos 16 mm: muchas impresoras no los imprimen.
+      const salto = (alto) => { if (y + alto > pageH - 16) { pdf.addPage(); cabecera(); } };
       cabecera();
       grupos.forEach(g => {
         salto(18);

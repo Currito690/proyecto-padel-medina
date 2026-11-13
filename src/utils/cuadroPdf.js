@@ -7,6 +7,13 @@
 // hojas: cada una con 8 partidos de la primera ronda y su parte del cuadro, y
 // una hoja más con las rondas finales.
 //
+// Márgenes para IMPRIMIR: la hoja apaisada entra girada en la impresora, así
+// que sus lados izquierdo y derecho caen en los extremos del papel, donde
+// muchas impresoras (sobre todo las de tinta) no imprimen los últimos 12-15 mm.
+// Con 8 mm, la impresora del club cortaba el principio de los nombres de la
+// primera columna («eila y Ague»). Arriba y abajo caen en los cantos del
+// papel, que solo pierden 3-5 mm.
+//
 // rondas: [[partido, …], …] como rounds[cat] / consRounds[cat] del panel.
 // opciones:
 //   titulo (texto de la cabecera), consolacion (bool, colores naranjas),
@@ -55,17 +62,45 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
 
   const W = pdf.internal.pageSize.getWidth();
   const H = pdf.internal.pageSize.getHeight();
-  const mx = 8;
+  const mx = 16; // izquierda y derecha (ver arriba: lo que corta la impresora)
+  const my = 7; // arriba y abajo
   const arribaArea = 33; // debajo del título y de los nombres de ronda
-  const abajoArea = H - 7;
-  const hueco = 8; // entre columnas
+  const abajoArea = H - 10; // encima del pie
+  const hueco = 6; // entre columnas (más estrecho que antes: el ancho va a los nombres)
+  // Logo de 15 mm de alto arriba a la derecha (su ancho, de la imagen).
+  const altoLogo = 15;
+  let anchoLogo = 0;
+  if (logo) {
+    try {
+      const props = pdf.getImageProperties(logo);
+      anchoLogo = altoLogo * (props.width / props.height);
+    } catch { anchoLogo = 0; /* sin logo */ }
+  }
+  // Un texto en negrita a su tamaño o, si no cabe en el ancho, más pequeño
+  // (hasta minimo); deja puesto ese tamaño y lo devuelve.
+  const encoger = (texto, ancho, pt, minimo) => {
+    let p = pt;
+    pdf.setFontSize(p);
+    while (p > minimo && pdf.getTextWidth(texto) > ancho) { p -= 0.5; pdf.setFontSize(p); }
+    return p;
+  };
+  // Una línea recortada para que quepa con «…» al final: quita palabras y, si
+  // solo queda una, letras (con el tamaño de letra ya puesto).
+  const conPuntos = (linea, ancho) => {
+    let s = String(linea || '').trimEnd();
+    while (s && pdf.getTextWidth(`${s}…`) > ancho) {
+      const sinUltima = s.replace(/\s*\S*$/, '');
+      s = sinUltima && sinUltima !== s ? sinUltima : s.slice(0, -1);
+    }
+    return `${s}…`;
+  };
 
   hojas.forEach((hoja, iHoja) => {
     if (iHoja > 0) pdf.addPage('a4', 'landscape');
     const conPrevia = hayPrevia && hoja.r0 === 0;
     const conCampeon = !!hoja.final;
     const colsCuadro = hoja.rondas + (conPrevia ? 1 : 0);
-    const anchoCampeon = conCampeon ? 38 : 0;
+    const anchoCampeon = conCampeon ? 36 : 0;
     // Anchos: la primera columna de partidos (la que tiene los nombres de
     // todas las parejas) más ancha; ninguna de más de 90 mm (con pocas rondas
     // salían cajas enormes) y lo que sobra se reparte a los lados.
@@ -96,8 +131,9 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       const etqPt = Math.max(6.5, pt - 3);
       return { pt, etqPt, nombreLH: pt * MM_POR_PT * 1.18, etqLH: etqPt * MM_POR_PT * 1.3, pad: Math.max(1.1, pt * 0.13) };
     };
-    // Un nombre en una línea a su tamaño; si no cabe, un poco más pequeño; y
-    // si aun así no cabe, en dos líneas. Devuelve { lineas, pt }.
+    // Un nombre en una línea a su tamaño; si no cabe, un poco más pequeño; si
+    // aun así no cabe, en dos líneas (a 0,85 y, si hace falta, a 0,8); y solo
+    // si ni así cabe, dos líneas con «…» al final. Devuelve { lineas, pt }.
     const ajustarNombre = (texto, ancho, pt) => {
       const t = latin1(texto);
       if (!t) return { lineas: [''], pt };
@@ -106,11 +142,13 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
         pdf.setFontSize(pt * f);
         if (pdf.getTextWidth(t) <= ancho) return { lineas: [t], pt: pt * f };
       }
-      const p2 = pt * 0.85;
-      pdf.setFontSize(p2);
-      const l = pdf.splitTextToSize(t, ancho);
-      const lineas = l.length > 2 ? [l[0], `${String(l[1]).replace(/\s*\S*$/, '')}…`] : l;
-      return { lineas, pt: p2 };
+      for (const f of [0.85, 0.8]) {
+        pdf.setFontSize(pt * f);
+        const l = pdf.splitTextToSize(t, ancho);
+        if (l.length <= 2) return { lineas: l, pt: pt * f };
+      }
+      const l = pdf.splitTextToSize(t, ancho); // a 0,8
+      return { lineas: [l[0], conPuntos(l[1], ancho)], pt: pt * 0.8 };
     };
     const esBye = (p) => !!p?.isBye;
     const conCabecera = (partido) => !(esBye(partido?.p1) || esBye(partido?.p2));
@@ -131,19 +169,20 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       if (peor <= filaH - 1.2) break;
     }
 
-    // ── Cabecera: título y logo ──
+    // ── Cabecera: título (en una línea si cabe, si no en dos) y logo ──
     pdf.setTextColor(15, 23, 42);
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(16);
     const pagTxt = hojas.length > 1 ? `  (hoja ${iHoja + 1} de ${hojas.length})` : '';
-    const tituloLineas = pdf.splitTextToSize(latin1(titulo) + pagTxt, W - 2 * mx - 50).slice(0, 2);
+    const textoTitulo = latin1(titulo) + pagTxt;
+    const anchoTitulo = W - 2 * mx - (anchoLogo ? anchoLogo + 6 : 0);
+    encoger(textoTitulo, anchoTitulo, 16, 13);
+    // Si ni a 13 puntos cabe en una línea, mejor dos líneas a 15.
+    if (pdf.getTextWidth(textoTitulo) > anchoTitulo) pdf.setFontSize(15);
+    const tituloLineas = pdf.splitTextToSize(textoTitulo, anchoTitulo).slice(0, 2);
     pdf.text(tituloLineas, mx, 14);
-    if (logo) {
+    if (anchoLogo) {
       try {
-        const props = pdf.getImageProperties(logo);
-        const alto = 15;
-        const ancho = alto * (props.width / props.height);
-        pdf.addImage(logo, 'PNG', W - mx - ancho, 5, ancho, alto, undefined, 'FAST');
+        pdf.addImage(logo, 'PNG', W - mx - anchoLogo, my, anchoLogo, altoLogo, undefined, 'FAST');
       } catch { /* sin logo */ }
     }
 
@@ -155,8 +194,9 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       pdf.roundedRect(x, 24, ancho, 7, 1.8, 1.8, 'FD');
       pdf.setTextColor(...col.pastillaTexto);
       pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9.5);
-      pdf.text(latin1(texto).toUpperCase(), x + ancho / 2, 28.7, { align: 'center' });
+      const t = latin1(texto).toUpperCase();
+      encoger(t, ancho - 3, 9.5, 6.5);
+      pdf.text(t, x + ancho / 2, 28.7, { align: 'center' });
     };
     if (conPrevia) pastilla(nombreRonda(0), xCol(0), anchoCol(0));
     for (let k = 0; k < hoja.rondas; k++) {
@@ -197,9 +237,15 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
         if (tenue) pdf.setTextColor(160, 171, 186); else pdf.setTextColor(71, 85, 105);
         const resultado = partido?.score ? latin1(partido.score) : '';
         const anchoRes = resultado ? pdf.getTextWidth(resultado) + 2 : 0;
-        const etq = pdf.splitTextToSize(latin1(etiqueta(partido)).toUpperCase() || ' ', ancho - 2 * med.pad - anchoRes)[0];
+        // La etiqueta entera («ESPERANDO RONDAS PREVIAS», «SÁB 14/11 16:00 -
+        // PISTA 1»): un poco más pequeña si no cabe y, solo si ni así, cortada.
+        const anchoEtq = ancho - 2 * med.pad - anchoRes;
+        const textoEtq = latin1(etiqueta(partido)).toUpperCase() || ' ';
+        encoger(textoEtq, anchoEtq, med.etqPt, Math.max(5.5, med.etqPt - 2.5));
+        const etq = pdf.splitTextToSize(textoEtq, anchoEtq)[0];
         pdf.text(etq, x + med.pad + 0.4, y + cab - 1.15);
         if (resultado) {
+          pdf.setFontSize(med.etqPt);
           pdf.setTextColor(15, 23, 42);
           pdf.text(resultado, x + ancho - med.pad, y + cab - 1.15, { align: 'right' });
         }
@@ -293,15 +339,27 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
       const x = xCampeon;
       const ganador = fin?.partido?.winner;
       const nombre = latin1(ganador?.name || 'TBD');
-      const ptC = Math.max(10, med.pt);
+      // El nombre ENTERO, en hasta 4 líneas y sin partir palabras: se baja la
+      // letra (desde la del cuadro, como poco 10, hasta 8) hasta que quepa; y
+      // si ni así, 4 líneas con «…». Antes se cortaba a 2 líneas sin avisar
+      // (con las 47 parejas del II Torneo ACC, solo 20 salían enteras).
+      const anchoNombreC = anchoCampeon - 5;
       pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(ptC);
-      const l = pdf.splitTextToSize(nombre, anchoCampeon - 5).slice(0, 2);
+      let ptC = Math.max(10, med.pt);
+      let l = [];
+      for (let p = ptC; p >= 8; p -= 0.5) {
+        ptC = p;
+        pdf.setFontSize(p);
+        l = pdf.splitTextToSize(nombre, anchoNombreC);
+        if (l.length <= 4 && nombre.split(' ').every((w) => pdf.getTextWidth(w) <= anchoNombreC)) break;
+      }
+      if (l.length > 4) l = [l[0], l[1], l[2], conPuntos(l[3], anchoNombreC)];
       const lhC = altoLinea(ptC);
       const altoBox = Math.max(16, l.length * lhC + 9);
-      // Rótulo encima ("CAMPEÓN ABSOLUTO")
+      // Rótulo encima ("CAMPEÓN ABSOLUTO"), nunca más ancho que la caja: por
+      // la derecha se saldría hacia el borde que la impresora no imprime.
       pdf.setTextColor(217, 119, 6);
-      pdf.setFontSize(9.5);
+      encoger(latin1(textoCampeon), anchoCampeon, 9.5, 6.5);
       pdf.text(latin1(textoCampeon), x + anchoCampeon / 2, yc - altoBox / 2 - 3, { align: 'center' });
       // Caja crema con borde dorado
       pdf.setFillColor(255, 251, 235);
@@ -319,7 +377,7 @@ export function dibujarCuadroPdf(pdf, rondas, opciones) {
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(7.5);
     pdf.setTextColor(148, 163, 184);
-    pdf.text('padelmedina.com', mx, H - 3);
+    pdf.text('padelmedina.com', mx, H - my + 1);
   });
   return hojas.length;
 }
