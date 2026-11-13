@@ -13,7 +13,7 @@ import CuadroArbol from '../CuadroArbol';
 import { descargarBlob, descargarDataUrl, descargarTexto } from '../../utils/descargas';
 import { dibujarCuadroPdf } from '../../utils/cuadroPdf';
 import { prepararCartel } from '../../utils/cartel';
-import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, colocarPorAfinidad, toMin as aMinutos } from '../../utils/torneoHorarios';
+import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, colocarPorAfinidad, restarTramos, toMin as aMinutos } from '../../utils/torneoHorarios';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -771,7 +771,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // con el cuadro: si un partido cambia de hora o se borra, su bloqueo se
   // mueve o desaparece. Un torneo en borrador no bloquea nada. No se pone
   // bloqueo encima de otro bloqueo/entreno o de una reserva de esa pista
-  // (ya está ocupada). Al borrar el torneo se borran solos (ON DELETE CASCADE).
+  // (ya está ocupada), pero sí en el resto del partido: si un bloqueo del
+  // club acaba a mitad del partido, se bloquea desde ahí hasta el final.
+  // Al borrar el torneo se borran solos (ON DELETE CASCADE).
   const syncingBlocksRef = useRef({ running: false, again: false });
   const syncTournamentBlocks = async () => {
     const st = syncingBlocksRef.current;
@@ -793,7 +795,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const [y2] = endDate.split('-');
         return Number(mm) >= Number(m1) ? y1 : y2;
       };
-      const deseados = new Map(); // clave court|date|time_slot → fila
+      const partidos = []; // { court_id, date, ini, fin } de cada partido con hora y pista
       if (dbStatus !== 'draft') {
         const add = (roundsObj) => Object.entries(roundsObj || {}).forEach(([ct, catR]) => {
           (catR || []).forEach(round => (round || []).forEach(m => {
@@ -804,9 +806,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             if (date < startDate || date > endDate) return;
             const ini = toMin(t.hora);
             const fin = Math.min(ini + durDe(ct), 24 * 60 - 1);
-            const time_slot = `${hhmm(ini)} - ${hhmm(fin)}`;
-            const court_id = porNum[t.pista];
-            deseados.set(`${court_id}|${date}|${time_slot}`, { court_id, date, time_slot, ini, fin });
+            partidos.push({ court_id: porNum[t.pista], date, ini, fin });
           }));
         });
         add(rounds);
@@ -825,11 +825,34 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         .or(`date.lt.${startDate},date.gt.${endDate}`);
       const propios = (bl.data || []).filter(b => b.tipo === 'torneo' && b.tournament_id === tournamentKey);
       const ajenos = [...(bl.data || []).filter(b => !(b.tipo === 'torneo' && b.tournament_id === tournamentKey)), ...(bk.error ? [] : (bk.data || []))];
+      // Tramo [inicio, fin) en minutos; null si la fila está mal formada (así
+      // se ignora igual al restar y al mirar solapes).
+      const tramoDe = (o) => {
+        const [a, b] = String(o?.time_slot || '').split(' - ');
+        if (!a || !b) return null;
+        const ini = toMin(a);
+        const fin = toMin(b);
+        return Number.isFinite(ini) && Number.isFinite(fin) && fin > ini ? [ini, fin] : null;
+      };
       const solapa = (f) => ajenos.some(o => {
         if (o.court_id !== f.court_id || o.date !== f.date) return false;
-        const [a, b] = String(o.time_slot || '').split(' - ');
-        if (!a || !b) return false;
-        return toMin(a) < f.fin && f.ini < toMin(b);
+        const iv = tramoDe(o);
+        return !!iv && iv[0] < f.fin && f.ini < iv[1];
+      });
+      // Cada partido se bloquea MENOS lo que ya tapa otra cosa de esa pista
+      // (bloqueo del club, entreno, reserva u otro torneo). Antes, si lo
+      // tapaba solo en parte (partido de 13:00 a 14:00 y bloqueo hasta las
+      // 13:30), no se bloqueaba nada y de 13:30 a 14:00 se podía reservar.
+      const deseados = new Map(); // clave court|date|time_slot → fila
+      partidos.forEach(p => {
+        const ocupados = ajenos
+          .filter(o => o.court_id === p.court_id && o.date === p.date)
+          .map(tramoDe)
+          .filter(Boolean);
+        restarTramos([p.ini, p.fin], ocupados).forEach(([ini, fin]) => {
+          const time_slot = `${hhmm(ini)} - ${hhmm(fin)}`;
+          deseados.set(`${p.court_id}|${p.date}|${time_slot}`, { court_id: p.court_id, date: p.date, time_slot, ini, fin });
+        });
       });
       const borrar = [
         ...propios.filter(b => !deseados.has(`${b.court_id}|${b.date}|${b.time_slot}`) || solapa({ ...b, ini: toMin(b.time_slot.split(' - ')[0]), fin: toMin(b.time_slot.split(' - ')[1]) })).map(b => b.id),
@@ -840,16 +863,20 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const insertar = [...deseados.entries()]
         .filter(([k, f]) => !yaEstan.has(k) && !solapa(f))
         .map(([, f]) => ({ court_id: f.court_id, date: f.date, time_slot: f.time_slot, tipo: 'torneo', tournament_id: tournamentKey, created_by: ses?.session?.user?.id || null }));
-      if (borrar.length) {
-        const { error } = await supabase.from('blocked_slots').delete().in('id', borrar);
-        if (error) console.warn('No se pudieron quitar bloqueos del torneo:', error.message);
-      }
+      // Primero se pone lo nuevo y luego se quita lo viejo: así ningún rato
+      // del partido se queda sin bloquear entre las dos escrituras (y si
+      // falla la primera, sigue el bloqueo viejo). Nunca chocan: lo que se
+      // inserta no está entre los bloqueos propios de esas fechas.
       if (insertar.length) {
         // ON CONFLICT DO NOTHING: si otra pestaña del admin acaba de crear la
         // misma fila (UNIQUE court_id+date+time_slot), no falla todo el lote.
         const { error } = await supabase.from('blocked_slots')
           .upsert(insertar, { onConflict: 'court_id,date,time_slot', ignoreDuplicates: true });
         if (error) console.warn('No se pudieron bloquear las pistas del torneo:', error.message);
+      }
+      if (borrar.length) {
+        const { error } = await supabase.from('blocked_slots').delete().in('id', borrar);
+        if (error) console.warn('No se pudieron quitar bloqueos del torneo:', error.message);
       }
     } catch (e) {
       console.warn('Error sincronizando los bloqueos del torneo:', e?.message || e);

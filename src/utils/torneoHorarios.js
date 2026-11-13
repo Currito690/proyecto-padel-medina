@@ -117,6 +117,25 @@ export function intervalosExternos(filas) {
   return out;
 }
 
+// Lo que queda libre de un tramo [ini, fin) (minutos del día) quitándole los
+// tramos ocupados que lo pisan, en orden. Para bloquear solo la parte de un
+// partido que no tapa ya otra cosa (un bloqueo del club que acaba a mitad del
+// partido, un entreno, una reserva…).
+export function restarTramos([ini, fin], ocupados = []) {
+  let libres = fin > ini ? [[ini, fin]] : [];
+  for (const [a, b] of ocupados) {
+    if (!(b > a)) continue;
+    libres = libres.flatMap(([x, y]) => {
+      if (b <= x || y <= a) return [[x, y]];
+      const quedan = [];
+      if (x < a) quedan.push([x, a]);
+      if (b < y) quedan.push([b, y]);
+      return quedan;
+    });
+  }
+  return libres;
+}
+
 const solapa = (a1, b1, a2, b2) => a1 < b2 && a2 < b1;
 
 // Agenda: qué hay en cada pista (minutos del día) y cuándo juega cada pareja
