@@ -4062,7 +4062,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         pdf.setFont('helvetica', 'bold');
         pdf.setFontSize(15);
         pdf.setTextColor(15, 23, 42);
-        pdf.text(tConfig.name || 'Torneo', marginX, 12);
+        // El nombre del torneo nunca debajo del logo ni hasta el borde: si es
+        // largo, más pequeño (hasta 10 puntos) y, si ni así, cortado.
+        const anchoTitulo = pageW - 2 * marginX - (logoDataUrl ? 32 + 4 : 0);
+        for (let pt = 15; pt > 10 && pdf.getTextWidth(tConfig.name || 'Torneo') > anchoTitulo; pt -= 0.5) pdf.setFontSize(pt - 0.5);
+        pdf.text(pdf.splitTextToSize(tConfig.name || 'Torneo', anchoTitulo)[0], marginX, 12);
         pdf.setFont('helvetica', 'normal');
         pdf.setFontSize(9);
         pdf.setTextColor(100, 116, 139);
@@ -4086,45 +4090,58 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         y += 7;
       };
 
-      const drawDayBanner = (day) => {
+      // Banda del día; en la hoja siguiente, «(cont.)» con el total del día.
+      const drawDayBanner = (day, cont = false) => {
         pdf.setFillColor(30, 41, 59);
         pdf.rect(marginX, y, usableW, 8, 'F');
         pdf.setTextColor(255, 255, 255);
         pdf.setFont('helvetica', 'bold');
         pdf.setFontSize(11);
         const count = byDay[day]?.length || 0;
-        pdf.text(`${day}  -  ${count} partido${count === 1 ? '' : 's'}`, marginX + 2.5, y + 5.5);
+        pdf.text(`${day}${cont ? ' (cont.)' : ''}  -  ${count} partido${count === 1 ? '' : 's'}`, marginX + 2.5, y + 5.5);
         y += 8;
       };
 
+      // Hoja nueva si no cabe; si sigue un día, repite su banda y la cabecera
+      // de la tabla (si empieza un día, las pone quien llama).
       const ensureSpace = (need, day) => {
         if (y + need > pageH - marginBottom) {
           pdf.addPage();
           y = marginTop;
           drawPageHeader();
           if (day) {
-            drawDayBanner(`${day} (cont.)`);
+            drawDayBanner(day, true);
+            drawTableHeader();
           }
-          drawTableHeader();
         }
       };
+
+      // Nombres de cada pareja en hasta 3 líneas (con 2 se perdía el último
+      // apellido de los nombres largos) y alto de la fila.
+      const lineasDe = (it) => {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(9);
+        return {
+          p1Lines: pdf.splitTextToSize(it.p1 || '', cols[3].width - 3).slice(0, 3),
+          p2Lines: pdf.splitTextToSize(it.p2 || '', cols[4].width - 3).slice(0, 3),
+        };
+      };
+      const altoFilaDe = ({ p1Lines, p2Lines }) => Math.max(p1Lines.length, p2Lines.length, 2) * 4.2 + 2.5;
 
       drawPageHeader();
 
       targetDays.forEach((day) => {
-        ensureSpace(20, null);
+        const rows = byDay[day] || [];
+        // La banda del día y la cabecera de la tabla, con su primera fila.
+        ensureSpace(8 + 7 + (rows.length ? altoFilaDe(lineasDe(rows[0])) : 0), null);
         drawDayBanner(day);
         drawTableHeader();
-        const rows = byDay[day] || [];
 
         rows.forEach((it, idx) => {
           const roundName = it.isPrelim ? 'Previa' : (it.roundName || `R${it.round + 1}`);
           const courtName = getCourtName(it.court);
-          pdf.setFontSize(9);
-          const p1Lines = pdf.splitTextToSize(it.p1 || '', cols[3].width - 3).slice(0, 2);
-          const p2Lines = pdf.splitTextToSize(it.p2 || '', cols[4].width - 3).slice(0, 2);
-          const lineCount = Math.max(p1Lines.length, p2Lines.length, 2);
-          const rowH = lineCount * 4.2 + 2.5;
+          const { p1Lines, p2Lines } = lineasDe(it);
+          const rowH = altoFilaDe({ p1Lines, p2Lines });
 
           ensureSpace(rowH, day);
 
@@ -5729,22 +5746,36 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       let y = 0;
       const cabecera = () => {
         pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); pdf.setTextColor(15, 23, 42);
-        pdf.text(tConfig.name || 'Torneo', mX, 13);
+        // Un nombre de torneo largo, más pequeño (hasta 10 puntos) y, si ni
+        // así cabe, cortado: nunca hasta el borde de la hoja.
+        for (let pt = 15; pt > 10 && pdf.getTextWidth(tConfig.name || 'Torneo') > usable; pt -= 0.5) pdf.setFontSize(pt - 0.5);
+        pdf.text(pdf.splitTextToSize(tConfig.name || 'Torneo', usable)[0], mX, 13);
         pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(100, 116, 139);
         pdf.text(`Jugadores por categoría · ${totalParejas} pareja${totalParejas === 1 ? '' : 's'} · ${totalParejas * 2} jugadores`, mX, 18.5);
         y = 25;
       };
-      // Nada en los últimos 16 mm: muchas impresoras no los imprimen.
-      const salto = (alto) => { if (y + alto > pageH - 16) { pdf.addPage(); cabecera(); } };
-      cabecera();
-      grupos.forEach(g => {
-        salto(18);
+      // Nada en los últimos 16 mm: muchas impresoras no los imprimen. Devuelve
+      // true si ha empezado hoja nueva.
+      const salto = (alto) => {
+        if (y + alto <= pageH - 16) return false;
+        pdf.addPage();
+        cabecera();
+        return true;
+      };
+      // Banda de la categoría; en la hoja siguiente, «(cont.)».
+      const bandaCategoria = (g, cont = false) => {
         pdf.setFillColor(15, 23, 42); pdf.rect(mX, y, usable, 8, 'F');
         pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
-        pdf.text(`${g.cat}  -  ${g.parejas.length} pareja${g.parejas.length === 1 ? '' : 's'}`, mX + 2.5, y + 5.5);
+        pdf.text(`${g.cat}${cont ? ' (cont.)' : ''}  -  ${g.parejas.length} pareja${g.parejas.length === 1 ? '' : 's'}`, mX + 2.5, y + 5.5);
         y += 10;
+      };
+      cabecera();
+      grupos.forEach(g => {
+        // La banda (10 mm) nunca sola al pie: con su primera pareja (11 mm).
+        salto(21);
+        bandaCategoria(g);
         g.parejas.forEach((p, i) => {
-          salto(11);
+          if (salto(11)) bandaCategoria(g, true);
           if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(mX, y - 1, usable, 10, 'F'); }
           pdf.setTextColor(100, 116, 139); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9);
           pdf.text(`${i + 1}.`, mX + 1.5, y + 3.5);
