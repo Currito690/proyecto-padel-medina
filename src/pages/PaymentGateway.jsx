@@ -6,6 +6,7 @@ import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverNow } from '../utils/serverTime';
 import { urlsVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
+import { avisoHuecoOcupado } from '../utils/huecoOcupado';
 
 // Pago compartido temporalmente DESACTIVADO (oculta la pestaña "Compartido").
 // Cambiar a true para reactivarlo cuando esté probado.
@@ -169,7 +170,8 @@ const PaymentGateway = () => {
           metodo_pago: 'gratis',
           importe: 0,
         });
-        if (bookErr) throw bookErr;
+        // Hueco pisado (bloqueo, entreno, torneo u otra reserva): aviso claro.
+        if (bookErr) throw new Error(avisoHuecoOcupado(bookErr) || bookErr.message);
         supabase.functions.invoke('send-push', {
           body: { title: '🎾 Reserva gratuita', body: `${user.name} — ${item.courtName} · ${item.timeSlot}`, url: '/' },
         }).catch(() => {});
@@ -220,9 +222,11 @@ const PaymentGateway = () => {
       }).select('id').single();
       if (holdErr) {
         // 23505 = candado único de la BD: otro jugador tiene ese hueco retenido/confirmado
+        // PM409 = la hora pisa un bloqueo, entreno, partido del torneo u otra
+        // reserva (trigger de la BD); no se ha creado nada y no se va al banco.
         const msg = holdErr.code === '23505'
           ? 'Otro jugador está pagando ese hueco ahora mismo. Elige otra hora, por favor.'
-          : (holdErr.message || 'Este hueco ya no está disponible');
+          : (avisoHuecoOcupado(holdErr) || holdErr.message || 'Este hueco ya no está disponible');
         throw new Error(msg);
       }
       holdId = holdRow.id;
@@ -365,7 +369,11 @@ const PaymentGateway = () => {
       navigate('/mis-reservas?pago=ok');
     } catch (err) {
       console.error('Error al reservar:', err);
-      toast('Error al procesar la reserva: ' + err.message);
+      // Hueco pisado (bloqueo, entreno, torneo u otra reserva): como el INSERT
+      // del carrito es uno solo, no se ha guardado ninguna de sus pistas.
+      const aviso = avisoHuecoOcupado(err);
+      if (aviso) toast(aviso, 'error', 8000);
+      else toast('Error al procesar la reserva: ' + err.message);
       setProcessingClub(false);
       payLockRef.current = false; // permitir reintento
     }
