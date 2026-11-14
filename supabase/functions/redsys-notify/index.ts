@@ -310,24 +310,35 @@ serve(async (req) => {
         }
         bookingRow = upd;
       } else {
-        // ── Sin bookingId no hay reserva que confirmar, y aquí NO se crea
-        // ninguna: con la service key se saltaría el trigger de solapes y la
-        // hora de apertura (podría quedar encima de un bloqueo o de un partido
-        // del torneo, y con el importe que mandó el navegador). redsys-create
-        // ya no firma ningún pago de pista sin hold (el pago compartido está
-        // desactivado), así que esto es un pedido raro o manipulado: aviso al
-        // admin con todos los datos y OK a Redsys, porque reintentar no lo
-        // arregla. El admin decide si crea la reserva a mano o devuelve el pago.
-        console.error(`COBRO SIN HOLD pedido=${orderId} pista=${courtId} ${date} ${timeSlot} usuario=${userId} cobrado=${cobradoCents} compartido=${!!isSharedPayment}`);
-        const [cRes, uRes] = await Promise.all([
-          supabase.from('courts').select('name').eq('id', courtId).maybeSingle(),
-          supabase.from('profiles').select('name, email').eq('id', userId).maybeSingle(),
-        ]);
-        await alertaCobroSinReserva(
-          orderId,
-          `${cRes.data?.name || courtId} · ${date} ${timeSlot} · ${uRes.data?.name || ''} (${uRes.data?.email || userId}). Pago sin reserva previa${isSharedPayment ? ' (compartido)' : ''}: no se ha creado. Cobrado ${cobradoCents} cent.`.slice(0, 200)
-        );
-        return new Response('OK', { status: 200 });
+        // ── Flujo antiguo (pagos iniciados antes del despliegue): insertar.
+        const { data: inserted, error } = await supabase.from('bookings').insert({
+          court_id:  courtId,
+          user_id:   userId,
+          date:      date,
+          time_slot: timeSlot,
+          status:    'confirmed',
+          is_free:   false,
+          payment_type: isSharedPayment ? 'split' : 'full',
+          split_phones: isSharedPayment ? sharedPhones : [],
+          split_paid: isSharedPayment ? 1 : 4, // 1 pagado (el creador)
+          metodo_pago: esBizum ? 'bizum' : 'tarjeta',
+          importe: importePagado,
+        }).select().single();
+
+        if (error) {
+          console.error('Error guardando reserva Redsys:', error);
+          // Alerta con TODOS los datos para poder recrear la reserva a mano.
+          const [cRes, uRes] = await Promise.all([
+            supabase.from('courts').select('name').eq('id', courtId).single(),
+            supabase.from('profiles').select('name, email').eq('id', userId).single(),
+          ]);
+          await alertaCobroSinReserva(
+            orderId,
+            `${cRes.data?.name || courtId} · ${date} ${timeSlot} · ${uRes.data?.name || ''} (${uRes.data?.email || userId}). Error BD: ${error.message}`.slice(0, 200)
+          );
+          return new Response('KO', { status: 500 });
+        }
+        bookingRow = inserted;
       }
 
       // Obtener nombre de pista y usuario (necesario para SMS y push)
