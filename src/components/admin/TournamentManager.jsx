@@ -13,6 +13,7 @@ import CuadroArbol from '../CuadroArbol';
 import { descargarBlob, descargarDataUrl, descargarTexto } from '../../utils/descargas';
 import { dibujarCuadroPdf } from '../../utils/cuadroPdf';
 import { prepararCartel } from '../../utils/cartel';
+import { registrarTrabajoPendiente } from '../../utils/versionNueva';
 import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, colocarPorAfinidad, restarTramos, toMin as aMinutos } from '../../utils/torneoHorarios';
 
 const HOURS = [
@@ -276,6 +277,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const sincronizadoRef = useRef(null);
   const conflictoRemotoRef = useRef(false);
   const [conflictoRemoto, setConflictoRemoto] = useState(false);
+  // Revisión del config en la base de datos (columna config_rev) que va con
+  // sincronizadoRef. Cada guardado manda la siguiente y solo se aplica si la
+  // base de datos sigue en esta; la base de datos rechaza los guardados que no
+  // la traen (paneles antiguos). null = la base de datos aún no tiene la
+  // columna: se guarda como antes.
+  const revRef = useRef(null);
+  const revDe = (fila) => (Number.isInteger(fila?.config_rev) ? fila.config_rev : null);
 
   const [tConfig, setTConfig] = useState(() => {
     const fallback = { ...CONFIG_POR_DEFECTO };
@@ -451,10 +459,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     setDbStatus(data.status || 'draft');
     aplicarConfigBD(data.config || {}, data.name);
     sincronizadoRef.current = jsonEstable(data.config || {});
+    revRef.current = revDe(data);
     intentadosRef.current.clear();
   };
+  // select('*') y no una lista de columnas: así trae config_rev si existe y
+  // no falla si la base de datos aún no la tiene.
   const leerFilaBD = async () => {
-    const { data, error } = await conTiempo(supabase.from('tournaments').select('config, status, name').eq('id', tournamentKey).single());
+    const { data, error } = await conTiempo(supabase.from('tournaments').select('*').eq('id', tournamentKey).single());
     if (error) throw error;
     return data;
   };
@@ -506,43 +517,98 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Nada nuevo: no se escribe (una pantalla que no ha cambiado nada no
     // vuelve a escribir lo que ya hay).
     if (nuevo === sincronizadoRef.current && !conEstado) return { error: null };
-    try {
-      const { data: actual, error: errLeer } = await conTiempo(supabase.from('tournaments').select('config').eq('id', tournamentKey).single());
-      if (!errLeer && actual) {
-        const enBD = jsonEstable(actual.config || {});
-        if (enBD === nuevo) {
-          // La base de datos ya tiene justo esto (p. ej. otra pantalla ha
-          // guardado lo mismo): no es un conflicto.
-          sincronizadoRef.current = nuevo;
-          intentadosRef.current.clear();
-          if (!conEstado) return { error: null };
-        } else if (intentadosRef.current.has(enBD)) {
-          // Es lo que esta pantalla mandó antes (se perdió la respuesta).
-          sincronizadoRef.current = enBD;
-          intentadosRef.current.clear();
-        } else if (enBD !== sincronizadoRef.current) {
-          marcarConflicto();
-          return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
-        }
+    // Revisión sobre la que se guarda: la que tenga la base de datos ahora (si
+    // se puede leer) o, sin conexión, la última que conoce esta pantalla. El
+    // guardado manda base + 1 y solo se aplica si la base de datos sigue en
+    // base: si otro dispositivo guardó entretanto, no pisa nada.
+    let base = revRef.current;
+    const leer = async () => {
+      try {
+        // select('*'): trae config_rev si existe y no falla si aún no existe.
+        const { data, error: e } = await conTiempo(supabase.from('tournaments').select('*').eq('id', tournamentKey).single());
+        return !e && data ? data : null;
+      } catch {
+        return null;
       }
-    } catch {
-      // Si no se puede leer (sin conexión), se intenta guardar como siempre.
+    };
+    // Compara lo que hay en la base de datos con lo que conoce esta pantalla:
+    // 'hecho' si ya tiene justo esto, 'conflicto' si lo ha cambiado otro
+    // dispositivo y 'sigue' si se puede guardar encima. Apunta su revisión.
+    const revisar = (fila) => {
+      const enBD = jsonEstable(fila.config || {});
+      base = revDe(fila);
+      if (enBD === nuevo) {
+        // La base de datos ya tiene justo esto (p. ej. otra pantalla ha
+        // guardado lo mismo): no es un conflicto.
+        sincronizadoRef.current = nuevo;
+        revRef.current = base;
+        intentadosRef.current.clear();
+        return conEstado ? 'sigue' : 'hecho';
+      }
+      if (intentadosRef.current.has(enBD)) {
+        // Es lo que esta pantalla mandó antes (se perdió la respuesta).
+        sincronizadoRef.current = enBD;
+        revRef.current = base;
+        intentadosRef.current.clear();
+        return 'sigue';
+      }
+      return enBD !== sincronizadoRef.current ? 'conflicto' : 'sigue';
+    };
+    const enConflicto = () => {
+      marcarConflicto();
+      return { error: { message: MENSAJE_CONFLICTO }, conflicto: true };
+    };
+    const antes = await leer();
+    if (antes) {
+      const r = revisar(antes);
+      if (r === 'hecho') return { error: null };
+      if (r === 'conflicto') return enConflicto();
     }
     if (recordar) intentadosRef.current.add(nuevo);
     let error = null;
-    try {
-      // El torneo entero pesa ~94 KB: con poca cobertura tarda en subir, así
-      // que la escritura tiene más margen (40 s) que las lecturas (20 s).
-      ({ error } = await conTiempo(supabase.from('tournaments').update({ config, ...extra }).eq('id', tournamentKey), 40000));
-    } catch (e) {
-      error = { message: e?.message || String(e) };
+    // Dos vueltas como mucho: si el guardado no se aplica porque la revisión
+    // ha cambiado y lo que hay es nuestro (un guardado anterior cuya respuesta
+    // se perdió), se repite sobre la revisión nueva.
+    for (let vuelta = 0; vuelta < 2; vuelta += 1) {
+      let filas = null;
+      error = null;
+      try {
+        const carga = base == null ? { config, ...extra } : { config, ...extra, config_rev: base + 1 };
+        let q = supabase.from('tournaments').update(carga).eq('id', tournamentKey);
+        if (base != null) q = q.eq('config_rev', base).select('config_rev');
+        // El torneo entero pesa ~94 KB: con poca cobertura tarda en subir, así
+        // que la escritura tiene más margen (40 s) que las lecturas (20 s).
+        ({ data: filas, error } = await conTiempo(q, 40000));
+      } catch (e) {
+        error = { message: e?.message || String(e) };
+      }
+      // La base de datos lo ha rechazado por la revisión: el torneo ha
+      // cambiado por otro lado.
+      if (error && /PANEL_DESACTUALIZADO/.test(`${error.message || ''} ${error.details || ''}`)) return enConflicto();
+      if (error || base == null) break;
+      if (Array.isArray(filas) && filas.length > 0) {
+        revRef.current = revDe(filas[0]) ?? base + 1;
+        break;
+      }
+      // No se ha aplicado (0 filas): la base de datos ya no está en la
+      // revisión base. Se mira qué hay.
+      const tras = await leer();
+      if (!tras) {
+        error = { message: 'No se ha podido comprobar si se ha guardado (¿sin conexión?).' };
+        break;
+      }
+      const r = revisar(tras);
+      if (r === 'hecho') return { error: null };
+      if (r === 'conflicto') return enConflicto();
+      if (vuelta === 1) error = { message: 'No se ha podido guardar: el torneo ha cambiado mientras se guardaba.' };
     }
     if (error && !recordar) {
       // ¿Se guardó y solo se perdió la respuesta? Se mira una vez.
-      try {
-        const { data: tras, error: e2 } = await conTiempo(supabase.from('tournaments').select('config').eq('id', tournamentKey).single());
-        if (!e2 && tras && jsonEstable(tras.config || {}) === nuevo) error = null;
-      } catch { /* sin conexión: sigue siendo un fallo */ }
+      const tras = await leer();
+      if (tras && jsonEstable(tras.config || {}) === nuevo) {
+        error = null;
+        revRef.current = revDe(tras);
+      }
     }
     if (!error) {
       sincronizadoRef.current = nuevo;
@@ -568,9 +634,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     let cancelled = false;
     (async () => {
       try {
+        // select('*'): trae config_rev si existe y no falla si aún no existe.
         const { data, error } = await supabase
           .from('tournaments')
-          .select('config, status, name')
+          .select('*')
           .eq('id', tournamentKey)
           .single();
         if (cancelled) return;
@@ -594,6 +661,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         setDbStatus(data.status || 'draft');
         const cfg = data.config || {};
         sincronizadoRef.current = jsonEstable(cfg);
+        revRef.current = revDe(data);
         const hasDbData = !!(cfg.startDate || cfg.name || cfg.categories
           || (cfg.rounds && Object.keys(cfg.rounds).length)
           || (cfg.participants && cfg.participants.length));
@@ -664,9 +732,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const enBD = data ? jsonEstable(data.config || {}) : null;
       if (enBD != null && sincronizadoRef.current != null && enBD !== sincronizadoRef.current) {
         // Lo que esta pantalla mandó antes y cuya respuesta se perdió es suyo.
-        if (intentadosRef.current.has(enBD)) { sincronizadoRef.current = enBD; intentadosRef.current.clear(); return null; }
+        if (intentadosRef.current.has(enBD)) { sincronizadoRef.current = enBD; revRef.current = revDe(data); intentadosRef.current.clear(); return null; }
         return { data };
       }
+      // Mismo torneo: se apunta su revisión (puede haber subido sin cambiar
+      // nada, p. ej. otra pantalla guardando lo mismo).
+      if (enBD != null && enBD === sincronizadoRef.current) revRef.current = revDe(data);
     } catch {
       // Sin conexión: se usa lo que hay en pantalla.
     }
@@ -762,6 +833,14 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       flushTournamentSave();
     };
   }, []);
+  // Si la página se va a recargar sola por una versión nueva de la web
+  // (AvisoVersionNueva), antes se termina de guardar lo pendiente.
+  const flushTournamentSaveRef = useRef(flushTournamentSave);
+  flushTournamentSaveRef.current = flushTournamentSave;
+  useEffect(() => registrarTrabajoPendiente(async () => {
+    await flushTournamentSaveRef.current();
+    await colaEscrituraRef.current;
+  }), []);
 
   const courtIdByNumRef = useRef({}); // nº de pista del torneo → UUID de la pista del club
 

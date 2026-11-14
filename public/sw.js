@@ -1,9 +1,14 @@
-// Version 2026-10-14 — tocar un aviso con la app abierta lleva a su pantalla.
+// Version 2026-11-14 — sin cambios de funcionamiento: cambiar la versión hace
+// que TODAS las pestañas abiertas con una web vieja (p. ej. un panel abierto
+// desde antes del 13/11) se recarguen solas al volver a ellas. Desde esta
+// versión el panel del admin además vigila los despliegues por su cuenta
+// (src/utils/versionNueva.js), sin tener que tocar este archivo.
+// (2026-10-14: tocar un aviso con la app abierta lleva a su pantalla.)
 // (2026-10-02b: modo offline, guarda la app para poder abrirla sin internet.)
 // Las apps abiertas se recargan solas al detectar esta versión (lo controla main.jsx).
 // Service Worker — Padel Medina PWA
 
-const CACHE = 'padelmedina-2026-10-14';
+const CACHE = 'padelmedina-2026-11-14';
 // Lo mínimo para que la app arranque sin conexión. Los JS/CSS (con hash en el
 // nombre) se van guardando solos según se usan, más abajo.
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/logo.png', '/offline.html'];

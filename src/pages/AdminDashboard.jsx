@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
 import TournamentManager from '../components/admin/TournamentManager';
+import AvisoVersionNueva from '../components/AvisoVersionNueva';
 import EventsManager from '../components/admin/EventsManager';
 import FinanceManager from '../components/admin/FinanceManager';
 import TimeClockManager from '../components/admin/TimeClockManager';
@@ -1824,6 +1825,8 @@ const AdminDashboard = () => {
 
   return (
     <>
+      {/* Versión nueva de la web subida: la pestaña se recarga sola cuando es seguro. */}
+      <AvisoVersionNueva />
       <style>{`
         .admin-layout { display: flex; min-height: 100vh; background: var(--color-bg-secondary); }
         .admin-sidebar {

@@ -14,8 +14,44 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${M
 // datos.js, un script clásico que carga antes que los módulos).
 let db = null;
 const log = [];
-const asegurar = () => { if (!db) db = clon(window.__SIM_DATOS || {}); return db; };
+// Revisión del config (columna config_rev y regla trg_tournaments_guarda_config,
+// migraciones 20261114100000/100100). Con ?sinrev en la URL se simula una
+// base de datos que aún no tiene la columna.
+const SIN_REV = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('sinrev');
+const asegurar = () => {
+  if (!db) {
+    db = clon(window.__SIM_DATOS || {});
+    (db.tournaments || []).forEach((t) => {
+      if (SIN_REV) delete t.config_rev;
+      else if (!Number.isInteger(t.config_rev)) t.config_rev = 0;
+    });
+  }
+  return db;
+};
 const tabla = (nombre) => { const d = asegurar(); return (d[nombre] = d[nombre] || []); };
+// JSON con las claves ordenadas: dos config iguales dan el mismo texto (como jsonb).
+const estable = (v) => (Array.isArray(v)
+  ? `[${v.map(estable).join(',')}]`
+  : v && typeof v === 'object'
+    ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${estable(v[k])}`).join(',')}}`
+    : JSON.stringify(v));
+// Fallos a propósito para probar el panel: el próximo guardado del torneo se
+// aplica pero su respuesta "se pierde" (devuelve error, como un corte de red).
+const fallos = { perderRespuesta: 0 };
+// La regla de la base de datos para las peticiones del panel (rol authenticated).
+const reglaTorneo = (fila, carga) => {
+  if (SIN_REV) {
+    return 'config_rev' in carga
+      ? { code: 'PGRST204', message: "Could not find the 'config_rev' column of 'tournaments' in the schema cache" }
+      : null;
+  }
+  const cambiaConfig = 'config' in carga && estable(carga.config) !== estable(fila.config);
+  const cambiaRev = 'config_rev' in carga && carga.config_rev !== fila.config_rev;
+  if ((cambiaConfig || cambiaRev) && carga.config_rev !== fila.config_rev + 1) {
+    return { code: 'P0001', message: 'PANEL_DESACTUALIZADO', details: 'El torneo ha cambiado desde que se abrió esta pantalla, o el panel es de una versión antigua.', hint: 'Recarga la página (o pulsa «Cargar lo último») y repite el cambio.' };
+  }
+  return null;
+};
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -84,8 +120,22 @@ class Consulta {
     }
     if (this.op === 'update') {
       const filas = this._filas();
+      if (this.nombre === 'tournaments') {
+        for (const r of filas) {
+          const error = reglaTorneo(r, this.carga || {});
+          if (error) {
+            log.push({ op: 'update-rechazado', tabla: this.nombre, error: error.message });
+            return { data: null, error };
+          }
+        }
+      }
       filas.forEach((r) => Object.assign(r, clon(this.carga)));
       log.push({ op: 'update', tabla: this.nombre, n: filas.length, cambios: Object.keys(this.carga || {}) });
+      if (this.nombre === 'tournaments' && filas.length && fallos.perderRespuesta > 0) {
+        fallos.perderRespuesta -= 1;
+        log.push({ op: 'respuesta-perdida', tabla: this.nombre });
+        return { data: null, error: { message: 'TypeError: Failed to fetch (respuesta perdida a propósito)' } };
+      }
       return this.devolver ? this._resultado(filas) : { data: null, error: null };
     }
     if (this.op === 'delete') {
@@ -132,4 +182,23 @@ window.__sim = {
   log,
   torneo: (id) => clon(tabla('tournaments').find((t) => !id || t.id === id) || null),
   torneos: () => clon(tabla('tournaments')),
+  fallos,
+  // Otro dispositivo con el panel nuevo guarda un cambio (sube la revisión).
+  escribirDesdeOtro: (id, cambiar) => {
+    const t = tabla('tournaments').find((x) => !id || x.id === id);
+    const config = clon(t.config);
+    cambiar(config);
+    t.config = config;
+    if (!SIN_REV) t.config_rev += 1;
+    log.push({ op: 'update-otro', tabla: 'tournaments' });
+    return clon(t);
+  },
+  // Un panel antiguo (sin revisión) intenta guardar el torneo: devuelve lo que
+  // respondería la base de datos.
+  escribirComoPanelViejo: async (id, cambiar) => {
+    const t = tabla('tournaments').find((x) => !id || x.id === id);
+    const config = clon(t.config);
+    cambiar(config);
+    return supabase.from('tournaments').update({ config }).eq('id', t.id);
+  },
 };
