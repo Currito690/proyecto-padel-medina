@@ -2617,7 +2617,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // Mismo programador que al generar (src/utils/torneoHorarios.js): solo
     // dentro del torneo, con la duración entera de cada partido, la
     // disponibilidad de las parejas, su descanso y las reservas del club. En
-    // pleno torneo, lo que se recoloca va desde ahora + MARGEN_AUTOMATICO_MIN:
+    // pleno torneo, lo que ya ha empezado o empieza dentro del margen se queda
+    // donde está, y lo que se recoloca va desde ahora + MARGEN_AUTOMATICO_MIN:
     // nunca a una hora que ya ha pasado (si no cabe, "Sin hueco").
     const parrilla = parrillaParaProgramar(tConfig);
     if (parrilla.slots.length === 0) { toast('Configura las fechas del torneo antes de recalcular.', 'error'); return; }
@@ -2632,7 +2633,16 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const nextMain = cloneCatRounds(rounds);
     const nextCons = cloneCatRounds(consRounds);
     const jugado = (m) => !!m.winner || !!m.score;
-    const fija = (m) => (!!m.time && m.timeManual) || jugado(m);
+    // Tampoco se mueve la hora automática de un partido entre dos parejas que
+    // empieza antes del corte (ya pasada, en juego o dentro del margen): con
+    // el corte no podría volver a su hueco, se iría a después de ahora +
+    // MARGEN_AUTOMATICO_MIN empujando a la ronda siguiente y a otros partidos,
+    // y al meter su resultado quedaría guardado a la hora nueva. Así, si nada
+    // ha cambiado, «Recalcular» no mueve nada. Un partido que de verdad no se
+    // jugó se cambia con el lápiz.
+    const empezado = (m) => isRealPair(m.p1) && isRealPair(m.p2)
+      && (parrilla.absDeTiempo(m.time) ?? Infinity) < parrilla.corte;
+    const fija = (m) => (!!m.time && (m.timeManual || empezado(m))) || jugado(m);
     const clearAuto = (obj) => Object.values(obj).forEach(cr =>
       cr.forEach(round => round.forEach(m => {
         if (!fija(m)) { m.time = null; delete m.sinHueco; }
@@ -2648,6 +2658,12 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const numDays = parrilla.dias.length;
     const absDe = (m) => parrilla.absDeTiempo(m?.time);
     const programable = (m) => !m.time && !jugado(m) && isRealPair(m.p1) && isRealPair(m.p2);
+    // El orden (primero quien menos horas en común tiene) se cuenta con la
+    // parrilla entera, sin el corte: si no, cambiaría cada vez que pasa una
+    // hora y «Recalcular» intercambiaría partidos de más adelante sin que
+    // nada hubiera cambiado (el viernes a las 15:50, dos del sábado por la
+    // mañana). Las horas se eligen igual, desde el corte.
+    const parrillaOrden = crearParrilla(tConfig);
 
     const scheduleCatRounds = (catRoundsObj, isCons) => {
       Object.entries(catRoundsObj).forEach(([cat, catRounds]) => {
@@ -2672,7 +2688,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         if (catRounds[0]?.[0]?.isRR) {
           catRounds.flat()
             .filter(programable)
-            .map(m => ({ m, demand: huecosComunes(parrilla, durationMin, m.p1, m.p2) }))
+            .map(m => ({ m, demand: huecosComunes(parrillaOrden, durationMin, m.p1, m.p2) }))
             .sort((a, b) => a.demand - b.demand || a.m.round - b.m.round)
             .forEach(({ m }) => colocar(m, 0));
           return;
@@ -2691,7 +2707,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             ? Math.round((r * (numDays - 1)) / (numRounds - 1))
             : 0;
           catRounds[r]
-            .map((m, mIdx) => ({ m, mIdx, skip: !programable(m), demand: programable(m) ? huecosComunes(parrilla, durationMin, m.p1, m.p2) : Infinity }))
+            .map((m, mIdx) => ({ m, mIdx, skip: !programable(m), demand: programable(m) ? huecosComunes(parrillaOrden, durationMin, m.p1, m.p2) : Infinity }))
             .sort((a, b) => a.demand - b.demand)
             .forEach(({ m, mIdx, skip }) => {
               if (skip) return;
@@ -2732,7 +2748,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const sinHueco = [nextMain, nextCons]
       .flatMap(obj => Object.values(obj).flat(2))
       .filter(m => m.sinHueco && !m.time && isRealPair(m.p1) && isRealPair(m.p2)).length;
-    const corteTxt = avisoCorte(parrilla);
+    // Con el torneo ya empezado, qué se ha quedado quieto y desde cuándo va lo
+    // demás ('' antes del torneo: el aviso de siempre).
+    const primerHueco = parrilla.slots.find(s => s.abs >= parrilla.corte);
+    const corteTxt = !parrilla.slots.some(s => s.abs < parrilla.corte) ? ''
+      : ` Lo que ya ha empezado o empieza en menos de ${MARGEN_AUTOMATICO_MIN} min se queda donde estaba; lo demás ${primerHueco ? `va desde el ${primerHueco.slot}` : 'ya no tiene horas del torneo por delante'}.`;
     if (sinHueco > 0) {
       toast(`Horarios recalculados, pero ${sinHueco} partido${sinHueco === 1 ? '' : 's'} no cabe${sinHueco === 1 ? '' : 'n'} dentro del torneo: queda${sinHueco === 1 ? '' : 'n'} como "Sin hueco" para ponerle${sinHueco === 1 ? '' : 's'} hora a mano.${corteTxt}`, 'error', 10000);
     } else {
