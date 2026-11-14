@@ -11,10 +11,13 @@
 //   · una pareja nunca juega a una hora que marcó como no disponible, ni dos
 //     partidos solapados en categorías distintas, ni sin su descanso;
 //   · solo se programa DENTRO de los días y horas del torneo; si un partido no
-//     cabe, se devuelve null y el panel lo dice (sinHueco).
+//     cabe, se devuelve null y el panel lo dice (sinHueco);
+//   · con un corte (crearParrilla(..., { desdeMs })), nada automático antes de
+//     ese instante: en pleno torneo, nunca en horas que ya han pasado.
 //
 // Formatos (los mismos que guarda la app): slot "dd/mm HH:00", hora de partido
 // "dd/mm HH:00 - Pista N", reglas de no disponibilidad { day, slots: ['dd/mm HH:00'] }.
+// Las horas son de reloj de Madrid (la hora del club).
 
 export const HORAS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
 
@@ -50,8 +53,38 @@ export function parsearTiempo(time) {
 
 export const textoTiempo = (hueco) => `${hueco.slot} - Pista ${hueco.pista}`;
 
+// Minuto absoluto del torneo (el mismo `abs` de la parrilla: nº de día × 1440
+// + minuto del día) del instante `ms`, con el reloj de MADRID, esté donde esté
+// el dispositivo. Redondea al minuto siguiente si sobran segundos. Antes del
+// primer día sale negativo; después del último, mayor que cualquier hueco.
+// null si falta la fecha de inicio o el instante.
+export function minutoDelTorneo(startDate, ms) {
+  const [y0, m0, d0] = String(startDate || '').split('-').map(Number);
+  if (!y0 || !m0 || !d0 || !Number.isFinite(ms)) return null;
+  let p;
+  try {
+    p = {};
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Madrid', hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(new Date(ms)).forEach(({ type, value }) => { p[type] = Number(value); });
+    p.hour %= 24;
+  } catch {
+    // Navegador sin zonas horarias: la hora del dispositivo (la del club).
+    const d = new Date(ms);
+    p = { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds() };
+  }
+  const dias = Math.round((Date.UTC(p.year, p.month - 1, p.day) - Date.UTC(y0, m0 - 1, d0)) / 86400000);
+  return dias * 1440 + p.hour * 60 + p.minute + (p.second > 0 ? 1 : 0);
+}
+
 // Parrilla: los huecos de inicio posibles (horas enteras) de cada día del torneo.
-export function crearParrilla(tConfig) {
+//   desdeMs (opcional): instante (ms) desde el que se puede programar SOLO. Los
+//   huecos que empiezan antes siguen en la parrilla (las horas guardadas, el
+//   editor manual y finalSlots los usan), pero elegirHueco, huecosComunes y la
+//   afinidad no los eligen ni los cuentan: `corte` es su minuto absoluto.
+//   Sin desdeMs, o si es antes del torneo, no se corta nada (como siempre).
+export function crearParrilla(tConfig, { desdeMs } = {}) {
   const dias = diasActivos(tConfig.startDate, tConfig.endDate);
   const idxDe = Object.fromEntries(dias.map((d, i) => [d, i]));
   const finDia = toMin(tConfig.endHour || '22:00');
@@ -63,8 +96,10 @@ export function crearParrilla(tConfig) {
       slots.push({ slot: `${dia} ${HORAS[h]}`, dia, idxDia: idx, hora: HORAS[h], ini: h * 60, abs: idx * 1440 + h * 60 });
     }
   });
+  const minCorte = desdeMs == null ? null : minutoDelTorneo(tConfig.startDate, desdeMs);
+  const corte = Number.isFinite(minCorte) ? minCorte : -Infinity;
   return {
-    dias, idxDe, slots, finDia, inicioDia, abs,
+    dias, idxDe, slots, finDia, inicioDia, abs, corte,
     // Minuto absoluto de una hora de partido guardada (null si no es de un día del torneo).
     absDeTiempo(time) {
       const t = parsearTiempo(time);
@@ -92,10 +127,12 @@ export function disponibleEn(bloqueadas, dia, ini, fin) {
 }
 
 // Nº de huecos de la parrilla en los que pueden las dos parejas (para
-// programar primero a quien menos opciones tiene).
+// programar primero a quien menos opciones tiene). Solo los que quedan desde
+// el corte: en pleno torneo, una hora que ya ha pasado no es una opción.
 export function huecosComunes(parrilla, dur, ...parejas) {
   const sets = parejas.filter(esParejaReal).map(horasBloqueadas);
-  return parrilla.slots.filter((s) => s.ini + dur <= parrilla.finDia && sets.every((b) => disponibleEn(b, s.dia, s.ini, s.ini + dur))).length;
+  const corte = parrilla.corte ?? -Infinity;
+  return parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= parrilla.finDia && sets.every((b) => disponibleEn(b, s.dia, s.ini, s.ini + dur))).length;
 }
 
 // Bloqueos y reservas del club → { 'dd/mm': { pista: [[ini, fin]] } } con sus
@@ -206,7 +243,8 @@ export function agendaDeCuadros(parrilla, externos, cuadros, durDe, omitir = () 
 
 // El primer hueco válido: dentro del torneo, en orden cronológico y en la
 // pista de número más bajo. Devuelve { slot, dia, hora, pista, abs } o null.
-//   desdeAbs:  no antes de este minuto absoluto (orden entre rondas)
+//   desdeAbs:  no antes de este minuto absoluto (orden entre rondas); nunca
+//              antes del corte de la parrilla (parrilla.corte)
 //   dur:       duración del partido; descanso: mínimo entre partidos de una pareja
 //   pistas:    nº de pista permitidos, en orden de preferencia
 //   parejas:   [p1, p2] (las no reales no restringen nada)
@@ -214,8 +252,9 @@ export function agendaDeCuadros(parrilla, externos, cuadros, durDe, omitir = () 
 export function elegirHueco(agenda, parrilla, { desdeAbs = 0, dur, descanso = 0, pistas, parejas = [], courtStartHours = {} }) {
   const reales = parejas.filter(esParejaReal);
   const bloq = reales.map((p) => horasBloqueadas(p));
+  const desde = Math.max(desdeAbs, parrilla.corte ?? -Infinity);
   for (const s of parrilla.slots) {
-    if (s.abs < desdeAbs) continue;
+    if (s.abs < desde) continue;
     const fin = s.ini + dur;
     if (fin > parrilla.finDia) continue;
     if (bloq.some((b) => !disponibleEn(b, s.dia, s.ini, fin))) continue;
@@ -242,9 +281,10 @@ export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
   const reales = parejas.filter(esParejaReal);
   const bloq = reales.map((p) => horasBloqueadas(p));
   const cand = candidatas.filter(esParejaReal).map((c) => [c, horasBloqueadas(c)]);
+  const desde = Math.max(desdeAbs, parrilla.corte ?? -Infinity); // como elegirHueco
   let mejor = null;
   for (const s of parrilla.slots) {
-    if (s.abs < desdeAbs) continue;
+    if (s.abs < desde) continue;
     if (s.abs >= hastaAbs) break;
     const fin = s.ini + dur;
     if (fin > parrilla.finDia) continue;
@@ -305,8 +345,10 @@ export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math
   const N = hojas.length;
   if (!movibles.length || N < 2) return { antes: 0, despues: 0 };
 
-  // Disponibilidad de cada pareja: huecos de la parrilla en los que puede.
-  const huecos = parrilla.slots.filter((s) => s.ini + dur <= parrilla.finDia);
+  // Disponibilidad de cada pareja: huecos de la parrilla en los que puede
+  // (desde el corte: en pleno torneo, las horas pasadas ya no cuentan).
+  const corte = parrilla.corte ?? -Infinity;
+  const huecos = parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= parrilla.finDia);
   const idx = new Map();
   const mascaras = [];
   hojas.flat().forEach((p) => {

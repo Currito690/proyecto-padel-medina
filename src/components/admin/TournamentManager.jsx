@@ -131,6 +131,22 @@ const vinculosDeParejas = (cfg) => {
   });
   return out;
 };
+// Lo que se programa SOLO (generar el cuadro, «Recalcular horarios», el
+// partido siguiente al meter un resultado y la consolación) nunca empieza
+// antes de ahora + este margen, con la hora del servidor. Antes, en pleno
+// torneo, podía caer en horas que ya habían pasado. Las horas puestas a mano
+// y los partidos jugados no se tocan, y lo que ya no cabe queda "Sin hueco".
+// Antes del torneo no cambia nada. El editor de hora a mano no tiene corte.
+const MARGEN_AUTOMATICO_MIN = 30;
+const parrillaParaProgramar = (cfg) => crearParrilla(cfg, { desdeMs: serverNowMs() + MARGEN_AUTOMATICO_MIN * 60000 });
+// Frase para los avisos cuando el corte deja fuera horas del torneo ('' si no).
+const avisoCorte = (parrilla) => {
+  if (!parrilla.slots.some(s => s.abs < parrilla.corte)) return '';
+  const primero = parrilla.slots.find(s => s.abs >= parrilla.corte);
+  return primero
+    ? ` Nada automático antes del ${primero.slot}: las horas que ya han pasado, o que empiezan en menos de ${MARGEN_AUTOMATICO_MIN} min, no se usan.`
+    : ' Ya no quedan horas del torneo por delante para programar nada automático.';
+};
 // Jugadores de una pareja a partir de su nombre ("Ivan y Diego Sanchez").
 const jugadoresDe = (p) => String(p?.name || '').split(/\s+y\s+/i).map(s => s.trim()).filter(Boolean);
 // Añade/quita el vínculo entre dos parejas en la lista de jugadores compartidos.
@@ -1840,8 +1856,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     //    src/utils/torneoHorarios.js: un partido ocupa su duración entera en
     //    la pista, una pareja nunca juega a una hora que marcó como no
     //    disponible ni sin su descanso, y lo que no cabe se marca "sin hueco"
-    //    (antes se mandaba a la semana siguiente sin avisar).
-    const parrilla = crearParrilla(tConfig);
+    //    (antes se mandaba a la semana siguiente sin avisar). Con el torneo
+    //    ya empezado, nada antes de ahora + MARGEN_AUTOMATICO_MIN.
+    const parrilla = parrillaParaProgramar(tConfig);
     const activeDateList = parrilla.dias;
     const globalSlots = parrilla.slots.map(s => s.slot);
     if (globalSlots.length === 0) {
@@ -2406,7 +2423,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     if (sinHueco.length > 0) {
       const lista = sinHueco.slice(0, 6).map(({ cat, ronda, match }) => `· ${cat} (${ronda}): ${match.p1?.name || '?'} vs ${match.p2?.name || '?'}`);
       const n = sinHueco.length;
-      toast(`⚠️ ${n} partido${n === 1 ? '' : 's'} no cabe${n === 1 ? '' : 'n'} dentro del torneo (pistas llenas o parejas sin horas en común). Queda${n === 1 ? '' : 'n'} como "Sin hueco": ponle${n === 1 ? '' : 's'} hora a mano o cambia la disponibilidad.\n${lista.join('\n')}${n > 6 ? '\n…' : ''}`, 'error', 14000);
+      toast(`⚠️ ${n} partido${n === 1 ? '' : 's'} no cabe${n === 1 ? '' : 'n'} dentro del torneo (pistas llenas o parejas sin horas en común). Queda${n === 1 ? '' : 'n'} como "Sin hueco": ponle${n === 1 ? '' : 's'} hora a mano o cambia la disponibilidad.${avisoCorte(parrilla)}\n${lista.join('\n')}${n > 6 ? '\n…' : ''}`, 'error', 14000);
     }
     setRounds(newAllRounds);
     // Si estamos regenerando solo algunas categorías, conservamos las
@@ -2599,8 +2616,10 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   const recomputeAllAutoTimes = () => {
     // Mismo programador que al generar (src/utils/torneoHorarios.js): solo
     // dentro del torneo, con la duración entera de cada partido, la
-    // disponibilidad de las parejas, su descanso y las reservas del club.
-    const parrilla = crearParrilla(tConfig);
+    // disponibilidad de las parejas, su descanso y las reservas del club. En
+    // pleno torneo, lo que se recoloca va desde ahora + MARGEN_AUTOMATICO_MIN:
+    // nunca a una hora que ya ha pasado (si no cabe, "Sin hueco").
+    const parrilla = parrillaParaProgramar(tConfig);
     if (parrilla.slots.length === 0) { toast('Configura las fechas del torneo antes de recalcular.', 'error'); return; }
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
     const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
@@ -2713,10 +2732,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     const sinHueco = [nextMain, nextCons]
       .flatMap(obj => Object.values(obj).flat(2))
       .filter(m => m.sinHueco && !m.time && isRealPair(m.p1) && isRealPair(m.p2)).length;
+    const corteTxt = avisoCorte(parrilla);
     if (sinHueco > 0) {
-      toast(`Horarios recalculados, pero ${sinHueco} partido${sinHueco === 1 ? '' : 's'} no cabe${sinHueco === 1 ? '' : 'n'} dentro del torneo: queda${sinHueco === 1 ? '' : 'n'} como "Sin hueco" para ponerle${sinHueco === 1 ? '' : 's'} hora a mano.`, 'error', 10000);
+      toast(`Horarios recalculados, pero ${sinHueco} partido${sinHueco === 1 ? '' : 's'} no cabe${sinHueco === 1 ? '' : 'n'} dentro del torneo: queda${sinHueco === 1 ? '' : 'n'} como "Sin hueco" para ponerle${sinHueco === 1 ? '' : 's'} hora a mano.${corteTxt}`, 'error', 10000);
     } else {
-      toast('✅ Horarios recalculados: disponibilidad de las parejas, duración de los partidos, descansos, orden entre rondas y reservas del club. Las horas puestas a mano y los partidos ya jugados no se han tocado.', 'success');
+      toast(`✅ Horarios recalculados: disponibilidad de las parejas, duración de los partidos, descansos, orden entre rondas y reservas del club. Las horas puestas a mano y los partidos ya jugados no se han tocado.${corteTxt}`, 'success', corteTxt ? 9000 : undefined);
     }
   };
 
@@ -2806,7 +2826,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // "Recalcular horarios": después de sus predecesores + duración + descanso,
   // nunca antes que el último partido de la ronda anterior, solo en pistas
   // permitidas para la categoría, abiertas a esa hora y libres (contando las
-  // reservas normales del club). Las horas puestas a mano se respetan.
+  // reservas normales del club). Las horas puestas a mano se respetan. Una
+  // hora nueva nunca es antes de ahora + MARGEN_AUTOMATICO_MIN.
   const autoScheduleNextMatch = (nextRounds, match, cat, isCons) => {
     const nextRoundIdx = match.round + 1;
     if (nextRoundIdx >= nextRounds.length) return;
@@ -2817,8 +2838,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       : Math.floor(match.matchIndex / 2);
     const nextMatch = nextRounds[nextRoundIdx][nextMatchIdx];
     if (!nextMatch || !isRealPair(nextMatch.p1) || !isRealPair(nextMatch.p2)) return;
+    // Ya jugado (con las mismas parejas: si hubiera cambiado una,
+    // advanceWinnerMut le habría borrado el resultado): su hora no se toca.
+    if (nextMatch.winner || nextMatch.score) return;
 
-    const parrilla = crearParrilla(tConfig);
+    const parrilla = parrillaParaProgramar(tConfig);
     const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
     const durationMin = durDe(cat);
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
@@ -2900,7 +2924,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     } else {
       nextMatch.time = null;
       nextMatch.sinHueco = true;
-      toast(`No hay hueco dentro del torneo para ${nextMatch.p1.name} vs ${nextMatch.p2.name} (${cat}): ponle hora a mano o cambia su disponibilidad.`, 'error', 9000);
+      toast(`No hay hueco dentro del torneo para ${nextMatch.p1.name} vs ${nextMatch.p2.name} (${cat}): ponle hora a mano o cambia su disponibilidad.${avisoCorte(parrilla)}`, 'error', 9000);
     }
   };
 
@@ -3597,7 +3621,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     // programado en el resto de cuadros (principal y consolación de todas las
     // categorías, salvo la consolación de esta, que se regenera), más los
     // bloqueos y reservas del club. Pistas de CONSOLACIÓN (getAllowedCourts).
-    const parrilla = crearParrilla(tConfig);
+    // Nada antes de ahora + MARGEN_AUTOMATICO_MIN (en pleno torneo).
+    const parrilla = parrillaParaProgramar(tConfig);
     const durDe = (c) => parseInt(tConfig.matchDurationByCategory?.[c], 10) || 60;
     const durationMin = durDe(cat);
     const restMin = parseInt(tConfig.restMinutesBetweenMatches ?? 30, 10) || 0;
