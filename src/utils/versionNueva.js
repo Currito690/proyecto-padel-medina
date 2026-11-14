@@ -5,10 +5,13 @@
 // código viejo hasta que se recarga, y el 13/11 una así pisó el torneo. Aquí
 // se compara el script principal de esta página (lleva un hash en el nombre:
 // /assets/index-XXXX.js) con el del index.html que sirve ahora el servidor.
-// Si son distintos hay versión nueva, y la pestaña se recarga sola cuando es
-// seguro: al volver a ella, o tras un rato sin tocarla y sin estar
-// escribiendo, y siempre después de terminar lo que se esté guardando
-// (registrarTrabajoPendiente).
+//
+// Si hay versión nueva, la pestaña se recarga sola, pero solo cuando es
+// seguro: lleva un rato en segundo plano (nadie la está usando), no hay
+// ningún campo con el cursor y todo lo registrado con registrarTrabajoPendiente
+// (el guardado del torneo) dice que está guardado y que no hay nada a medias.
+// Si algo no está guardado, NO se recarga: se vuelve a intentar más tarde.
+// Con la pestaña a la vista nunca se recarga sola: sale un aviso con el botón.
 //
 // Solo en la web publicada: en local (vite) no hay /assets/index-*.js, y en la
 // app de las tiendas el index.html va dentro de la app (no cambia sin
@@ -22,8 +25,10 @@ import { Capacitor } from '@capacitor/core';
 
 const trabajos = new Set();
 
-// Algo que hay que terminar antes de recargar (p. ej. el guardado del
-// torneo). fn devuelve una promesa. Devuelve la función que lo quita.
+// Algo que hay que terminar antes de recargar. fn({ manual }) devuelve una
+// promesa con true si todo está guardado y se puede recargar, o false si no
+// (cambios sin guardar, algo a medias). manual = el admin ha pulsado el botón.
+// Devuelve la función que lo quita.
 export const registrarTrabajoPendiente = (fn) => {
   trabajos.add(fn);
   return () => { trabajos.delete(fn); };
@@ -68,28 +73,40 @@ const yaSeIntento = (objetivo) => {
   }
 };
 
-let recargando = false;
-// Termina lo pendiente (como mucho 15 s) y recarga.
-export const recargarCuandoSeaSeguro = async (objetivo) => {
-  if (recargando) return;
-  recargando = true;
-  const pendientes = Promise.allSettled([...trabajos].map((fn) => Promise.resolve().then(fn)));
-  await Promise.race([pendientes, new Promise((r) => setTimeout(r, 15000))]);
-  try { sessionStorage.setItem(CLAVE, JSON.stringify({ objetivo, t: Date.now() })); } catch { /* sin sessionStorage */ }
-  window.location.reload();
-};
-
 const escribiendo = () => {
   const el = document.activeElement;
   if (!el) return false;
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
 };
 
-// Vigila si hay versión nueva. Devuelve { nueva, recargar }.
+let recargando = false;
+// Termina lo pendiente y recarga, solo si todo dice que está guardado (como
+// mucho espera 60 s; si no, no recarga). Devuelve true si recarga.
+export const recargarCuandoSeaSeguro = async (objetivo, { manual = false } = {}) => {
+  if (recargando) return false;
+  recargando = true;
+  try {
+    const todos = Promise.all([...trabajos].map((fn) => Promise.resolve()
+      .then(() => fn({ manual }))
+      .catch(() => false)));
+    const plazo = new Promise((r) => { setTimeout(() => r(null), 60000); });
+    const res = await Promise.race([todos, plazo]);
+    if (!res || res.some((ok) => ok === false)) return false;
+    if (!manual && (document.visibilityState !== 'hidden' || escribiendo())) return false;
+    try { sessionStorage.setItem(CLAVE, JSON.stringify({ objetivo, t: Date.now() })); } catch { /* sin sessionStorage */ }
+    window.location.reload();
+    return true;
+  } finally {
+    recargando = false;
+  }
+};
+
+// Vigila si hay versión nueva. Devuelve { nueva, recargar, noSePudo }.
 //   cadaMs: cada cuánto se mira (además de al volver a la pestaña).
-//   inactivoMs: tiempo sin tocar la pantalla tras el que se recarga sola.
-export const useVersionNueva = ({ cadaMs = 5 * 60 * 1000, inactivoMs = 3 * 60 * 1000 } = {}) => {
+//   ocultaMs: tiempo en segundo plano tras el que se recarga sola.
+export const useVersionNueva = ({ cadaMs = 5 * 60 * 1000, ocultaMs = 60 * 1000 } = {}) => {
   const [nueva, setNueva] = useState(null); // ruta del script nuevo, o null
+  const [noSePudo, setNoSePudo] = useState(false);
   const objetivoRef = useRef(null);
   useEffect(() => {
     if (!puedeVigilar()) return undefined;
@@ -97,7 +114,7 @@ export const useVersionNueva = ({ cadaMs = 5 * 60 * 1000, inactivoMs = 3 * 60 * 
     if (!actual) return undefined;
     let vivo = true;
     let ultimaComprobacion = 0;
-    let ultimaActividad = Date.now();
+    let ocultaDesde = document.visibilityState === 'hidden' ? Date.now() : null;
     const comprobar = async (minimoMs = 30000) => {
       if (objetivoRef.current || Date.now() - ultimaComprobacion < minimoMs) return;
       ultimaComprobacion = Date.now();
@@ -110,34 +127,37 @@ export const useVersionNueva = ({ cadaMs = 5 * 60 * 1000, inactivoMs = 3 * 60 * 
         // Sin conexión: ya se mirará.
       }
     };
-    const intentarRecarga = () => {
-      const objetivo = objetivoRef.current;
-      if (objetivo && !yaSeIntento(objetivo)) recargarCuandoSeaSeguro(objetivo);
-    };
     const alCambiarVisibilidad = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (objetivoRef.current) intentarRecarga();
-      else comprobar();
+      if (document.visibilityState === 'hidden') {
+        ocultaDesde = Date.now();
+        return;
+      }
+      ocultaDesde = null;
+      comprobar();
     };
     const alEnfocar = () => { comprobar(); };
-    const actividad = () => { ultimaActividad = Date.now(); };
     const reloj = setInterval(() => {
-      if (!objetivoRef.current) { comprobar(cadaMs); return; }
-      if (document.visibilityState === 'visible' && Date.now() - ultimaActividad > inactivoMs && !escribiendo()) intentarRecarga();
+      const objetivo = objetivoRef.current;
+      if (!objetivo) { comprobar(cadaMs); return; }
+      if (document.visibilityState === 'hidden' && ocultaDesde && Date.now() - ocultaDesde >= ocultaMs && !yaSeIntento(objetivo)) {
+        recargarCuandoSeaSeguro(objetivo);
+      }
     }, 30000);
     const primera = setTimeout(() => comprobar(0), 20000);
-    const eventos = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
     document.addEventListener('visibilitychange', alCambiarVisibilidad);
     window.addEventListener('focus', alEnfocar);
-    eventos.forEach((ev) => window.addEventListener(ev, actividad, { passive: true }));
     return () => {
       vivo = false;
       clearInterval(reloj);
       clearTimeout(primera);
       document.removeEventListener('visibilitychange', alCambiarVisibilidad);
       window.removeEventListener('focus', alEnfocar);
-      eventos.forEach((ev) => window.removeEventListener(ev, actividad));
     };
-  }, [cadaMs, inactivoMs]);
-  return { nueva: !!nueva, recargar: () => recargarCuandoSeaSeguro(nueva) };
+  }, [cadaMs, ocultaMs]);
+  const recargar = async () => {
+    setNoSePudo(false);
+    const ok = await recargarCuandoSeaSeguro(nueva, { manual: true });
+    if (!ok) setNoSePudo(true);
+  };
+  return { nueva: !!nueva, recargar, noSePudo };
 };

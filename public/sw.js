@@ -1,8 +1,10 @@
 // Version 2026-11-14 — sin cambios de funcionamiento: cambiar la versión hace
 // que TODAS las pestañas abiertas con una web vieja (p. ej. un panel abierto
-// desde antes del 13/11) se recarguen solas al volver a ellas. Desde esta
-// versión el panel del admin además vigila los despliegues por su cuenta
-// (src/utils/versionNueva.js), sin tener que tocar este archivo.
+// desde antes del 13/11) se recarguen solas en cuanto el navegador detecta
+// este archivo nuevo (al volver a una pestaña del sitio o al abrir otra);
+// main.jsx recarga en el acto. Desde esta versión el panel del admin además
+// vigila los despliegues por su cuenta y con cuidado (src/utils/versionNueva.js):
+// no hace falta volver a tocar este archivo para cada despliegue.
 // (2026-10-14: tocar un aviso con la app abierta lleva a su pantalla.)
 // (2026-10-02b: modo offline, guarda la app para poder abrirla sin internet.)
 // Las apps abiertas se recargan solas al detectar esta versión (lo controla main.jsx).

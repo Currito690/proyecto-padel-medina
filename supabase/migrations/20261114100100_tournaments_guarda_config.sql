@@ -9,14 +9,32 @@
 --   exactamente la revisión siguiente a la que hay. El panel nuevo lo hace
 --   siempre; el panel antiguo (pestañas sin recargar, la app de las tiendas
 --   hasta que se actualice) no manda revisión, así que no puede cambiar el
---   config: le sale un error y el torneo queda intacto.
+--   config y el torneo queda intacto. OJO: el panel de las apps de las
+--   tiendas (1.1.4 y 1.1.5) no enseña ese error (su autoguardado solo lo
+--   escribe en la consola): lo que se cambie allí no se guarda y no avisa.
+--   Hasta que salga una versión nueva de la app, el torneo se lleva desde
+--   padelmedina.com en el navegador.
 --   Los cambios que no tocan el config (nombre, estado) siguen igual.
 -- Las escrituras del servidor (SQL a mano desde psql, funciones con la clave
 -- de servicio) no se frenan: si cambian el config sin subir la revisión, se
 -- sube aquí, para que los paneles abiertos se enteren del cambio.
 --
--- Deshacer al momento si diera problemas:
---   drop trigger if exists trg_tournaments_guarda_config on public.tournaments;
+-- Marcha atrás, SIEMPRE en este orden:
+--   1) drop trigger if exists trg_tournaments_guarda_config on public.tournaments;
+--      (seguro: la web nueva guarda igual con y sin la regla)
+--   2) solo después, si hiciera falta, volver a subir una web anterior.
+--   Nunca una web anterior con la regla puesta: ninguna guardaría. Si algún
+--   día se quita la columna config_rev, antes hay que quitar esta regla.
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'tournaments' and column_name = 'config_rev'
+  ) then
+    raise exception 'Falta tournaments.config_rev: aplica antes 20261114100000_tournaments_config_rev.sql';
+  end if;
+end $$;
 
 create or replace function public.tournaments_guarda_config()
 returns trigger

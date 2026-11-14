@@ -17,3 +17,7 @@ alter table public.tournaments
 
 comment on column public.tournaments.config_rev is
   'Revisión del config. El panel la sube en uno en cada guardado (compare-and-swap); el disparador trg_tournaments_guarda_config rechaza los guardados de paneles que no la traen.';
+
+-- La API (PostgREST) tiene que conocer la columna: si no, los guardados del
+-- panel nuevo, que la mandan, fallarían con PGRST204. Se puede repetir.
+notify pgrst, 'reload schema';

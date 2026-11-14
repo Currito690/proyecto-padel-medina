@@ -600,6 +600,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const r = revisar(tras);
       if (r === 'hecho') return { error: null };
       if (r === 'conflicto') return enConflicto();
+      // revisar() vacía los intentos al reconocer uno propio: este también
+      // es nuestro (si su respuesta se pierde, no debe parecer de otro).
+      if (recordar) intentadosRef.current.add(nuevo);
       if (vuelta === 1) error = { message: 'No se ha podido guardar: el torneo ha cambiado mientras se guardaba.' };
     }
     if (error && !recordar) {
@@ -834,12 +837,30 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     };
   }, []);
   // Si la página se va a recargar sola por una versión nueva de la web
-  // (AvisoVersionNueva), antes se termina de guardar lo pendiente.
+  // (AvisoVersionNueva), antes se termina de guardar lo pendiente, también un
+  // autoguardado que falló. Devuelve true solo si todo está guardado y no hay
+  // nada a medias en pantalla (si no, no se recarga y se prueba más tarde).
   const flushTournamentSaveRef = useRef(flushTournamentSave);
   flushTournamentSaveRef.current = flushTournamentSave;
-  useEffect(() => registrarTrabajoPendiente(async () => {
-    await flushTournamentSaveRef.current();
-    await colaEscrituraRef.current;
+  const ocupadoRef = useRef(false);
+  ocupadoRef.current = !!(editingTime || editingParticipant || editingRegAvail || savingRegAvail || editingScoreId
+    || recipientPickerOpen || recipientPickerSending || subiendoCartel || matchesListPdfLoading
+    || showFormatPicker || showSeedsPanel || showCourtsEditor || exportandoRef.current);
+  useEffect(() => registrarTrabajoPendiente(async ({ manual = false } = {}) => {
+    // Con la barra roja hay cambios que no se han podido guardar: que decida el admin.
+    if (conflictoRemotoRef.current) return false;
+    if (!manual && ocupadoRef.current) return false;
+    if (guardadoFallidoRef.current && !pendingSaveRef.current && ultimaFotoRef.current) {
+      pendingSaveRef.current = ultimaFotoRef.current;
+    }
+    // Hasta que no quede nada por guardar (lo que se toque mientras tanto también).
+    for (let i = 0; i < 5; i += 1) {
+      await flushTournamentSaveRef.current();
+      await colaEscrituraRef.current;
+      if (!pendingSaveRef.current) break;
+    }
+    return !pendingSaveRef.current && !guardadoFallidoRef.current && !conflictoRemotoRef.current
+      && (manual || !ocupadoRef.current);
   }), []);
 
   const courtIdByNumRef = useRef({}); // nº de pista del torneo → UUID de la pista del club
@@ -855,6 +876,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
   // Al borrar el torneo se borran solos (ON DELETE CASCADE).
   const syncingBlocksRef = useRef({ running: false, again: false });
   const syncTournamentBlocks = async () => {
+    // Con la barra roja (esta pantalla no guarda), lo que hay en pantalla no
+    // es el torneo guardado: no se tocan los bloqueos de pista con eso.
+    if (conflictoRemotoRef.current) return;
     const st = syncingBlocksRef.current;
     if (st.running) { st.again = true; return; }
     st.running = true;

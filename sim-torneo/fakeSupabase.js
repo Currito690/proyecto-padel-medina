@@ -80,6 +80,17 @@ class Consulta {
   in(c, lista) { this.filtros.push((r) => (lista || []).includes(r[c])); return this; }
   is(c, v) { this.filtros.push((r) => r[c] === v); return this; }
   match(obj) { Object.entries(obj || {}).forEach(([c, v]) => this.eq(c, v)); return this; }
+  // Filtro "o" de PostgREST, p. ej. 'date.lt.2026-11-13,date.gt.2026-11-15'
+  // (solo comparaciones simples, que es lo que usa el panel).
+  or(expr) {
+    const ops = { eq: (a, b) => a === b, neq: (a, b) => a !== b, lt: (a, b) => a < b, lte: (a, b) => a <= b, gt: (a, b) => a > b, gte: (a, b) => a >= b };
+    const partes = String(expr || '').split(',').map((p) => {
+      const [c, op, ...resto] = p.split('.');
+      return { c, f: ops[op], v: resto.join('.') };
+    }).filter((p) => p.f);
+    this.filtros.push((r) => partes.some(({ c, f, v }) => f(String(r[c] ?? ''), v)));
+    return this;
+  }
   order(c, { ascending = true } = {}) { this.ordenes.push([c, ascending ? 1 : -1]); return this; }
   limit(n) { this.limite = n; return this; }
   range(a, b) { this.limite = b - a + 1; return this; }
