@@ -113,10 +113,18 @@ serve(async (req) => {
       }
       chargeAmount = Math.round(fee * 2 * 100) / 100; // por pareja
       expectedCents = Math.round(chargeAmount * 100);
-    } else if (!isSharedPayment) {
+    } else {
+      // El pago compartido está DESACTIVADO, también aquí y no solo en la
+      // pantalla (SPLIT_PAYMENT_ENABLED en PaymentGateway): ese camino no lleva
+      // hold, firmaba el importe que manda el navegador y redsys-notify insertaba
+      // la reserva con la service key, sin pasar por el trigger de solapes ni por
+      // la hora de apertura. Si se reactiva, que use el mismo hold
+      // 'pendiente_pago' que el pago normal, con el importe calculado aquí.
+      if (isSharedPayment) throw new Error('El pago compartido no está disponible');
       // Reserva normal: NO nos fiamos del importe que manda el navegador (si no,
       // cualquiera podría pagar 1 céntimo y quedar como pagado). Cargamos el hold
       // 'pendiente_pago' con la service key y calculamos el precio desde la pista.
+      // Sin hold no se firma nada: todos los pagos de pista lo llevan desde julio.
       if (typeof bookingId !== 'string' || !UUID_RE.test(bookingId)) {
         throw new Error('Reserva no válida');
       }

@@ -23,36 +23,54 @@
 -- NO se solapan (igual que rebuildAvailableTimes en src/utils/schedule.js).
 --
 -- EXENTOS (no se comprueba nada): los admin (public.is_admin(); reservan
--- encima de bloqueos a propósito), el service_role (redsys-notify confirma
--- pagos ya cobrados: nunca rechazar) y las sesiones SQL sin ningún JWT (psql,
--- cron).
+-- encima de bloqueos y mueven reservas a propósito), el service_role
+-- (redsys-notify confirma pagos ya cobrados: nunca rechazar) y las sesiones
+-- SQL sin ningún JWT (psql, cron).
 --
--- CUÁNDO: en INSERT y en UPDATE de court_id, date, time_slot o status. Dejar
--- una reserva en 'cancelled' (o cualquier estado que no ocupa pista) no se
--- comprueba nunca, así que cancelar sigue funcionando siempre.
+-- CUÁNDO: en INSERT y en UPDATE de id, court_id, date, time_slot o status.
+-- Dejar una reserva en 'cancelled' (o cualquier estado que no ocupa pista)
+-- sin moverla no se comprueba nunca, así que cancelar sigue funcionando
+-- siempre.
+--
+-- MOVER UNA RESERVA: un jugador no puede cambiarle la pista, el día, la hora
+-- ni el id a una reserva, ni siquiera dejándola cancelada. La app nunca lo
+-- hace (los jugadores solo cancelan, eliminar_mi_cuenta solo toca status y
+-- user_id, y «Mover reserva» es del admin). Si pudiera, movería un hold que
+-- redsys-create ya ha firmado (o le pasaría su id a otra reserva cancelada
+-- que esté encima de un bloqueo) y redsys-notify, que lo confirma por id con
+-- la service key, lo dejaría confirmado allí al cobrar. Tampoco puede borrar
+-- el hold y crear otro con el mismo id: bookings no tiene política de DELETE
+-- (ver ANTES DE APLICARLA).
 --
 -- ERROR: SQLSTATE 'PM409' con un mensaje en español listo para el jugador, con
 -- la pista, el día y la hora (las apps de las tiendas que aún no conocen el
 -- código lo enseñan tal cual). No dice de quién es la otra reserva, solo si
 -- es del propio jugador (su pago sin terminar o su reserva). El porqué va en
--- DETAIL y HINT = 'PISTA_NO_DISPONIBLE' (o 'FRANJA_NO_VALIDA' si la franja no
--- se entiende). PostgREST lo devuelve con HTTP 400 y code 'PM409'; la app lo
--- reconoce en src/utils/huecoOcupado.js.
+-- DETAIL y HINT = 'PISTA_NO_DISPONIBLE' (también al intentar mover una
+-- reserva) o 'FRANJA_NO_VALIDA' (franja mal escrita). PostgREST lo devuelve
+-- con HTTP 400 y code 'PM409'; la app lo reconoce en src/utils/huecoOcupado.js.
 --
 -- LECTURA DE LA FRANJA "HH:MM - HH:MM" (franja_minutos): minutos desde las
 -- 00:00 y tramo [inicio, fin), como toMin/parseSlot de src/utils/schedule.js.
---   · Se toleran espacios de más y horas de una cifra ("9:00 - 10:30").
---   · Fin "00:00" o "24:00" = medianoche (1440). schedule.js escribe la
---     medianoche como "24:00" (fmtMin(1440)) y las pantallas del admin no
---     dejan crear franjas que acaben a las 00:00 ni que crucen la medianoche
---     (los partidos del torneo acaban como tarde a las 23:59), así que un fin
---     "00:00" solo puede venir de una fila hecha a mano: se entiende como
---     "hasta medianoche", no como un tramo vacío.
+--   · La reserva NUEVA de un jugador tiene que venir escrita como la escribe
+--     la app: "HH:MM - HH:MM" con " - " en medio y sin acabar a las 00:00 (la
+--     medianoche es "24:00", fmtMin(1440)); la hora de una cifra
+--     ("9:00 - 10:30") se admite porque la app la lee igual. La app parte la
+--     franja por " - " y lee "00:00" como el minuto 0: escrita de otra forma
+--     ("20:30-22:00", "16:00 -23:30", con tabuladores, "16:00 - 00:00"...) no
+--     ocuparía nada en la pantalla de reservas y aquí sí les taparía la hora a
+--     los demás. Se rechaza (la app nunca ofrece una franja así).
+--   · Los bloqueos y las reservas YA guardados se leen con tolerancia:
+--     espacios de más, horas de una cifra y fin "00:00" o "24:00" =
+--     medianoche (1440). Las pantallas del admin no dejan crear franjas que
+--     acaben a las 00:00 ni que crucen la medianoche (los partidos del torneo
+--     acaban como tarde a las 23:59), así que un fin "00:00" solo puede venir
+--     de una fila hecha a mano: se entiende como "hasta medianoche", no como
+--     un tramo vacío.
 --   · Mal formada (otro formato, horas o minutos imposibles, fin <= inicio o
---     cruzando la medianoche): si es la reserva NUEVA de un jugador se rechaza
---     (la app nunca ofrece una franja así); si es un bloqueo u otra reserva ya
---     guardados, se ignora, igual que en la pantalla de reservas (allí no
---     ocupa ningún hueco).
+--     cruzando la medianoche): si es la reserva NUEVA de un jugador se
+--     rechaza; si es un bloqueo u otra reserva ya guardados, se ignora, igual
+--     que en la pantalla de reservas (allí no ocupa ningún hueco).
 --
 -- ORDEN: los BEFORE triggers saltan por orden alfabético de nombre. El
 -- prefijo zz_ hace que este vaya el ÚLTIMO, después de
@@ -72,6 +90,26 @@
 -- idx_blocked_slots_court_date y, en bookings, idx_bookings_court_date_status
 -- (20260428200000_perf_indexes.sql) o uq_bookings_slot_activa. No hace falta
 -- ninguno nuevo.
+--
+-- ANTES DE APLICARLA (solo lee). 1) Franjas de hoy en adelante que la app y
+-- la base de datos no leerían igual: una fila aquí es una hora que la app
+-- ofrece o pinta libre y la base de datos rechazaría (o al revés). Tiene que
+-- salir vacía; si no, se corrige a mano antes.
+--   SELECT 'custom_slots' AS tabla, date, time_slot FROM public.custom_slots
+--    WHERE date >= current_date
+--      AND (time_slot !~ '^[0-9]{1,2}:[0-9]{2} - [0-9]{1,2}:[0-9]{2}$' OR time_slot ~ ' - 0?0:00$')
+--   UNION ALL
+--   SELECT 'blocked_slots', date, time_slot FROM public.blocked_slots
+--    WHERE date >= current_date
+--      AND (time_slot !~ '^[0-9]{1,2}:[0-9]{2} - [0-9]{1,2}:[0-9]{2}$' OR time_slot ~ ' - 0?0:00$')
+--   UNION ALL
+--   SELECT 'bookings', date, time_slot FROM public.bookings
+--    WHERE date >= current_date AND status IN ('confirmed', 'pendiente_pago')
+--      AND (time_slot !~ '^[0-9]{1,2}:[0-9]{2} - [0-9]{1,2}:[0-9]{2}$' OR time_slot ~ ' - 0?0:00$')
+--   ORDER BY 1, 2, 3;
+-- 2) Que bookings siga sin política de DELETE (ver MOVER UNA RESERVA): en
+--   SELECT polname, polcmd FROM pg_policy WHERE polrelid = 'public.bookings'::regclass;
+--   no puede salir ninguna con polcmd 'd' o '*' que valga para los jugadores.
 --
 -- PARA DESHACERLO (deja la base de datos como estaba):
 --   DROP TRIGGER IF EXISTS trg_zz_bookings_rechaza_solapes ON public.bookings;
@@ -110,6 +148,7 @@ CREATE OR REPLACE FUNCTION public.bookings_rechaza_solapes()
  SET search_path TO 'public'
 AS $function$
 DECLARE
+  v_mueve boolean := false;
   v_rango int4range;
   v_vieja uuid;
   v_otra  text;
@@ -119,20 +158,21 @@ DECLARE
   v_pista text;
   v_donde text;
 BEGIN
-  -- Solo ocupan pista las reservas vivas. Cancelar no se comprueba nunca.
-  IF NEW.status IS NULL OR NEW.status NOT IN ('confirmed', 'pendiente_pago') THEN
-    RETURN NEW;
-  END IF;
-
-  -- En un UPDATE, solo si la reserva se mueve o cambia de estado.
   IF TG_OP = 'UPDATE' THEN
-    IF NEW.court_id IS NOT DISTINCT FROM OLD.court_id
-       AND NEW.date IS NOT DISTINCT FROM OLD.date
-       AND NEW.time_slot IS NOT DISTINCT FROM OLD.time_slot
-       AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    -- ¿Se mueve? Otro id, otra pista, otro día u otra hora.
+    v_mueve := (NEW.id, NEW.court_id, NEW.date, NEW.time_slot)
+               IS DISTINCT FROM (OLD.id, OLD.court_id, OLD.date, OLD.time_slot);
+    -- Ni se mueve ni cambia de estado: no hay nada que mirar.
+    IF NOT v_mueve AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
       RETURN NEW;
     END IF;
     v_vieja := OLD.id;
+  END IF;
+
+  -- Solo ocupan pista las reservas vivas: cancelar (sin moverla) no se
+  -- comprueba nunca.
+  IF NOT v_mueve AND (NEW.status IS NULL OR NEW.status NOT IN ('confirmed', 'pendiente_pago')) THEN
+    RETURN NEW;
   END IF;
 
   -- Exentos: sesión SQL sin ningún JWT (psql, cron)...
@@ -145,9 +185,19 @@ BEGIN
   IF COALESCE(auth.role(), '') = 'service_role' THEN
     RETURN NEW;
   END IF;
-  -- ...y los admin, que reservan encima de bloqueos a propósito.
+  -- ...y los admin, que reservan encima de bloqueos y mueven reservas a propósito.
   IF public.is_admin() THEN
     RETURN NEW;
+  END IF;
+
+  -- Un jugador no puede mover una reserva, ni aunque la deje cancelada:
+  -- redsys-notify confirmaría allí el hold ya firmado (ver MOVER UNA RESERVA).
+  IF v_mueve THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'PM409',
+      MESSAGE = 'No se puede cambiar la pista, el día ni la hora de una reserva.',
+      DETAIL  = 'Para cambiarla, cancélala y haz una reserva nueva, o pídeselo al club.',
+      HINT    = 'PISTA_NO_DISPONIBLE';
   END IF;
 
   -- Campos vacíos: que dé su error la restricción NOT NULL de la tabla.
@@ -161,12 +211,17 @@ BEGIN
     NEW.created_at := now();
   END IF;
 
+  -- La franja NUEVA, escrita como la escribe y la lee la app (ver LECTURA DE
+  -- LA FRANJA): si no, la pantalla de reservas no la vería ocupada y aquí sí
+  -- les taparía la hora a los demás.
   v_rango := public.franja_minutos(NEW.time_slot);
-  IF v_rango IS NULL THEN
+  IF v_rango IS NULL
+     OR NEW.time_slot !~ '^[0-9]{1,2}:[0-9]{2} - [0-9]{1,2}:[0-9]{2}$'
+     OR NEW.time_slot ~ ' - 0?0:00$' THEN
     RAISE EXCEPTION USING
       ERRCODE = 'PM409',
       MESSAGE = format('La hora elegida (%s) no es válida. Vuelve a elegirla, por favor.', btrim(NEW.time_slot)),
-      DETAIL  = 'La franja tiene que ser "HH:MM - HH:MM", con el fin después del inicio y sin pasar de la medianoche.',
+      DETAIL  = 'La franja tiene que ser "HH:MM - HH:MM", con el fin después del inicio y como tarde a las 24:00 (no 00:00).',
       HINT    = 'FRANJA_NO_VALIDA';
   END IF;
 
@@ -232,5 +287,5 @@ $function$;
 -- zz_: el último de los BEFORE (ver ORDEN arriba).
 DROP TRIGGER IF EXISTS trg_zz_bookings_rechaza_solapes ON public.bookings;
 CREATE TRIGGER trg_zz_bookings_rechaza_solapes
-  BEFORE INSERT OR UPDATE OF court_id, date, time_slot, status ON public.bookings
+  BEFORE INSERT OR UPDATE OF id, court_id, date, time_slot, status ON public.bookings
   FOR EACH ROW EXECUTE FUNCTION public.bookings_rechaza_solapes();

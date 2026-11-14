@@ -9,7 +9,8 @@ import { urlsVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
 import { avisoHuecoOcupado } from '../utils/huecoOcupado';
 
 // Pago compartido temporalmente DESACTIVADO (oculta la pestaña "Compartido").
-// Cambiar a true para reactivarlo cuando esté probado.
+// redsys-create también lo rechaza (no lleva hold 'pendiente_pago'): para
+// reactivarlo no basta con poner true, antes hay que pasarlo a ese hold.
 const SPLIT_PAYMENT_ENABLED = false;
 
 // Métodos de pago en orden de preferencia: el primero que esté disponible es el
