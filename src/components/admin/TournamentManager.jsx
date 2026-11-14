@@ -148,6 +148,25 @@ const avisoCorte = (parrilla) => {
     ? ` Nada automático antes del ${primero.slot}: las horas que ya han pasado, o que empiezan en menos de ${MARGEN_AUTOMATICO_MIN} min, no se usan.`
     : ' Ya no quedan horas del torneo por delante para programar nada automático.';
 };
+// Texto de una regla de "no puede" ({ day, slots: ['dd/mm HH:00'], label })
+// sacado de sus horas: «14/11: 20:00-24:00». La etiqueta guardada no vale
+// para la hora de las 23:00: se escribía «…-23:00», como si la pareja
+// pudiera a esa hora, y ahora un día del torneo puede tener partidos a las
+// 23:00 y a las 24:00 (endHourByDay).
+const textoRegla = (r) => {
+  const horas = [...new Set((r?.slots || []).map(s => String(s).split(' ')))]
+    .filter(([d, h]) => d === r?.day && /^\d{1,2}:\d{2}$/.test(h || ''));
+  if (!r?.day || horas.length === 0 || horas.length !== (r.slots || []).length) return r?.label || r?.day || '';
+  const mins = [...new Set(horas.map(([, h]) => aMinutos(h)))].sort((a, b) => a - b);
+  const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const tramos = [];
+  mins.forEach(m => {
+    const ultimo = tramos[tramos.length - 1];
+    if (ultimo && ultimo[1] === m) ultimo[1] = m + 60;
+    else tramos.push([m, m + 60]);
+  });
+  return `${r.day}: ${tramos.map(([a, b]) => `${hhmm(a)}-${hhmm(b)}`).join(', ')}`;
+};
 // Jugadores de una pareja a partir de su nombre ("Ivan y Diego Sanchez").
 const jugadoresDe = (p) => String(p?.name || '').split(/\s+y\s+/i).map(s => s.trim()).filter(Boolean);
 // Añade/quita el vínculo entre dos parejas en la lista de jugadores compartidos.
@@ -4543,9 +4562,9 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
     let i = 0;
     while (i < hours.length) {
       let j = i;
-      while (j + 1 < hours.length && HOURS.indexOf(hours[j + 1]) === HOURS.indexOf(hours[j]) + 1) j++;
-      const endIdx = HOURS.indexOf(hours[j]);
-      const endH = endIdx < HOURS.length - 1 ? HOURS[endIdx + 1] : hours[j];
+      while (j + 1 < hours.length && aMinutos(hours[j + 1]) === aMinutos(hours[j]) + 60) j++;
+      // La hora de las 23:00 acaba a las 24:00 (antes salía «…-23:00»).
+      const endH = etiquetaHora(Math.floor(aMinutos(hours[j]) / 60) + 1);
       ranges.push(`${hours[i]}-${endH}`);
       i = j + 1;
     }
@@ -5162,7 +5181,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                               <span style={{ fontSize: '0.72rem', color: '#92400E', fontWeight: 700 }}>{totalBlockedHours}h bloqueadas</span>
                               {blocks.slice(0, 3).map(b => (
                                 <span key={b.id || b.day} style={{ fontSize: '0.68rem', color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', padding: '0.1rem 0.35rem', borderRadius: '0.3rem' }}>
-                                  {b.label || b.day}
+                                  {textoRegla(b)}
                                 </span>
                               ))}
                               {blocks.length > 3 && (
@@ -6832,7 +6851,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                           {p.prefRules.map(r => (
                             <span key={r.id} style={{ fontSize: '0.68rem', color: '#DC2626', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                               <span style={{ color: '#F97316', fontSize: '0.6rem' }}>●</span>
-                              {r.label}
+                              {textoRegla(r)}
                             </span>
                           ))}
                         </div>
@@ -7314,7 +7333,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                             <strong>{p.name}</strong>
                             {(p.prefRules || []).length === 0
                               ? <span style={{ color: '#15803D', fontWeight: 700 }}> · siempre disponible</span>
-                              : <span style={{ color: '#9A3412', fontWeight: 600 }}> · NO puede: {(p.prefRules || []).map(r => r.label || r.day).join(' · ')}</span>}
+                              : <span style={{ color: '#9A3412', fontWeight: 600 }}> · NO puede: {(p.prefRules || []).map(textoRegla).join(' · ')}</span>}
                             {partidosVinculados(p).length > 0 && (
                               <span style={{ color: '#3730A3', fontWeight: 600 }}> · 🔗 también juega: {partidosVinculados(p).map(v => `${v.cat} ${v.dia} ${v.hora}`).join(', ')}</span>
                             )}
@@ -7350,7 +7369,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         <div style={{ marginTop: '0.35rem', display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
                           {rules.map(r => (
                             <span key={r.id || r.day} style={{ fontSize: '0.7rem', color: '#9A3412', background: 'white', border: '1px solid #FED7AA', padding: '0.15rem 0.45rem', borderRadius: '0.3rem' }}>
-                              {r.label || r.day}
+                              {textoRegla(r)}
                             </span>
                           ))}
                         </div>
