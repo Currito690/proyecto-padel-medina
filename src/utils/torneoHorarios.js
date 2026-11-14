@@ -21,10 +21,36 @@
 
 export const HORAS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
 
+// "HH:00" de la hora entera h. Pasada la medianoche sigue contando: "24:00"
+// son las 12 de la noche y "25:00" la una, del MISMO día del torneo.
+export const etiquetaHora = (h) => `${String(h).padStart(2, '0')}:00`;
+
 export const toMin = (t) => {
   const [h, m] = String(t || '').split(':').map(Number);
   return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
 };
+
+// Fin de la jornada de un día ("dd/mm"), en minutos: tConfig.endHourByDay[dia]
+// si el club ha alargado (o acortado) ese día, si no endHour. Puede pasar de
+// la medianoche: con "25:00" ese día tiene partidos a las 23:00 y a las 24:00
+// (las 12 de la noche, el mismo minuto que las 00:00 del día siguiente).
+export function finDeJornada(tConfig, dia) {
+  const general = toMin(tConfig?.endHour || '22:00');
+  const propio = tConfig?.endHourByDay?.[dia];
+  if (!propio || !/^\d{1,2}:\d{2}$/.test(String(propio))) return general;
+  const fin = toMin(propio);
+  return fin > 0 && fin <= 48 * 60 ? fin : general;
+}
+
+// Horas enteras de inicio de un día del torneo (idx: su posición en el
+// torneo; el primero abre a firstDayStartHour): de la apertura a antes del fin.
+export function horasDeInicio(tConfig, dia, idx) {
+  const abre = toMin(idx === 0 && tConfig?.firstDayStartHour ? tConfig.firstDayStartHour : (tConfig?.startHour || '09:00'));
+  const fin = finDeJornada(tConfig, dia);
+  const out = [];
+  for (let h = Math.ceil(abre / 60); h * 60 < fin && h < 48; h++) out.push(etiquetaHora(h));
+  return out;
+}
 
 export const etiquetaDia = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 
@@ -84,22 +110,31 @@ export function minutoDelTorneo(startDate, ms) {
 //   editor manual y finalSlots los usan), pero elegirHueco, huecosComunes y la
 //   afinidad no los eligen ni los cuentan: `corte` es su minuto absoluto.
 //   Sin desdeMs, o si es antes del torneo, no se corta nada (como siempre).
+//   Cada hueco lleva `fin`: el fin de la jornada de SU día (un partido tiene
+//   que acabar antes). Un día alargado pasada la medianoche (endHourByDay)
+//   tiene huecos a las "24:00": cuentan como de ese día del torneo.
 export function crearParrilla(tConfig, { desdeMs } = {}) {
   const dias = diasActivos(tConfig.startDate, tConfig.endDate);
   const idxDe = Object.fromEntries(dias.map((d, i) => [d, i]));
-  const finDia = toMin(tConfig.endHour || '22:00');
+  const finDe = (dia) => finDeJornada(tConfig, dia);
+  // El fin más tardío de todos los días (para quien no mira el día).
+  const finDia = Math.max(toMin(tConfig.endHour || '22:00'), ...dias.map(finDe));
   const inicioDia = (idx) => toMin(idx === 0 && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : (tConfig.startHour || '09:00'));
   const abs = (dia, hora) => (idxDe[dia] == null ? null : idxDe[dia] * 1440 + toMin(hora));
   const slots = [];
   dias.forEach((dia, idx) => {
-    for (let h = Math.ceil(inicioDia(idx) / 60); h < 24 && h * 60 < finDia; h++) {
-      slots.push({ slot: `${dia} ${HORAS[h]}`, dia, idxDia: idx, hora: HORAS[h], ini: h * 60, abs: idx * 1440 + h * 60 });
+    const fin = finDe(dia);
+    for (const hora of horasDeInicio(tConfig, dia, idx)) {
+      const ini = toMin(hora);
+      slots.push({ slot: `${dia} ${hora}`, dia, idxDia: idx, hora, ini, fin, abs: idx * 1440 + ini });
     }
   });
+  // En orden cronológico aunque un día alargado llegue al siguiente.
+  slots.sort((a, b) => a.abs - b.abs);
   const minCorte = desdeMs == null ? null : minutoDelTorneo(tConfig.startDate, desdeMs);
   const corte = Number.isFinite(minCorte) ? minCorte : -Infinity;
   return {
-    dias, idxDe, slots, finDia, inicioDia, abs, corte,
+    dias, idxDe, slots, finDia, finDe, inicioDia, abs, corte,
     // Minuto absoluto de una hora de partido guardada (null si no es de un día del torneo).
     absDeTiempo(time) {
       const t = parsearTiempo(time);
@@ -118,10 +153,14 @@ export const horasBloqueadas = (p) => new Set((p?.prefRules || []).flatMap((r) =
 
 // ¿Puede la pareja jugar de ini a fin (minutos del día) ese día? Se miran
 // TODAS las horas que pisa el partido, no solo la de inicio.
+// Pasada la medianoche (un día alargado con endHourByDay) nadie pudo marcar
+// nada al inscribirse, porque la hoja llega como mucho a las 23:00: quien no
+// puede a las 23:00 tampoco puede más tarde ese mismo día.
 export function disponibleEn(bloqueadas, dia, ini, fin) {
   if (!bloqueadas || bloqueadas.size === 0) return true;
-  for (let h = Math.floor(ini / 60); h < 24 && h * 60 < fin; h++) {
-    if (bloqueadas.has(`${dia} ${HORAS[h]}`)) return false;
+  for (let h = Math.floor(ini / 60); h < 48 && h * 60 < fin; h++) {
+    if (bloqueadas.has(`${dia} ${etiquetaHora(h)}`)) return false;
+    if (h >= 24 && bloqueadas.has(`${dia} 23:00`)) return false;
   }
   return true;
 }
@@ -132,7 +171,7 @@ export function disponibleEn(bloqueadas, dia, ini, fin) {
 export function huecosComunes(parrilla, dur, ...parejas) {
   const sets = parejas.filter(esParejaReal).map(horasBloqueadas);
   const corte = parrilla.corte ?? -Infinity;
-  return parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= parrilla.finDia && sets.every((b) => disponibleEn(b, s.dia, s.ini, s.ini + dur))).length;
+  return parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= (s.fin ?? parrilla.finDia) && sets.every((b) => disponibleEn(b, s.dia, s.ini, s.ini + dur))).length;
 }
 
 // Bloqueos y reservas del club → { 'dd/mm': { pista: [[ini, fin]] } } con sus
@@ -256,7 +295,7 @@ export function elegirHueco(agenda, parrilla, { desdeAbs = 0, dur, descanso = 0,
   for (const s of parrilla.slots) {
     if (s.abs < desde) continue;
     const fin = s.ini + dur;
-    if (fin > parrilla.finDia) continue;
+    if (fin > (s.fin ?? parrilla.finDia)) continue;
     if (bloq.some((b) => !disponibleEn(b, s.dia, s.ini, fin))) continue;
     if (reales.some((p) => !parejaLibre(agenda, p.id, s.abs, s.abs + dur, descanso))) continue;
     for (const c of pistas) {
@@ -287,7 +326,7 @@ export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
     if (s.abs < desde) continue;
     if (s.abs >= hastaAbs) break;
     const fin = s.ini + dur;
-    if (fin > parrilla.finDia) continue;
+    if (fin > (s.fin ?? parrilla.finDia)) continue;
     if (bloq.some((b) => !disponibleEn(b, s.dia, s.ini, fin))) continue;
     if (reales.some((p) => !parejaLibre(agenda, p.id, s.abs, s.abs + dur, descanso))) continue;
     let pista = null;
@@ -348,7 +387,7 @@ export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math
   // Disponibilidad de cada pareja: huecos de la parrilla en los que puede
   // (desde el corte: en pleno torneo, las horas pasadas ya no cuentan).
   const corte = parrilla.corte ?? -Infinity;
-  const huecos = parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= parrilla.finDia);
+  const huecos = parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= (s.fin ?? parrilla.finDia));
   const idx = new Map();
   const mascaras = [];
   hojas.flat().forEach((p) => {

@@ -177,7 +177,8 @@ for (const p of programados) {
     const bloq = new Set(reglasDe(j));
     const ini = toMin(p.h.hora);
     for (let h = Math.floor(ini / 60); h * 60 < ini + dur(p.cat); h++) {
-      const slot = `${p.h.dia} ${String(h).padStart(2, '0')}:00`;
+      // Pasada la medianoche cuenta lo marcado a las 23:00 (como disponibleEn).
+      const slot = h >= 24 && bloq.has(`${p.h.dia} 23:00`) ? `${p.h.dia} 23:00` : `${p.h.dia} ${String(h).padStart(2, '0')}:00`;
       if (!bloq.has(slot)) continue;
       conflictosDisp++;
       const arranque = h * 60 === ini;
@@ -191,8 +192,10 @@ for (const p of programados) {
 for (const p of programados) {
   if (idxDia[p.h.dia] == null) { error(`${p.nombre}: ${p.h.dia} está fuera de las fechas del torneo`); continue; }
   const ini = toMin(p.h.hora);
-  if (ini < toMin(inicioDia(p.h.dia)) || ini >= toMin(config.endHour)) error(`${p.nombre}: ${p.h.dia} ${p.h.hora} fuera del horario (${inicioDia(p.h.dia)}-${config.endHour})`);
-  else if (ini + dur(p.cat) > toMin(config.endHour)) (config.permiteAcabarTarde ? aviso : error)(`${p.nombre}: empieza a las ${p.h.hora} y acaba después del cierre (${config.endHour})`);
+  // Fin de la jornada de ese día (endHourByDay si se alargó, p. ej. "25:00").
+  const cierre = config.endHourByDay?.[p.h.dia] || config.endHour;
+  if (ini < toMin(inicioDia(p.h.dia)) || ini >= toMin(cierre)) error(`${p.nombre}: ${p.h.dia} ${p.h.hora} fuera del horario (${inicioDia(p.h.dia)}-${cierre})`);
+  else if (ini + dur(p.cat) > toMin(cierre)) (config.permiteAcabarTarde ? aviso : error)(`${p.nombre}: empieza a las ${p.h.hora} y acaba después del cierre (${cierre})`);
   const apertura = config.courtStartHours?.[p.h.pista] || config.courtStartHours?.[String(p.h.pista)];
   if (apertura && p.h.hora < apertura) error(`${p.nombre}: Pista ${p.h.pista} abre a las ${apertura}`);
   const permitidas = (config.courtsByCategory?.[p.cat]?.[p.esCons ? 'cons' : 'main'] || []).filter((c) => c >= 1 && c <= config.courtsCount);

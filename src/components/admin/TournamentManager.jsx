@@ -14,7 +14,7 @@ import { descargarBlob, descargarDataUrl, descargarTexto } from '../../utils/des
 import { dibujarCuadroPdf } from '../../utils/cuadroPdf';
 import { prepararCartel } from '../../utils/cartel';
 import { registrarTrabajoPendiente } from '../../utils/versionNueva';
-import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, colocarPorAfinidad, restarTramos, toMin as aMinutos } from '../../utils/torneoHorarios';
+import { crearParrilla, intervalosExternos, agendaDeCuadros, crearAgenda, elegirHueco, ocupar, ocuparPartido, liberar, huecosComunes, parsearTiempo, textoTiempo, disponibleEn, horasBloqueadas, parejaLibre, pistaLibre, colocarPorAfinidad, restarTramos, horasDeInicio, etiquetaHora, toMin as aMinutos } from '../../utils/torneoHorarios';
 
 const HOURS = [
   '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', 
@@ -3020,7 +3020,7 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
       const curAbs = absDe(nextMatch);
       const ini = t ? aMinutos(t.hora) : 0;
       const valida = !!t && curAbs != null && curAbs >= desde
-        && ini + durationMin <= parrilla.finDia
+        && ini + durationMin <= parrilla.finDe(t.dia)
         && [nextMatch.p1, nextMatch.p2].every(pp => disponibleEn(horasBloqueadas(pp), t.dia, ini, ini + durationMin)
           && parejaLibre(agenda, pp.id, curAbs, curAbs + durationMin, restMin))
         && pistaLibre(agenda, t.dia, t.pista, ini, ini + durationMin);
@@ -6114,12 +6114,19 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         : participants;
                       const totalP = filteredP.length;
   
-                      const getBlockedCount = (slot) => {
-                        return filteredP.filter(p => p.prefRules?.some(r => r.slots?.includes(slot))).length;
+                      // Pasada la medianoche (24:00) cuenta quien no puede a las 23:00, como en el programador.
+                      const marcasDe = (slot) => {
+                        const [d, h] = String(slot).split(' ');
+                        return aMinutos(h) >= 24 * 60 ? [slot, `${d} 23:00`] : [slot];
                       };
-  
+                      const getBlockedCount = (slot) => {
+                        const marcas = marcasDe(slot);
+                        return filteredP.filter(p => p.prefRules?.some(r => marcas.some(s => r.slots?.includes(s)))).length;
+                      };
+
                       const getBlockedNames = (slot) => {
-                        return filteredP.filter(p => p.prefRules?.some(r => r.slots?.includes(slot))).map(p => p.name);
+                        const marcas = marcasDe(slot);
+                        return filteredP.filter(p => p.prefRules?.some(r => marcas.some(s => r.slots?.includes(s)))).map(p => p.name);
                       };
   
                       // Estado de cada pista del torneo en esa hora (lo pidió el
@@ -6192,7 +6199,8 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
                         const fondoPista = { libre: '#F0FDF4', partido: '#FEE2E2', sigue: '#FFF5F5', club: '#F1F5F9', cerrada: '#F8FAFC' };
                         const bordePista = { libre: '#BBF7D0', partido: '#FECACA', sigue: '#FECACA', club: '#CBD5E1', cerrada: '#E2E8F0' };
                         const textoPista = { libre: '#15803D', partido: '#B91C1C', sigue: '#DC2626', club: '#475569', cerrada: '#94A3B8' };
-                        const horasDia = getHoursForDay(diaPistas);
+                        // Más las horas de un día alargado (endHourByDay), p. ej. las 24:00.
+                        const horasDia = [...new Set([...getHoursForDay(diaPistas), ...horasDeInicio(tConfig, diaPistas, activeDays.indexOf(diaPistas))])];
                         return (
                           <>
                             {selectorVista}
@@ -7085,11 +7093,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
         const occ = buildOccupancyMap();
         const activeDays = getActiveDates(tConfig.startDate, tConfig.endDate);
         const day = editingTimeDay || activeDays[0];
-        // Horas válidas para ese día según tConfig (firstDayStartHour para el día 1)
-        const isFirstDay = activeDays[0] === day;
-        const sHourIdx = HOURS.indexOf(isFirstDay && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : tConfig.startHour);
-        const eHourIdx = HOURS.indexOf(tConfig.endHour);
-        const dayHours = (sHourIdx >= 0 && eHourIdx >= 0) ? HOURS.slice(sHourIdx, eHourIdx) : HOURS;
+        // Horas válidas para ese día según tConfig (firstDayStartHour para el
+        // día 1; endHourByDay si ese día se alarga, hasta las "24:00" = las 12
+        // de la noche).
+        const dayHours = horasDeInicio(tConfig, day, activeDays.indexOf(day));
+        // Todas las horas que puede tener un día (las de pasada la medianoche
+        // incluidas) para marcar qué inicios pisa cada bloqueo.
+        const horasDelEditor = Array.from({ length: 48 }, (_, h) => etiquetaHora(h));
         const courts = Array.from({ length: tConfig.courtsCount }, (_, i) => i + 1);
         const { match, isCons, cat } = editingTime;
         const currentSlot = match.time ? match.time.split(' - Pista')[0].trim() : null;
@@ -7126,12 +7136,13 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
             out.add(s);
             const [diaB, horaB] = String(s).split(' ');
             const hb = aMinutos(horaB);
-            HOURS.forEach(h => {
+            horasDelEditor.forEach(h => {
               const ini = aMinutos(h);
-              if (ini < hb + 60 && hb < ini + durEste) out.add(`${diaB} ${h}`);
+              // Quien no puede a las 23:00 tampoco a las 24:00 (como disponibleEn).
+              if ((ini < hb + 60 && hb < ini + durEste) || (hb === 23 * 60 && ini >= 24 * 60)) out.add(`${diaB} ${h}`);
             });
           }));
-          partidosVinculados(p).forEach(l => HOURS.forEach(h => {
+          partidosVinculados(p).forEach(l => horasDelEditor.forEach(h => {
             const ini = aMinutos(h);
             if (ini < l.ini + l.dur + descansoEditor && l.ini < ini + durEste + descansoEditor) out.add(`${l.dia} ${h}`);
           }));
@@ -7187,9 +7198,11 @@ const TournamentEditor = ({ tournamentKey, onBack }) => {
           return todas;
         };
         // Minuto (del torneo) desde el que puede jugar quien llegue a ese lado.
-        const huecosValidos = parrillaEditor.slots.filter(s => s.ini + durEste <= parrillaEditor.finDia).map(s => s.abs);
+        const huecosValidos = parrillaEditor.slots.filter(s => s.ini + durEste <= (s.fin ?? parrillaEditor.finDia)).map(s => s.abs);
         const alPrimerHueco = (x) => huecosValidos.find(a => a >= x) ?? x;
-        const textoAbs = (x) => { const d = parrillaEditor.dias[Math.floor(x / 1440)]; const mn = x % 1440; return `${d} ${String(Math.floor(mn / 60)).padStart(2, '0')}:${String(mn % 60).padStart(2, '0')}`; };
+        // Con el nombre del hueco si lo hay (las "24:00" de un día alargado
+        // salen así, como en la tabla, y no como las 00:00 del día siguiente).
+        const textoAbs = (x) => { const s = parrillaEditor.slots.find(z => z.abs === x); if (s) return s.slot; const d = parrillaEditor.dias[Math.floor(x / 1440)]; const mn = x % 1440; return `${d} ${String(Math.floor(mn / 60)).padStart(2, '0')}:${String(mn % 60).padStart(2, '0')}`; };
         const ultimoConHora = (pid, cons, r) => {
           let mejor = null;
           const mirar = (rs, hasta) => rs.forEach((ronda, ri) => { if (ri >= hasta) return; (ronda || []).forEach(x => {
