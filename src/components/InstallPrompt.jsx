@@ -82,7 +82,7 @@ export default function InstallPrompt() {
           position: 'fixed',
           left: '50%',
           transform: 'translateX(-50%)',
-          bottom: 'calc(72px + env(safe-area-inset-bottom) + 12px)',
+          bottom: 'calc(72px + var(--sa-bottom) + 12px)',
           width: 'calc(100% - 24px)',
           maxWidth: 460,
           background: '#fff',

@@ -21,8 +21,8 @@
     "path": "C:/Users/curri/AndroidBuild/claves/padelmedina-upload.jks",
     "alias": "padelmedina"
   },
-  "appVersion": "1.0.4",
-  "appVersionCode": 6,
+  "appVersion": "1.0.5",
+  "appVersionCode": 7,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://padelmedina.com/manifest.json",
@@ -37,6 +37,6 @@
   "fullScopeUrl": "https://padelmedina.com/",
   "additionalTrustedOrigins": [],
   "retainedBundles": [],
-  "appVersionName": "1.0.4",
+  "appVersionName": "1.0.5",
   "minSdkVersion": 24
 }

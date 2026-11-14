@@ -43,7 +43,22 @@ const BookingDashboard = () => {
       setPagoCancelado(true);
       searchParams.delete('pago');
       setSearchParams(searchParams, { replace: true });
+      // El jugador volvió del banco sin pagar. Borrar el pago a medias (si no, se
+      // tomaría luego por un pago bueno) y liberar SU propio hueco retenido para
+      // que no se quede fuera de él 15 minutos.
+      (async () => {
+        let pend = null;
+        try { pend = JSON.parse(sessionStorage.getItem('pendingBooking') || localStorage.getItem('pendingBooking') || 'null'); } catch { pend = null; }
+        sessionStorage.removeItem('pendingBooking');
+        try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
+        if (pend?.bookingId && user?.id) {
+          await supabase.from('bookings').update({ status: 'cancelled' })
+            .eq('id', pend.bookingId).eq('user_id', user.id).eq('status', 'pendiente_pago')
+            .then(() => {}, () => {});
+        }
+      })();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [selectedDate, setSelectedDate] = useState(serverToday());
   const [siteSettings, setSiteSettings] = useState({ booking_window_days: 7, court_price: 18.00, slots_release_time: '00:00', schedule_config: DEFAULT_SCHEDULE_CONFIG });
@@ -338,6 +353,14 @@ const BookingDashboard = () => {
           });
         }
       } catch { /* sin red: seguimos con el último valor cargado */ }
+      // Refrescar también las pistas: si el admin activa/desactiva una pista o le
+      // cambia el precio propio, se aplica en ≤30s sin tener que recargar.
+      try {
+        const { data: cs } = await supabase.from('courts').select('*').eq('active', true).order('name');
+        if (!cancelled && cs) {
+          setCourts(prev => JSON.stringify(prev) === JSON.stringify(cs) ? prev : cs);
+        }
+      } catch { /* sin red */ }
       if (cancelled) return;
       const now = serverNow();
       const [rH, rM] = (siteSettings.slots_release_time || '00:00').split(':').map(Number);
@@ -348,7 +371,11 @@ const BookingDashboard = () => {
     };
     evaluate();
     const id = setInterval(evaluate, 30 * 1000);
-    return () => { cancelled = true; clearInterval(id); };
+    // Al volver a la app/pestaña (en el móvil los temporizadores se paran en
+    // segundo plano): refrescar YA, sin esperar al siguiente ciclo de 30s.
+    const onVisible = () => { if (document.visibilityState === 'visible') evaluate(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, [siteSettings.slots_release_time]);
 
   const currentCourt = courts.find(c => c.id === selectedCourt);
@@ -928,10 +955,35 @@ const BookingDashboard = () => {
             Volver a pistas
           </button>
 
-          <div style={{ padding: '1.25rem', borderRadius: '1rem', background: currentCourt?.gradient, marginBottom: '1.5rem' }}>
-            <p style={{ margin: '0 0 0.25rem', fontSize: '0.75rem', fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{currentCourt?.sport}</p>
-            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: 'white', letterSpacing: '-0.02em' }}>{currentCourt?.name}</h2>
-            <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'rgba(255,255,255,0.75)' }}>{currentCourt?.location}</p>
+          <div style={{ padding: '1.25rem', borderRadius: '1rem', background: currentCourt?.gradient, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: '0 0 0.25rem', fontSize: '0.75rem', fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{currentCourt?.sport}</p>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: 'white', letterSpacing: '-0.02em' }}>{currentCourt?.name}</h2>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'rgba(255,255,255,0.75)' }}>{currentCourt?.location}</p>
+            </div>
+            {/* Saltar a la otra pista sin volver a la lista, con el mismo día
+                (petición del club: estando en la Pista 1, ir directo a la 2 y al revés). */}
+            {courts.some(c => c.id !== selectedCourt) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flexShrink: 0 }}>
+                {courts.filter(c => c.id !== selectedCourt).map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => handleCourtChange(c.id)}
+                    aria-label={`Cambiar a ${c.name}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.6rem 0.85rem', minHeight: '44px', borderRadius: '0.75rem', border: '1.5px solid rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.18)', color: 'white', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+                  >
+                    <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
+                      <span style={{ fontSize: '0.62rem', fontWeight: 700, color: 'rgba(255,255,255,0.8)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Cambiar a</span>
+                      <span style={{ fontSize: '1rem', fontWeight: 900, whiteSpace: 'nowrap' }}>{c.name}</span>
+                    </span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Colores de Padel Medina (los mismos que la app de antes) -->
+    <color name="colorPrimary">#16A34A</color>
+    <color name="colorPrimaryDark">#0F172A</color>
+    <color name="colorAccent">#16A34A</color>
+    <!-- Fondo de la pantalla de arranque: el mismo gris claro de la app -->
+    <color name="splash_fondo">#F8FAFC</color>
+    <!-- Color del icono de los avisos -->
+    <color name="aviso_color">#16A34A</color>
+</resources>

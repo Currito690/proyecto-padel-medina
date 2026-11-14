@@ -47,3 +47,9 @@ android/local.properties
 *.apk
 *.jks
 *.keystore
+
+# Datos generados del simulador de torneos (node sim-torneo/generar-datos.mjs)
+sim-torneo/datos.js
+sim-torneo/datos.json
+sim-torneo/cuadro.json
+sim-torneo/cartel-prueba.jpg

@@ -1,20 +1,17 @@
+# Padel Medina. Solo la portada, los torneos y las páginas legales son públicas;
+# el resto exige iniciar sesión y no aporta nada a los buscadores.
+# Ojo: no añadir grupos "User-agent: Googlebot" con "Allow: /": Google solo
+# hace caso al grupo más específico y se saltaría todas estas reglas.
 User-agent: *
-Allow: /
 Disallow: /admin
 Disallow: /checkout
 Disallow: /carrito
 Disallow: /mis-reservas
 Disallow: /perfil
+Disallow: /pago-compartido
+Disallow: /reset-password
+Disallow: /pago-redsys.html
+Disallow: /pv.html
+Allow: /
 
-# Sitemaps
 Sitemap: https://padelmedina.com/sitemap.xml
-
-# Crawl-delay (optional)
-Crawl-delay: 1
-
-# Bots especiales
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /

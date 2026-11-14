@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Pago seguro · Padel Medina</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; box-sizing:border-box; background:#F8FAFC; color:#0F172A; font-family:-apple-system,system-ui,Segoe UI,Roboto,Arial,sans-serif; text-align:center; }
+  p { font-size:16px; line-height:1.5; max-width:340px; }
+  button { margin-top:12px; padding:14px 22px; border:0; border-radius:12px; background:#1B3A6E; color:#fff; font-size:16px; font-weight:700; }
+</style>
+</head>
+<body>
+<!-- Página puente de la app de iPhone: recibe los datos del pago en el fragmento
+     (#u=..&v=..&p=..&s=..) y los envía por POST a Redsys. La app no puede hacer
+     ese POST desde su webview (ver src/utils/redsysPay.js). -->
+<div>
+  <p id="m">Conectando con la pasarela segura del banco…</p>
+  <form id="f" method="POST">
+    <input type="hidden" name="Ds_SignatureVersion">
+    <input type="hidden" name="Ds_MerchantParameters">
+    <input type="hidden" name="Ds_Signature">
+    <button id="b" type="submit" hidden>Continuar al pago</button>
+  </form>
+</div>
+<script>
+(function () {
+  // Solo Redsys: esta página nunca envía a otro sitio.
+  var PERMITIDAS = ['https://sis.redsys.es/sis/realizarPago', 'https://sis-t.redsys.es:25443/sis/realizarPago'];
+  var q = new URLSearchParams(location.hash.slice(1));
+  var u = q.get('u'), v = q.get('v'), p = q.get('p') || '', s = q.get('s') || '';
+  var b64 = /^[A-Za-z0-9+\/=_-]+$/;
+  // Quitamos los datos del historial: si vuelven atrás no se reenvía el pedido.
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  if (PERMITIDAS.indexOf(u) === -1 || v !== 'HMAC_SHA256_V1' || !b64.test(p) || !b64.test(s)) {
+    document.getElementById('m').textContent = 'Este enlace de pago no es válido o ya se usó. Pulsa «Listo» y vuelve a intentarlo desde la app.';
+    return;
+  }
+  var f = document.getElementById('f');
+  f.action = u;
+  f.elements.Ds_SignatureVersion.value = v;
+  f.elements.Ds_MerchantParameters.value = p;
+  f.elements.Ds_Signature.value = s;
+  document.getElementById('b').hidden = false; // por si el envío automático se bloquea
+  f.submit();
+})();
+</script>
+</body>
+</html>

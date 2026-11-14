@@ -183,6 +183,9 @@ const Tournaments = () => {
                   ? 'linear-gradient(90deg, #15803D, #22C55E)'
                   : 'linear-gradient(90deg, #94A3B8, #CBD5E1)'
                 }} />
+                {t.config?.posterUrl && (
+                  <img src={t.config.posterUrl} alt={`Cartel: ${t.name}`} loading="lazy" style={{ display: 'block', width: '100%', height: '180px', objectFit: 'cover', objectPosition: 'top', borderBottom: '1px solid var(--color-border)' }} />
+                )}
 
                 <div style={{ padding: '1.25rem' }}>
                   {/* Header row */}

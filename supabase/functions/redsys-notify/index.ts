@@ -141,7 +141,7 @@ serve(async (req) => {
     } catch (_e) {
       console.error(`MerchantData no parseable (pedido ${orderId}):`, decoded.Ds_MerchantData);
     }
-    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones, kind, registrationId, bookingId } = merchantData as Record<string, any>;
+    const { courtId, userId, date, timeSlot, isSharedPayment, sharedPhones, kind, registrationId, bookingId, expectedCents } = merchantData as Record<string, any>;
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -268,7 +268,21 @@ serve(async (req) => {
       }
       // Redsys devuelve Ds_PayMethod='z' cuando se pagó con Bizum; si no, fue tarjeta.
       const esBizum = decoded.Ds_PayMethod === 'z';
+      const cobradoCents = parseInt(String(decoded.Ds_Amount ?? '0'), 10) || 0;
+      const importePagado = Math.round(cobradoCents) / 100;
       let bookingRow: Record<string, any> | null = null;
+
+      // El importe esperado viaja firmado en MerchantData (lo calculó redsys-create
+      // desde el precio real de la pista). Si lo cobrado NO coincide, no confirmamos:
+      // devolvemos OK (reintentar no lo arregla) y avisamos al admin.
+      if (expectedCents != null && cobradoCents !== Number(expectedCents)) {
+        console.error(`Importe reserva NO coincide: pedido ${orderId} cobrado ${cobradoCents} esperado ${expectedCents}`);
+        if (bookingId) {
+          await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', bookingId).eq('status', 'pendiente_pago');
+        }
+        await alertaCobroSinReserva(orderId, `${date} ${timeSlot}. Importe cobrado ${cobradoCents} cent. no coincide con el esperado ${expectedCents} cent.`.slice(0, 200));
+        return new Response('OK', { status: 200 });
+      }
 
       if (bookingId) {
         // ── Flujo TOLERANCIA CERO: la reserva ya existe como 'pendiente_pago'
@@ -280,9 +294,12 @@ serve(async (req) => {
           console.log(`notify duplicado: reserva ${bookingId} ya confirmada (idempotente)`);
           return new Response('OK', { status: 200 });
         }
+        // Conservamos el metodo_pago que puso el cliente (bizum/tarjeta); solo lo
+        // corregimos a bizum si Redsys lo confirma explícitamente.
+        const metodoFinal = esBizum ? 'bizum' : (existing?.metodo_pago || 'tarjeta');
         const { data: upd, error: updErr } = await supabase
           .from('bookings')
-          .update({ status: 'confirmed', metodo_pago: esBizum ? 'bizum' : 'tarjeta' })
+          .update({ status: 'confirmed', metodo_pago: metodoFinal, importe: importePagado })
           .eq('id', bookingId)
           .select()
           .single();
@@ -305,6 +322,7 @@ serve(async (req) => {
           split_phones: isSharedPayment ? sharedPhones : [],
           split_paid: isSharedPayment ? 1 : 4, // 1 pagado (el creador)
           metodo_pago: esBizum ? 'bizum' : 'tarjeta',
+          importe: importePagado,
         }).select().single();
 
         if (error) {

@@ -1,0 +1,38 @@
+{
+  "appId": "com.padelmedina.app",
+  "appName": "Padel Medina",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#F8FAFC"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false,
+      "backgroundColor": "#F8FAFC",
+      "showSpinner": false
+    },
+    "PushNotifications": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    },
+    "SocialLogin": {
+      "providers": {
+        "google": true,
+        "facebook": false,
+        "apple": false,
+        "twitter": false
+      }
+    },
+    "SystemBars": {
+      "insetsHandling": "disable"
+    }
+  },
+  "android": {
+    "path": "android-app",
+    "backgroundColor": "#F8FAFC"
+  }
+}

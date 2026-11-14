@@ -4,9 +4,13 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { toast, confirmDialog } from '../utils/notify';
+import { serverNow } from '../utils/serverTime';
+import { urlsVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
+import { avisoHuecoOcupado } from '../utils/huecoOcupado';
 
 // Pago compartido temporalmente DESACTIVADO (oculta la pestaña "Compartido").
-// Cambiar a true para reactivarlo cuando esté probado.
+// Ojo antes de reactivarlo: este camino no crea el hold 'pendiente_pago', y sin
+// él redsys-create firma el importe que manda el navegador. Hay que pasarlo a ese hold.
 const SPLIT_PAYMENT_ENABLED = false;
 
 // Métodos de pago en orden de preferencia: el primero que esté disponible es el
@@ -41,20 +45,27 @@ const PaymentGateway = () => {
   // Calcular si el pago en club está disponible ahora (por día y hora)
   const { isClubOpen, clubOpenTime } = (() => {
     if (!clubHours) return { isClubOpen: true, clubOpenTime: null };
-    const now = new Date();
+    const now = serverNow();
     const dayKey = String(now.getDay()); // 0=dom, 1=lun ...
     const val = clubHours[dayKey];
     if (val === null || val === undefined) return { isClubOpen: false, clubOpenTime: null };
-    if (val === '00:00') return { isClubOpen: true, clubOpenTime: null };
+    // '' (vacío) = abierto todo el día, igual que '00:00'. El selector de hora de
+    // Android deja '' al pulsar "Borrar"; sin esto, ese día desaparecía "Pago en
+    // el club" aunque el panel lo mostrara activado.
+    if (val === '00:00' || val === '') return { isClubOpen: true, clubOpenTime: null };
     const [h, m] = val.split(':').map(Number);
     const openMin = h * 60 + m;
     const nowMin  = now.getHours() * 60 + now.getMinutes();
     return { isClubOpen: nowMin >= openMin, clubOpenTime: val };
   })();
 
-  // Si el carrito está vacío, volver al inicio
+  // Si el carrito está vacío, volver al inicio. Si tenía pistas y se vació solo
+  // (caducan a los 5 min), avisar para que el jugador no se quede sin saber qué pasó.
+  const teniaItemsRef = useRef(false);
   useEffect(() => {
+    if (items.length > 0) teniaItemsRef.current = true;
     if (items.length === 0) {
+      if (teniaItemsRef.current) toast('Tu pista ha caducado en el carrito, vuelve a elegirla.', 'info');
       navigate('/', { replace: true });
     }
   }, [items.length, navigate]);
@@ -158,8 +169,10 @@ const PaymentGateway = () => {
           split_phones: [],
           split_paid: 4,
           metodo_pago: 'gratis',
+          importe: 0,
         });
-        if (bookErr) throw bookErr;
+        // Hueco pisado (bloqueo, entreno, torneo u otra reserva): aviso claro.
+        if (bookErr) throw new Error(avisoHuecoOcupado(bookErr) || bookErr.message);
         supabase.functions.invoke('send-push', {
           body: { title: '🎾 Reserva gratuita', body: `${user.name} — ${item.courtName} · ${item.timeSlot}`, url: '/' },
         }).catch(() => {});
@@ -184,6 +197,10 @@ const PaymentGateway = () => {
             metodoPago: 'Gratuita',
           },
         }).catch(() => {});
+        // Borrar cualquier pago a medias anterior: si no, Mis Reservas lo tomaría
+        // por el "pago" recién hecho y confirmaría una reserva fantasma.
+        sessionStorage.removeItem('pendingBooking');
+        try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
         clearCart();
         navigate('/mis-reservas?pago=ok');
         return;
@@ -206,16 +223,18 @@ const PaymentGateway = () => {
       }).select('id').single();
       if (holdErr) {
         // 23505 = candado único de la BD: otro jugador tiene ese hueco retenido/confirmado
+        // PM409 = la hora pisa un bloqueo, entreno, partido del torneo u otra
+        // reserva (trigger de la BD); no se ha creado nada y no se va al banco.
         const msg = holdErr.code === '23505'
           ? 'Otro jugador está pagando ese hueco ahora mismo. Elige otra hora, por favor.'
-          : (holdErr.message || 'Este hueco ya no está disponible');
+          : (avisoHuecoOcupado(holdErr) || holdErr.message || 'Este hueco ya no está disponible');
         throw new Error(msg);
       }
       holdId = holdRow.id;
 
-      const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
-      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok`)}`;
-      const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
+      const rutaOk = '/mis-reservas?pago=ok';
+      const rutaKo = '/?pago=cancelado';
+      const { successUrl, failUrl } = urlsVueltaRedsys(rutaOk, rutaKo);
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {
@@ -249,23 +268,6 @@ const PaymentGateway = () => {
       // Limpiamos el carrito antes de redirigir al banco
       clearCart();
 
-      // Crear formulario dinámico y enviarlo a Redsys
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = data.redsysUrl;
-
-      [
-        ['Ds_SignatureVersion',    'HMAC_SHA256_V1'],
-        ['Ds_MerchantParameters', data.Ds_MerchantParameters],
-        ['Ds_Signature',          data.Ds_Signature],
-      ].forEach(([name, value]) => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-        form.appendChild(input);
-      });
-
       // Guardar datos antes del redirect para fallback y email de confirmación.
       // En sessionStorage Y localStorage: en móviles el navegador puede matar la
       // pestaña durante el pago y sessionStorage se pierde → sin este respaldo,
@@ -279,16 +281,27 @@ const PaymentGateway = () => {
         date: item.date,
         timeSlot: item.timeSlot,
         metodo: method === 'bizum' ? 'bizum' : 'tarjeta',
+        ts: Date.now(), // para descartar pagos a medias viejos en Mis Reservas
       });
       sessionStorage.setItem('pendingBooking', pendingData);
       try { localStorage.setItem('pendingBooking', pendingData); } catch { /* storage lleno */ }
 
-      document.body.appendChild(form);
-      form.submit();
+      // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
+      await enviarARedsys(data, {
+        rutaOk,
+        rutaKo,
+        // El hueco retenido pasa a 'confirmed' cuando llega el aviso de Redsys.
+        comprobarPagado: async () => {
+          const { data: b } = await supabase.from('bookings').select('status').eq('id', holdId).maybeSingle();
+          return b?.status === 'confirmed';
+        },
+      });
     } catch (err) {
       console.error('Error Redsys:', err);
       // Liberar el hueco retenido si no llegamos al banco
       if (holdId) supabase.from('bookings').update({ status: 'cancelled' }).eq('id', holdId).then(() => {}, () => {});
+      sessionStorage.removeItem('pendingBooking');
+      try { localStorage.removeItem('pendingBooking'); } catch { /* nada */ }
       setError(`Error: ${err.message}`);
       setLoading(false);
       payLockRef.current = false; // permitir reintento si la pasarela falló
@@ -301,6 +314,10 @@ const PaymentGateway = () => {
     if (payLockRef.current) return; // mismo lock — evita combinar pagos en paralelo
     payLockRef.current = true;
     setProcessingClub(true);
+    // Borrar cualquier pago a medias anterior (p. ej. una tarjeta cancelada): si
+    // no, al navegar a ?pago=ok, Mis Reservas lo confirmaría como reserva fantasma.
+    sessionStorage.removeItem('pendingBooking');
+    try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
     try {
       const rows = items.map((item) => ({
         court_id: item.courtId,
@@ -310,6 +327,7 @@ const PaymentGateway = () => {
         status: 'confirmed',
         is_free: false,
         metodo_pago: 'club',
+        importe: item.price,
       }));
 
       const { error } = await supabase.from('bookings').insert(rows);
@@ -352,7 +370,11 @@ const PaymentGateway = () => {
       navigate('/mis-reservas?pago=ok');
     } catch (err) {
       console.error('Error al reservar:', err);
-      toast('Error al procesar la reserva: ' + err.message);
+      // Hueco pisado (bloqueo, entreno, torneo u otra reserva): como el INSERT
+      // del carrito es uno solo, no se ha guardado ninguna de sus pistas.
+      const aviso = avisoHuecoOcupado(err);
+      if (aviso) toast(aviso, 'error', 8000);
+      else toast('Error al procesar la reserva: ' + err.message);
       setProcessingClub(false);
       payLockRef.current = false; // permitir reintento
     }
@@ -374,9 +396,9 @@ const PaymentGateway = () => {
     setError(null);
     try {
       const myShare = Math.round((item.price / 4) * 100) / 100;
-      const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
-      const successUrl = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/mis-reservas?pago=ok&compartido=1`)}`;
-      const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${window.location.origin}/?pago=cancelado`)}`;
+      const rutaOk = '/mis-reservas?pago=ok&compartido=1';
+      const rutaKo = '/?pago=cancelado';
+      const { successUrl, failUrl } = urlsVueltaRedsys(rutaOk, rutaKo);
       const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify`;
 
       const res = await supabase.functions.invoke('redsys-create', {
@@ -411,25 +433,22 @@ const PaymentGateway = () => {
         timeSlot: item.timeSlot,
         metodo: 'tarjeta',
         isSplit: true,
+        ts: Date.now(),
       });
       sessionStorage.setItem('pendingBooking', pendingSplit);
       try { localStorage.setItem('pendingBooking', pendingSplit); } catch { /* storage lleno */ }
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = data.redsysUrl;
-      [
-        ['Ds_SignatureVersion', 'HMAC_SHA256_V1'],
-        ['Ds_MerchantParameters', data.Ds_MerchantParameters],
-        ['Ds_Signature', data.Ds_Signature],
-      ].forEach(([name, value]) => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-        form.appendChild(input);
+      // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
+      await enviarARedsys(data, {
+        rutaOk,
+        rutaKo,
+        // En el pago compartido la reserva la crea el aviso de Redsys al cobrar.
+        comprobarPagado: async () => {
+          const { data: rows } = await supabase.from('bookings').select('id')
+            .eq('user_id', user.id).eq('court_id', item.courtId).eq('date', item.date)
+            .eq('time_slot', item.timeSlot).eq('status', 'confirmed').limit(1);
+          return !!rows?.length;
+        },
       });
-      document.body.appendChild(form);
-      form.submit();
     } catch (err) {
       console.error('Error pago compartido:', err);
       setError(`Error: ${err.message}`);

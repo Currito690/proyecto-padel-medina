@@ -3,6 +3,9 @@
 -- Sin él, los usuarios nuevos existen en auth.users pero no en public.profiles:
 -- en el panel salen como "Cliente" y no aparecen en la lista de usuarios.
 -- Este script es idempotente: recrea el trigger y rellena los perfiles que falten.
+-- 2026-10-15: los perfiles rellenados son 'client' salvo admin@padelmedina.com
+-- (antes, cualquier correo que CONTUVIERA "admin" salía administrador; misma
+-- regla que 20261002100000_rol_cliente_por_defecto.sql).
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
@@ -12,7 +15,7 @@ CREATE TRIGGER on_auth_user_created
 INSERT INTO public.profiles (id, email, name, role, created_at)
 SELECT u.id, u.email,
        COALESCE(NULLIF(u.raw_user_meta_data->>'name', ''), split_part(u.email, '@', 1)),
-       CASE WHEN u.email ILIKE '%admin%' THEN 'admin' ELSE 'client' END,
+       CASE WHEN u.email = 'admin@padelmedina.com' THEN 'admin' ELSE 'client' END,
        u.created_at
 FROM auth.users u
 LEFT JOIN public.profiles p ON p.id = u.id

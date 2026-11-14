@@ -85,7 +85,7 @@ const TimeSlotList = ({ slots, selectedSlot, onSelectSlot, onBook, price = 18 })
           position: 'fixed',
           bottom: 0, left: 0, right: 0,
           padding: '1rem 1rem',
-          paddingBottom: 'calc(5rem + env(safe-area-inset-bottom))',
+          paddingBottom: 'calc(5rem + var(--sa-bottom))',
           backgroundColor: 'rgba(255,255,255,0.95)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',

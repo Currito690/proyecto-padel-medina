@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast, confirmDialog } from '../utils/notify';
+import { urlsVueltaRedsys, enviarARedsys } from '../utils/redsysPay';
 
 const SharedPayment = () => {
   const [searchParams] = useSearchParams();
@@ -36,10 +37,9 @@ const SharedPayment = () => {
     if (!tokenData || !booking) return;
     setLoading(true);
 
-    const origin = window.location.origin;
-    const redirectFn = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-redirect`;
-    const successUrl = `${redirectFn}?to=${encodeURIComponent(`${origin}/pago-compartido?token=${token}&pago=ok`)}`;
-    const failUrl    = `${redirectFn}?to=${encodeURIComponent(`${origin}/pago-compartido?token=${token}&pago=error`)}`;
+    const rutaOk = `/pago-compartido?token=${token}&pago=ok`;
+    const rutaKo = `/pago-compartido?token=${token}&pago=error`;
+    const { successUrl, failUrl } = urlsVueltaRedsys(rutaOk, rutaKo);
     const notifyUrl  = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-notify-split`;
 
     const rawRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redsys-create`, {
@@ -77,24 +77,20 @@ const SharedPayment = () => {
       setLoading(false);
       return;
     }
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = data.redsysUrl;
-
-    [
-      ['Ds_SignatureVersion',    'HMAC_SHA256_V1'],
-      ['Ds_MerchantParameters', data.Ds_MerchantParameters],
-      ['Ds_Signature',          data.Ds_Signature],
-    ].forEach(([name, value]) => {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = name;
-      input.value = value;
-      form.appendChild(input);
-    });
-
-    document.body.appendChild(form);
-    form.submit();
+    // Web/Android: form POST a Redsys. iPhone: hoja de pago dentro de la app.
+    try {
+      await enviarARedsys(data, {
+        rutaOk,
+        rutaKo,
+        comprobarPagado: async () => {
+          const { data: t } = await supabase.from('shared_payment_tokens').select('paid').eq('token', token).maybeSingle();
+          return !!t?.paid;
+        },
+      });
+    } catch {
+      toast('Error al conectar con la pasarela de pago. Inténtalo de nuevo.', 'error');
+      setLoading(false);
+    }
   };
 
   const formatDate = (dateStr) => {

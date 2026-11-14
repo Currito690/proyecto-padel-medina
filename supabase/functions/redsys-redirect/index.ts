@@ -5,11 +5,15 @@ serve(async (req) => {
   // Vercel u otros hostings estáticos devuelven 404/405 a peticiones POST en rutas del frontend.
   // Esta función intercepta el POST y devuelve una redirección GET (303) al frontend.
 
+  const FALLBACK = 'https://padelmedina.com/mis-reservas';
   const urlParts = req.url.split('?to=');
   let target = urlParts.length > 1 ? decodeURIComponent(urlParts[1]) : null;
 
-  if (!target) {
-    target = 'https://padelmedina.com/mis-reservas'; // fallback seguro
+  // Solo redirigimos a nuestro propio dominio. Sin esto, cualquiera podría pasar
+  // ?to=https://sitio-falso.com y usar el dominio del club para enviar enlaces de
+  // phishing (open redirect); ademas la app Android abre todo padelmedina.com.
+  if (!target || !target.startsWith('https://padelmedina.com/')) {
+    target = FALLBACK;
   }
 
   return new Response(null, {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { descargarTexto } from '../../utils/descargas';
 import { supabase } from '../../services/supabase';
 import { toast, confirmDialog } from '../../utils/notify';
 
@@ -148,6 +149,9 @@ export default function FinanceManager() {
         // OJO: profiles NO se puede "incrustar" desde bookings (no hay FK
         // bookings→profiles); si se intenta, la consulta entera falla y el
         // panel sale vacío. Se cargan aparte y se asocian a mano.
+        // El '*' ya trae la columna bookings.importe cuando existe (usada en
+        // bookingAmount). No se pide por nombre a propósito: si la migración
+        // que la añade aún no corrió, nombrarla rompería la consulta entera.
         supabase.from('bookings')
           .select('*, courts(name, sport, price)')
           .eq('status', 'confirmed')
@@ -173,9 +177,18 @@ export default function FinanceManager() {
 
   const paidBookings = useMemo(() => bookings.filter(b => !b.is_free), [bookings]);
   const freeBookings = useMemo(() => bookings.filter(b => b.is_free), [bookings]);
-  // Importe real de cada reserva: el precio propio de la pista si lo tiene; si no, el global.
+  // Importe real de cada reserva: si la reserva guardó el importe cobrado
+  // (columna bookings.importe, en euros) ese manda, porque refleja lo que de
+  // verdad se pagó. Reservas antiguas sin importe → precio propio de la pista
+  // si lo tiene; si no, el global.
   const bookingAmount = (b) => {
     if (b.is_free) return 0;
+    // OJO: en pago compartido (split) bookings.importe guarda SOLO el 1/4 que
+    // pagó el creador (los otros 3 van por otra vía y no tocan importe), así que
+    // ahí NO sirve: usamos el precio completo de la pista. Para el resto, el
+    // importe guardado manda (es lo que de verdad se cobró).
+    const imp = parseFloat(b.importe);
+    if (b.payment_type !== 'split' && Number.isFinite(imp)) return imp;
     const p = parseFloat(b.courts?.price);
     return Number.isFinite(p) ? p : courtPrice;
   };
@@ -293,8 +306,18 @@ export default function FinanceManager() {
     else { setSortField(field); setSortDir('desc'); }
   };
 
+  // Prepara un valor para el CSV: separador ';' (Excel espa\u00F1ol lo abre en
+  // columnas), cada campo entrecomillado, y anti-inyecci\u00F3n de f\u00F3rmulas: a los
+  // valores que empiezan por = + - @ tab o retorno de carro se les antepone un
+  // ap\u00F3strofo para que Excel/Sheets no los ejecute.
+  const csvCell = (val) => {
+    let s = val == null ? '' : String(val);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return '"' + s.replace(/"/g, '""') + '"';
+  };
+
   const exportCSV = () => {
-    const header = 'Fecha,Hora,Pista,Jugador,Email,Tipo,Metodo,Cobro,Importe';
+    const header = ['Fecha', 'Hora', 'Pista', 'Jugador', 'Email', 'Tipo', 'Metodo', 'Cobro', 'Importe'];
     const rows = tableRows.map(b => [
       b.date, b.time_slot,
       b.courts?.name || '',
@@ -303,13 +326,10 @@ export default function FinanceManager() {
       b.is_free ? 'Gratuita' : 'De pago',
       b.metodo_pago || (b.is_free ? 'manual' : ''),
       esOnline(b) ? 'online' : confirmable(b) ? (b.cobro_confirmado ? 'cobrada' : 'pendiente') : '',
-      bookingAmount(b).toFixed(2),
-    ].join(','));
-    const csv = [header, ...rows].join('\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `finanzas_${fromDate}_${toDate}.csv`;
-    a.click();
+      bookingAmount(b).toFixed(2).replace('.', ','),
+    ].map(csvCell).join(';'));
+    const csv = [header.map(csvCell).join(';'), ...rows].join('\n');
+    descargarTexto('\uFEFF' + csv, `finanzas_${fromDate}_${toDate}.csv`);
   };
 
   const SortIcon = ({ field }) => {

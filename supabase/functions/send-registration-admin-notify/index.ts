@@ -9,9 +9,10 @@
 // dos, la llamada se acepta con un aviso en el log para que el club no se
 // quede sin correos a mitad de configurar; ver callerAutorizado.
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const FROM_EMAIL = 'Padel Medina <reservas@padelmedina.com>';
-const REPLY_TO = 'info@padelmedina.com';
+// Correo: SMTP del Plesk, con Resend de reserva (ver _shared/correo.ts).
+import { correoConfigurado, enviarCorreo } from '../_shared/correo.ts';
+import { asuntoInscripcionRecibida, htmlInscripcionRecibida, textoInscripcionRecibida } from '../_shared/inscripcion-recibida.ts';
+
 // Destinatario fijo: buzón del club. Si en el futuro se quiere cambiar
 // se puede leer de Deno.env.get('CLUB_NOTIFY_EMAIL') sin romper nada.
 const ADMIN_EMAIL = Deno.env.get('CLUB_NOTIFY_EMAIL') || 'padelmedina@hotmail.com';
@@ -169,6 +170,38 @@ function buildHtml(p: RegistrationPayload): string {
 </html>`;
 }
 
+async function avisarPareja(p: RegistrationPayload): Promise<void> {
+  const url = Deno.env.get('SUPABASE_URL') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!url || !serviceKey) { console.warn('Sin SUPABASE_URL/clave: no se avisa a la pareja'); return; }
+  const desde = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const q = `${url}/rest/v1/tournament_registrations?select=player1_email,player2_email`
+    + `&player1_name=eq.${encodeURIComponent(p.player1Name)}`
+    + `&player2_name=eq.${encodeURIComponent(p.player2Name)}`
+    + `&category=eq.${encodeURIComponent(p.category)}`
+    + `&created_at=gte.${encodeURIComponent(desde)}&order=created_at.desc&limit=1`;
+  const res = await fetch(q, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } });
+  const filas = await res.json().catch(() => []);
+  const fila = Array.isArray(filas) ? filas[0] : null;
+  if (!fila) { console.warn('Inscripción no encontrada en la tabla: no se avisa a la pareja'); return; }
+  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const para = Array.from(new Set(
+    [fila.player1_email, fila.player2_email]
+      .map((e: unknown) => (typeof e === 'string' ? e.trim().toLowerCase() : ''))
+      .filter((e: string) => re.test(e)),
+  ));
+  if (para.length === 0) return;
+  const pareja = `${p.player1Name} y ${p.player2Name}`;
+  const r = await enviarCorreo({
+    to: para,
+    subject: asuntoInscripcionRecibida(p.tournamentName, p.category),
+    html: htmlInscripcionRecibida(escapeHtml(pareja), escapeHtml(p.tournamentName), escapeHtml(p.category)),
+    text: textoInscripcionRecibida(pareja, p.tournamentName, p.category),
+  });
+  if (r.ok) console.log(`Tournament email (received) sent to ${para.join(',')} via ${r.via}`);
+  else console.error('Correo de inscripción recibida a la pareja fallido:', r.error);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -190,7 +223,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    if (!RESEND_API_KEY) {
+    if (!correoConfigurado()) {
       return new Response(JSON.stringify({ error: 'Email not configured' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -229,31 +262,32 @@ Deno.serve(async (req: Request) => {
       payload.registrationsUrl ? payload.registrationsUrl : '',
     ].filter(Boolean).join('\n');
 
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
+    const result = await enviarCorreo({
+      to: [ADMIN_EMAIL],
+      subject,
+      html,
+      text: textLines,
+      // Headers transaccionales: ayudan a que Hotmail/Outlook entiendan
+      // que es notificación legítima y no marketing.
       headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
+        'X-Entity-Ref-ID': `padelmedina-reg-${Date.now()}`,
+        'X-Auto-Response-Suppress': 'OOF, AutoReply',
       },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        reply_to: REPLY_TO,
-        to: [ADMIN_EMAIL],
-        subject,
-        html,
-        text: textLines,
-        // Headers transaccionales: ayudan a que Hotmail/Outlook entiendan
-        // que es notificación legítima y no marketing.
-        headers: {
-          'X-Entity-Ref-ID': `padelmedina-reg-${Date.now()}`,
-          'X-Auto-Response-Suppress': 'OOF, AutoReply',
-        },
-      }),
     });
-    const result = await res.json();
-    if (!res.ok) {
-      console.error('Resend error:', result);
-      return new Response(JSON.stringify({ error: result }), {
+    // «¡Genial! Hemos recibido vuestra inscripción» a la pareja. Los correos
+    // se sacan de la propia tabla (inscripción de los últimos 30 minutos con
+    // ese nombre y categoría), nunca del cuerpo de la llamada: la función
+    // acepta llamadas sin secreto y así nadie puede usarla para escribir a
+    // direcciones que no se han inscrito. Si falla, el aviso al club sigue.
+    try {
+      await avisarPareja(payload);
+    } catch (e) {
+      console.error('Correo de inscripción recibida a la pareja fallido:', e);
+    }
+
+    if (!result.ok) {
+      console.error('Registration notify email error:', result.error);
+      return new Response(JSON.stringify({ error: result.error }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

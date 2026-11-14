@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabase';
 import TournamentManager from '../components/admin/TournamentManager';
+import AvisoVersionNueva from '../components/AvisoVersionNueva';
 import EventsManager from '../components/admin/EventsManager';
 import FinanceManager from '../components/admin/FinanceManager';
 import TimeClockManager from '../components/admin/TimeClockManager';
@@ -10,58 +11,143 @@ import DateSelector from '../components/booking/DateSelector';
 import { toast, confirmDialog } from '../utils/notify';
 import { serverToday, serverNow } from '../utils/serverTime';
 import { DEFAULT_SCHEDULE_CONFIG, normalizeScheduleConfig, buildScheduleTimes, rebuildAvailableTimes, parseSlot, toMin } from '../utils/schedule';
+import {
+  reservaPagada, resumenPagoReserva, resumenPagoEntreno, entrenoPagado, agregarClasesMonitor,
+  pagoCaducado, estadoFilaReserva, filasPorClase, filasConPagos, metodoTrasPulsar,
+  pagosConAlumno, faltaFuncionRpc, crearGuardiaRefresco, conGuardia, REFRESCO_AUTO_MS,
+} from '../utils/entrenos';
 
 const formatDate = (dateStr) => {
   const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 };
 
+// Cuenta fija a la que pasan las reservas de quien borra su cuenta
+// (migración borrado_cuenta_usuario): sale como "Cliente eliminado".
+const CLIENTE_ELIMINADO_ID = '00000000-0000-4000-8000-000000000001';
+
+// Colores de la rejilla del HORARIO (solo panel del admin; la agenda del
+// monitor tiene los suyos):
+//   libre = VERDE · entreno sin cobrar del todo = LILA · PAGADO = AZUL (igual
+//   para una reserva pagada que para un entreno con todos los alumnos pagados;
+//   el club quiere el mismo color) · reserva sin pagar = ROJO (también el pago
+//   en curso, que lleva ⏳) · bloqueada = GRIS. Fondo suave + borde + texto
+//   oscuro del mismo tono.
 const slotColors = {
-  available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' },
-  booked:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#DC2626' },
-  online:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#2563EB' }, // tarjeta/bizum
-  club:      { borderColor: '#FDE68A', backgroundColor: '#FFFBEB', color: '#B45309' }, // pago en el club
-  blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#94A3B8' },
-  entreno:   { borderColor: '#D8B4FE', backgroundColor: '#FAF5FF', color: '#9333EA' }, // bloqueada para entrenos
+  available: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4', color: '#15803D' }, // libre (verde)
+  entreno:   { borderColor: '#D8B4FE', backgroundColor: '#FAF5FF', color: '#9333EA' }, // entreno (LILA, el de siempre: el club lo pidió de vuelta tras probar el rosa)
+  pagado:    { borderColor: '#93C5FD', backgroundColor: '#EFF6FF', color: '#1D4ED8' }, // reserva pagada (azul)
+  impago:    { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', color: '#B91C1C' }, // reserva sin pagar (rojo)
+  blocked:   { borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', color: '#475569' }, // bloqueada (gris)
   selected:  { borderColor: '#0F172A', backgroundColor: '#0F172A', color: 'white' },
 };
 
-// Color de una reserva según su método de pago: tarjeta/bizum = AZUL;
-// todo lo demás (pago en club, manual del admin, gratis, antiguas) = ROJO.
-const metodoColor = (metodo) =>
-  metodo === 'tarjeta' || metodo === 'bizum' ? slotColors.online : slotColors.booked;
-
-// Etiqueta del método de pago de una reserva (con fallback para reservas antiguas).
-const METODO_PAGO_LABELS = {
-  club: '🏪 Pago en el club',
-  tarjeta: '💳 Tarjeta',
-  bizum: '📱 Bizum',
-  gratis: '🎾 Gratis',
-  manual: '✍️ Reserva manual',
+// Color de una celda del Horario según lo que hay en ella.
+const colorCelda = (slot) => {
+  if (slot?.status === 'booked') return reservaPagada(slot) ? slotColors.pagado : slotColors.impago;
+  if (slot?.status === 'blocked') {
+    if (slot.tipo !== 'entreno') return slotColors.blocked;
+    // Entreno con todos los alumnos pagados: el mismo azul que una pista pagada.
+    return entrenoPagado(slot.entrenoInfo) ? slotColors.pagado : slotColors.entreno;
+  }
+  return slotColors.available;
 };
-const formatMetodoPago = (metodo, isFree) =>
-  METODO_PAGO_LABELS[metodo] || (isFree ? '🎾 Gratis' : '—');
+
+// Texto corto de la celda de un entreno (el color ya dice "entreno"; aquí, el cobro).
+const etiquetaEntreno = (s) => {
+  const r = resumenPagoEntreno(s.entrenoInfo);
+  if (!r.confirmado) return '🏋️ Entreno';
+  if (r.pagados >= r.personas) return '🏋️ Pagado';
+  if (r.pagados === 0) return '🏋️ Sin pagar';
+  return `🏋️ ${r.pagados}/${r.personas}`;
+};
+
+// Emoji de cada método de pago (reservas y entrenos).
+const EMOJI_METODO = { tarjeta: '💳', bizum: '📱', club: '🏪', mano: '💶', manual: '✍️', gratis: '🎾' };
+
+// Etiqueta "Pagada / Sin pagar" con color Y texto (no solo color).
+function ChipPago({ pagada, children }) {
+  const t = pagada ? slotColors.pagado : slotColors.impago;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 800, color: 'white', background: t.color, borderRadius: 999, padding: '0.25rem 0.65rem', whiteSpace: 'nowrap' }}>
+      {children}
+    </span>
+  );
+}
+
+// Una línea "Jugador N / Alumno N → método o Sin pagar" (con hueco opcional
+// a la derecha para los botones de marcar el pago). En móvil, si no caben al
+// lado, los botones bajan a una segunda línea.
+function FilaPago({ etiqueta, pagado, texto, metodo, children }) {
+  const t = pagado ? slotColors.pagado : slotColors.impago;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.3rem 0.45rem', padding: '0.4rem 0', borderTop: '1px solid #F1F5F9' }}>
+      <div style={{ flex: '1 1 7.5rem', minWidth: 0 }}>
+        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B' }}>{etiqueta}</div>
+        <div style={{ fontSize: '0.78rem', fontWeight: 800, color: t.color, lineHeight: 1.25 }}>
+          {pagado ? `✓ ${EMOJI_METODO[metodo] ? EMOJI_METODO[metodo] + ' ' : ''}${texto}` : '✕ Sin pagar'}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// Botones para marcar cómo pagó un jugador (reservas) o un alumno (entrenos):
+// el método marcado va resaltado y volver a pulsarlo lo desmarca. El mismo
+// aspecto en los dos sitios. metodos = [[clave, emoji, nombre], …].
+// Si la tarjeta de la pista es estrecha, los botones bajan de línea (antes
+// se cortaba el último por la derecha).
+function BotonesPago({ metodos, actual, busy, quien, onPulsar }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', flexShrink: 0, maxWidth: '100%' }}>
+      {metodos.map(([mk, emoji, nombre]) => {
+        const on = actual === mk;
+        return (
+          <button key={mk} disabled={busy} onClick={() => onPulsar(mk)}
+            title={on ? `Desmarcar (${nombre})` : `${quien} pagó: ${nombre}`} aria-pressed={on}
+            style={{ padding: '0.32rem 0.5rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 800, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+              border: `1.5px solid ${on ? '#1D4ED8' : '#E2E8F0'}`,
+              background: on ? '#1D4ED8' : 'white',
+              color: on ? 'white' : '#64748B' }}>
+            {emoji} {nombre}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Sin guardia de refresco (por si un componente se usa suelto): guarda tal cual.
+const sinGuardia = (fn) => fn();
 
 // Gestión del pago compartido por el admin: ver el estado X/4 y marcar pagada la
 // parte de un jugador (p.ej. si paga en el club en vez de por su enlace).
-function SplitAdmin({ bookingId }) {
+// onPaidChange(n) avisa del nuevo split_paid para refrescar el resumen de pago.
+// splitPaid: el de la celda del Horario; si cambia (refresco automático: un
+// jugador ha pagado por su enlace) se relee la lista sin enseñar "Cargando".
+function SplitAdmin({ bookingId, splitPaid, onPaidChange, conGuardado = sinGuardia }) {
   const [tokens, setTokens] = useState([]);
   const [paid, setPaid] = useState(1);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const cargadoRef = useRef(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!cargadoRef.current) setLoading(true);
     const [{ data: b }, { data: toks }] = await Promise.all([
       supabase.from('bookings').select('split_paid').eq('id', bookingId).single(),
       supabase.from('shared_payment_tokens').select('id, phone, amount, paid').eq('booking_id', bookingId).order('created_at'),
     ]);
-    setPaid(b?.split_paid || 1);
+    const v = b?.split_paid || 1;
+    setPaid(v);
     setTokens(toks || []);
     setLoading(false);
+    cargadoRef.current = true;
+    return v;
   }, [bookingId]);
 
-  useEffect(() => { if (bookingId) load(); }, [bookingId, load]);
+  useEffect(() => { if (bookingId) load(); }, [bookingId, load, splitPaid]);
 
   const bumpPaid = async (delta) => {
     const { data: b } = await supabase.from('bookings').select('split_paid').eq('id', bookingId).single();
@@ -71,16 +157,20 @@ function SplitAdmin({ bookingId }) {
 
   const markToken = async (tok) => {
     setBusy(true);
-    await supabase.from('shared_payment_tokens').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', tok.id);
-    await bumpPaid(1);
-    await load();
+    await conGuardado(async () => {
+      await supabase.from('shared_payment_tokens').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', tok.id);
+      await bumpPaid(1);
+      onPaidChange?.(await load());
+    });
     setBusy(false);
   };
 
   const markClub = async () => {
     setBusy(true);
-    await bumpPaid(1);
-    await load();
+    await conGuardado(async () => {
+      await bumpPaid(1);
+      onPaidChange?.(await load());
+    });
     setBusy(false);
   };
 
@@ -90,7 +180,7 @@ function SplitAdmin({ bookingId }) {
     <div style={{ marginTop: '0.6rem', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.6rem', padding: '0.7rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tokens.length ? '0.5rem' : 0 }}>
         <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>👥 Pago compartido</span>
-        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: paid >= 4 ? '#15803D' : '#B45309', background: paid >= 4 ? '#F0FDF4' : '#FFFBEB', border: `1px solid ${paid >= 4 ? '#BBF7D0' : '#FDE68A'}`, padding: '0.15rem 0.5rem', borderRadius: 999 }}>
+        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: paid >= 4 ? slotColors.pagado.color : '#B45309', background: paid >= 4 ? slotColors.pagado.backgroundColor : '#FFFBEB', border: `1px solid ${paid >= 4 ? slotColors.pagado.borderColor : '#FDE68A'}`, padding: '0.15rem 0.5rem', borderRadius: 999 }}>
           {paid >= 4 ? '✓ Todo pagado' : `${paid}/4`}
         </span>
       </div>
@@ -98,9 +188,9 @@ function SplitAdmin({ bookingId }) {
         <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', padding: '0.35rem 0', borderTop: '1px solid #F1F5F9' }}>
           <span style={{ fontSize: '0.78rem', color: '#0F172A', fontWeight: 600 }}>📱 {t.phone} · {Number(t.amount).toFixed(2).replace('.', ',')}€</span>
           {t.paid ? (
-            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#15803D', whiteSpace: 'nowrap' }}>✓ Pagado</span>
+            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: slotColors.pagado.color, whiteSpace: 'nowrap' }}>✓ Pagado</span>
           ) : (
-            <button onClick={() => markToken(t)} disabled={busy} style={{ fontSize: '0.7rem', fontWeight: 800, color: 'white', background: '#16A34A', border: 'none', borderRadius: '0.45rem', padding: '0.35rem 0.55rem', cursor: busy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>Marcar pagado</button>
+            <button onClick={() => markToken(t)} disabled={busy} style={{ fontSize: '0.7rem', fontWeight: 800, color: 'white', background: '#1D4ED8', border: 'none', borderRadius: '0.45rem', padding: '0.35rem 0.55rem', cursor: busy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>Marcar pagado</button>
           )}
         </div>
       ))}
@@ -113,31 +203,78 @@ function SplitAdmin({ bookingId }) {
   );
 }
 
-// Cómo ha pagado CADA JUGADOR de la reserva (lo marca el admin al pulsar la
-// reserva en su Horario): 💳 tarjeta / 📱 bizum / 🏪 club por jugador, o el
-// atajo "✓ Pista pagada" (= cobro_confirmado, el mismo check que usa Finanzas).
-function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMetodo, onSaved }) {
-  const norm = (arr) => {
-    const a = Array.isArray(arr) ? [...arr] : [];
-    while (a.length < 4) a.push(null);
-    return a.slice(0, 4);
-  };
-  const [pagos, setPagos] = useState(() => norm(initPagos));
-  const [cobro, setCobro] = useState(!!initCobro);
-  const [isFree, setIsFree] = useState(!!initIsFree);
-  const [metodo, setMetodo] = useState(initMetodo || null);
-  const [busy, setBusy] = useState(false);
+// Los 4 huecos de pagos_jugadores (null = jugador sin marcar).
+const normPagos = (arr) => {
+  const a = Array.isArray(arr) ? [...arr] : [];
+  while (a.length < 4) a.push(null);
+  return a.slice(0, 4);
+};
 
-  // Releer SIEMPRE de BD al abrir: el mapa de slots del padre solo se recarga
-  // al cambiar de día — partir de su copia vieja machacaría pagos ya guardados.
+// Campos de pago de una fila de bookings, con la forma de la celda del Horario.
+// Lo que no esté 'confirmed' nunca cuenta como pagado (esHold = sin pagar).
+const pagoDesdeFila = (b) => ({
+  metodo: b.metodo_pago || null,
+  isFree: !!b.is_free,
+  cobroConfirmado: !!b.cobro_confirmado,
+  esHold: b.status !== 'confirmed',
+  paymentType: b.payment_type || null,
+  splitPaid: b.split_paid,
+  pagosJugadores: normPagos(b.pagos_jugadores),
+  importe: b.importe ?? null,
+});
+
+// PAGO de una reserva, lo primero al pulsarla en el Horario: "Pagada / Sin
+// pagar" (color y texto), método, importe y "X de 4 jugadores han pagado" con
+// la lista de jugadores. En esa MISMA lista el admin marca cómo pagó cada uno
+// (💳 tarjeta / 📱 bizum / 🏪 club, repetir = desmarcar) y debajo está el atajo
+// "Marcar pista pagada" (= cobro_confirmado, el mismo check que usa Finanzas).
+// En pago compartido, los pagos de cada jugador se marcan SOLO en la gestión
+// de los enlaces (SplitAdmin, que sube split_paid).
+// onGone: la reserva ya no está viva al releerla (cancelada o pago no
+// completado); el padre cierra el panel y recarga la rejilla.
+// Lo que se pinta sale SIEMPRE de la celda del Horario (reserva): el padre la
+// mantiene al día con lo que se guarda aquí (onSaved) y con el refresco
+// automático, así que si el monitor marca un pago con el panel abierto, se ve.
+// conGuardado: avisa al refresco automático de que se está guardando.
+function PagoReservaAdmin({ reserva, onSaved, onGone, conGuardado = sinGuardia }) {
+  const bookingId = reserva.bookingId;
+  const datos = {
+    metodo: reserva.metodo || null,
+    isFree: !!reserva.isFree,
+    cobroConfirmado: !!reserva.cobroConfirmado,
+    esHold: !!reserva.esHold,
+    paymentType: reserva.paymentType || null,
+    splitPaid: reserva.splitPaid,
+    pagosJugadores: normPagos(reserva.pagosJugadores),
+    importe: reserva.importe ?? null,
+  };
+  const [busy, setBusy] = useState(false);
+  const { pagosJugadores: pagos, cobroConfirmado: cobro, isFree, metodo } = datos;
+
+  // Aviso al padre: cambia la celda (color) y, con ella, este panel.
+  const actualizar = (patch) => onSaved?.(patch);
+
+  // Todo guardado de este panel (también los del pago compartido) cuenta aquí,
+  // para que la lectura de al abrir no pise lo que se marque antes de que llegue.
+  const guardadosRef = useRef(0);
+  const guardar = (fn) => { guardadosRef.current += 1; return conGuardado(fn); };
+
+  // Releer SIEMPRE de BD al abrir: la celda puede tener hasta un refresco de
+  // retraso. Lo leído se pasa al padre: así la celda se pinta con lo de verdad.
   useEffect(() => {
     let alive = true;
+    const guardadosAlPedir = guardadosRef.current;
     supabase.from('bookings').select('*').eq('id', bookingId).single().then(({ data }) => {
       if (!alive || !data) return;
-      setPagos(norm(data.pagos_jugadores));
-      setCobro(!!data.cobro_confirmado);
-      setIsFree(!!data.is_free);
-      setMetodo(data.metodo_pago || null);
+      if (guardadosRef.current !== guardadosAlPedir) return; // ya se guardó algo después: vale lo guardado
+      // Ya no es una reserva (se canceló, o el pago con el banco falló o
+      // caducó mientras la rejilla seguía sin recargar): no se pinta como
+      // pago (saldría "Pagada" con el método del intento) ni se pasa a la celda.
+      if (data.status !== 'confirmed' && (data.status !== 'pendiente_pago' || pagoCaducado(data))) {
+        onGone?.();
+        return;
+      }
+      onSaved?.(pagoDesdeFila(data));
     });
     return () => { alive = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,10 +282,19 @@ function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMeto
 
   const marcar = async (idx, metodoPago) => {
     if (busy) return;
-    const next = [...pagos];
-    next[idx] = next[idx] === metodoPago ? null : metodoPago; // repetir = desmarcar
+    const nuevo = metodoTrasPulsar(pagos[idx], metodoPago); // repetir = desmarcar
     setBusy(true);
-    const { error } = await supabase.from('bookings').update({ pagos_jugadores: next }).eq('id', bookingId);
+    // Con la MISMA función que usa el monitor desde su agenda: cambia SOLO
+    // este jugador, con la reserva bloqueada, así no se pisa lo que él haya
+    // marcado entretanto (guardar la lista entera de 4 sí lo pisaría).
+    const { data, error } = await guardar(async () => {
+      const res = await supabase.rpc('monitor_marcar_pago_jugador', { p_booking_id: bookingId, p_idx: idx, p_metodo: nuevo });
+      if (!res.error || !faltaFuncionRpc(res.error)) return res;
+      // Servidor sin esa función todavía: como antes, guardando la lista entera.
+      const lista = pagos.map((m, i) => (i === idx ? nuevo : m));
+      const upd = await supabase.from('bookings').update({ pagos_jugadores: lista }).eq('id', bookingId);
+      return { data: lista, error: upd.error };
+    });
     setBusy(false);
     if (error) {
       toast(/pagos_jugadores/i.test(error.message || '')
@@ -156,22 +302,18 @@ function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMeto
         : 'Error: ' + error.message, 'error');
       return;
     }
-    setPagos(next);
+    const next = normPagos(Array.isArray(data) ? data : pagos.map((m, i) => (i === idx ? nuevo : m)));
     // Con los 4 pagos marcados, la BD confirma el cobro sola (trigger
     // bookings_autoconfirma_por_pagos) y lo deshace al desmarcar uno:
     // reflejarlo aquí sin tener que reabrir la reserva.
     const antes = pagos.filter(Boolean).length;
     const despues = next.filter(Boolean).length;
     if (despues >= 4 && antes < 4) {
-      setCobro(true);
-      if (metodo === 'manual') setIsFree(false);
-      onSaved?.({ pagosJugadores: next, cobroConfirmado: true });
+      actualizar({ pagosJugadores: next, cobroConfirmado: true, ...(metodo === 'manual' ? { isFree: false } : {}) });
     } else if (antes >= 4 && despues < 4 && cobro) {
-      setCobro(false);
-      if (metodo === 'manual') setIsFree(true);
-      onSaved?.({ pagosJugadores: next, cobroConfirmado: false });
+      actualizar({ pagosJugadores: next, cobroConfirmado: false, ...(metodo === 'manual' ? { isFree: true } : {}) });
     } else {
-      onSaved?.({ pagosJugadores: next });
+      actualizar({ pagosJugadores: next });
     }
   };
 
@@ -189,44 +331,202 @@ function PagosPistaAdmin({ bookingId, initPagos, initCobro, initIsFree, initMeto
       if (!next) { patch.is_free = true; nextFree = true; }
     }
     setBusy(true);
-    const { error } = await supabase.from('bookings').update(patch).eq('id', bookingId);
+    const { error } = await guardar(() => supabase.from('bookings').update(patch).eq('id', bookingId));
     setBusy(false);
     if (error) { toast('Error: ' + error.message, 'error'); return; }
-    setCobro(next);
-    setIsFree(nextFree);
-    onSaved?.({ cobroConfirmado: next, isFree: nextFree });
+    actualizar({ cobroConfirmado: next, isFree: nextFree });
     toast(next ? '✓ Pista marcada como pagada (también en Finanzas)' : 'Pista marcada como pendiente de cobro', 'success');
   };
 
-  const METODOS_PISTA = [['tarjeta', '💳 Tarjeta'], ['bizum', '📱 Bizum'], ['club', '🏪 Club']];
+  const r = resumenPagoReserva(datos);
+  const tono = r.pagada ? slotColors.pagado : slotColors.impago;
+  const esSplit = datos.paymentType === 'split';
+  const online = metodo === 'tarjeta' || metodo === 'bizum';
+  // "Marcar pista pagada" solo donde el cobro se confirma a mano (club, manual,
+  // pago compartido…). Lo pagado entero online o de cortesía ya está pagado, y
+  // un pago en curso se resuelve solo con el banco.
+  const conAtajoPagada = !datos.esHold && metodo !== 'gratis' && (esSplit || !online);
+  // Botones por jugador: igual que en la agenda del monitor, no se ofrecen si
+  // la pista se pagó entera online o es de cortesía (no hay nada que marcar).
+  // Tampoco en pago compartido: ahí cada pago se apunta en SplitAdmin (sube
+  // split_paid); con los dos controles el mismo pago se contaba dos veces o
+  // ninguna.
+  const conBotonesJugador = conAtajoPagada && !esSplit;
+  const METODOS_PISTA = [['tarjeta', '💳', 'Tarjeta'], ['bizum', '📱', 'Bizum'], ['club', '🏪', 'Club']];
+
   return (
-    <div style={{ marginTop: '0.6rem', marginBottom: '0.6rem', background: 'white', border: '1px solid #E2E8F0', borderRadius: '0.6rem', padding: '0.7rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A' }}>💰 Cómo han pagado los jugadores</span>
-        <button onClick={togglePagada} disabled={busy}
-          style={{ fontSize: '0.72rem', fontWeight: 800, padding: '0.3rem 0.7rem', borderRadius: 999, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-            border: `1.5px solid ${cobro ? '#16A34A' : '#CBD5E1'}`, background: cobro ? '#16A34A' : 'white', color: cobro ? 'white' : '#475569' }}>
-          {cobro ? '✓ Pista pagada' : 'Marcar pista pagada'}
-        </button>
+    <div style={{ marginBottom: '0.75rem', background: 'white', border: `1.5px solid ${tono.borderColor}`, borderRadius: '0.75rem', overflow: 'hidden' }}>
+      {/* Estado (+ importe a la derecha) y, debajo, el método */}
+      <div style={{ background: tono.backgroundColor, padding: '0.6rem 0.75rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
+          <ChipPago pagada={r.pagada}>{r.pagada ? '✓' : r.estado === 'en_curso' ? '⏳' : '✕'} {r.etiqueta}</ChipPago>
+          {r.importeTexto && (
+            <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0F172A', background: 'white', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0.2rem 0.55rem', whiteSpace: 'nowrap' }}>
+              {r.importeTexto}
+            </span>
+          )}
+        </div>
+        <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', fontWeight: 800, color: '#0F172A' }}>
+          {esSplit ? '👥' : (EMOJI_METODO[metodo] || '💰')} {r.metodoTexto}
+        </p>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-        {[0, 1, 2, 3].map(i => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', minWidth: 68 }}>👤 Jugador {i + 1}</span>
-            {METODOS_PISTA.map(([mk, ml]) => (
-              <button key={mk} disabled={busy} onClick={() => marcar(i, mk)}
-                style={{ padding: '0.28rem 0.55rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 800, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-                  border: `1.5px solid ${pagos[i] === mk ? '#1D4ED8' : '#E2E8F0'}`,
-                  background: pagos[i] === mk ? '#1D4ED8' : 'white',
-                  color: pagos[i] === mk ? 'white' : '#64748B' }}>
-                {ml}
-              </button>
+
+      <div style={{ padding: '0.6rem 0.75rem 0.7rem' }}>
+        <p style={{ margin: 0, fontSize: '0.84rem', fontWeight: 800, color: tono.color }}>{r.textoPagados}</p>
+        {r.nota && <p style={{ margin: '0.2rem 0 0', fontSize: '0.74rem', color: '#64748B', lineHeight: 1.4 }}>{r.nota}</p>}
+
+        {/* Jugador 1..4: estado + botones para marcar cómo pagó. Un pago en
+            curso con el banco no se marca (se resuelve solo) y no se lista;
+            en una de cortesía tampoco, salvo que alguien esté marcado. */}
+        {!datos.esHold && !(r.nadaQueCobrar && !pagos.some(Boolean)) && (
+          <div style={{ marginTop: '0.45rem' }}>
+            {r.jugadores.map((j, i) => (
+              <FilaPago key={j.n} etiqueta={`👤 Jugador ${j.n}`} pagado={j.estado !== 'sin_pagar'} texto={j.texto} metodo={j.metodo}>
+                {conBotonesJugador && (
+                  <BotonesPago metodos={METODOS_PISTA} actual={pagos[i]} busy={busy} quien={`Jugador ${j.n}`} onPulsar={(mk) => marcar(i, mk)} />
+                )}
+              </FilaPago>
             ))}
           </div>
-        ))}
+        )}
+
+        {conAtajoPagada && (
+          <button onClick={togglePagada} disabled={busy}
+            style={{ marginTop: '0.55rem', width: '100%', fontSize: '0.76rem', fontWeight: 800, padding: '0.5rem 0.7rem', borderRadius: '0.6rem', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              border: `1.5px solid ${cobro ? '#1D4ED8' : '#CBD5E1'}`, background: cobro ? '#1D4ED8' : 'white', color: cobro ? 'white' : '#475569' }}>
+            {cobro ? '✓ Pista pagada · pulsa para deshacer' : 'Marcar pista pagada'}
+          </button>
+        )}
+
+        {esSplit && !datos.esHold && (
+          <SplitAdmin bookingId={bookingId} splitPaid={datos.splitPaid} conGuardado={guardar} onPaidChange={(n) => actualizar({ splitPaid: n })} />
+        )}
       </div>
     </div>
   );
+}
+
+// Métodos de pago de un alumno de entreno (clases_monitor.pagos; 'mano' = efectivo).
+const METODOS_ENTRENO = [['tarjeta', '💳', 'Tarjeta'], ['bizum', '📱', 'Bizum'], ['mano', '💶', 'Efectivo']];
+
+// Cobro de un ENTRENO al pulsarlo en el Horario. Lo marcan, alumno por alumno,
+// el monitor desde su agenda y el admin desde aquí (los dos sobre la MISMA fila
+// de clases_monitor, vía la RPC admin_marcar_pago_alumno): lo que marque uno lo
+// ve el otro. Solo se puede marcar cuando el monitor ha confirmado la clase
+// (cuántos alumnos tuvo). Si en esa pista y hora hay varios monitores, arriba
+// va la suma y debajo los alumnos de cada uno.
+//   info  = entrada de agregarClasesMonitor (suma de la pista/hora) o null
+//   filas = filas de clases_monitor de esa pista/hora ({ user_id, date,
+//           time_slot, court_id, personas, pagos, nombre })
+//   onSaved(fila, pagos) = pago guardado: el padre actualiza la celda
+//   onRefrescar() = algo no cuadraba (p. ej. el monitor quitó la confirmación)
+function ResumenEntreno({ info, filas, onSaved, onRefrescar, conGuardado = sinGuardia }) {
+  const [busy, setBusy] = useState(false);
+  const r = resumenPagoEntreno(info);
+  const todo = r.confirmado && r.pagados >= r.personas;
+  const tono = !r.confirmado ? slotColors.entreno : todo ? slotColors.pagado : slotColors.impago;
+  const lista = (Array.isArray(filas) ? filas : []).filter(f => (Number(f.personas) || 0) > 0);
+  const varios = lista.length > 1;
+
+  const marcar = async (fila, idx, metodo) => {
+    if (busy) return;
+    const nuevo = metodoTrasPulsar((Array.isArray(fila.pagos) ? fila.pagos : [])[idx], metodo); // repetir = desmarcar
+    setBusy(true);
+    const { data, error } = await conGuardado(() => supabase.rpc('admin_marcar_pago_alumno', {
+      p_user_id: fila.user_id,
+      p_date: fila.date,
+      p_time_slot: fila.time_slot,
+      p_court_id: fila.court_id,
+      p_idx: idx,
+      p_metodo: nuevo,
+    }));
+    setBusy(false);
+    if (error) {
+      if (faltaFuncionRpc(error)) {
+        toast('Falta aplicar la migración admin_marca_pagos_entreno en Supabase: aún no se pueden marcar pagos de entrenos desde aquí', 'error');
+        return;
+      }
+      toast('No se pudo guardar el pago: ' + error.message, 'error');
+      onRefrescar?.(); // lo de la pantalla no cuadra con la BD: traer lo de verdad
+      return;
+    }
+    onSaved?.(fila, Array.isArray(data) ? data : pagosConAlumno(fila.pagos, fila.personas, idx, nuevo));
+  };
+
+  // Alumnos de una fila (un monitor), con los botones para marcar cómo pagó.
+  // 'mano' se lee "Efectivo", como en su botón.
+  const alumnosDe = (fila) => resumenPagoEntreno(fila).alumnos.map((a, i) => (
+    <FilaPago key={a.n} etiqueta={`🎾 Alumno ${a.n}`} pagado={a.pagado} texto={a.metodo === 'mano' ? 'Efectivo' : a.texto} metodo={a.metodo}>
+      <BotonesPago metodos={METODOS_ENTRENO} actual={(Array.isArray(fila.pagos) ? fila.pagos : [])[i] || null}
+        busy={busy} quien={`Alumno ${a.n}`} onPulsar={(mk) => marcar(fila, i, mk)} />
+    </FilaPago>
+  ));
+
+  return (
+    <div style={{ marginBottom: '0.75rem', background: 'white', border: `1.5px solid ${tono.borderColor}`, borderRadius: '0.75rem', overflow: 'hidden' }}>
+      <div style={{ background: tono.backgroundColor, padding: '0.6rem 0.75rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.4rem 0.6rem' }}>
+        {r.confirmado ? (
+          <>
+            <ChipPago pagada={todo}>{todo ? '✓ Pagado' : r.pagados > 0 ? '◐ Pago parcial' : '✕ Sin pagar'}</ChipPago>
+            <span style={{ fontSize: '0.84rem', fontWeight: 800, color: tono.color }}>{r.texto}</span>
+          </>
+        ) : (
+          <span style={{ fontSize: '0.84rem', fontWeight: 800, color: tono.color }}>⏳ {r.texto}</span>
+        )}
+      </div>
+      <div style={{ padding: '0.35rem 0.75rem 0.6rem' }}>
+        {r.confirmado ? (
+          lista.length === 0 ? (
+            // Sin el detalle por monitor (no debería pasar): solo lectura
+            r.alumnos.map(a => (
+              <FilaPago key={a.n} etiqueta={`🎾 Alumno ${a.n}`} pagado={a.pagado} texto={a.texto} metodo={a.metodo} />
+            ))
+          ) : !varios ? (
+            alumnosDe(lista[0])
+          ) : (
+            lista.map(fila => (
+              <div key={fila.user_id} style={{ marginTop: '0.35rem' }}>
+                <p style={{ margin: '0.25rem 0 0.1rem', fontSize: '0.74rem', fontWeight: 800, color: '#0F172A' }}>
+                  🏋️ {fila.nombre || 'Monitor'} · <span style={{ fontWeight: 700, color: '#64748B' }}>{resumenPagoEntreno(fila).texto}</span>
+                </p>
+                {alumnosDe(fila)}
+              </div>
+            ))
+          )
+        ) : (
+          <p style={{ margin: '0.25rem 0 0', fontSize: '0.74rem', color: '#64748B', lineHeight: 1.4 }}>
+            Cuando el monitor confirme cuántos alumnos vinieron, aquí verás cómo pagó cada uno y podrás marcarlo tú también.
+          </p>
+        )}
+        {info?.monitores > 1 && (
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.72rem', color: '#64748B' }}>Suma de {info.monitores} monitores en esta pista y hora.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Filas de bookings de UN día para la pestaña "Reservas", con el perfil de cada
+// jugador (profiles NO se puede incrustar desde bookings: no hay FK, se carga
+// aparte). Trae todos los estados. Devuelve null si la consulta falla.
+async function cargarReservasDia(date) {
+  const { data: bookings, error } = await supabase
+    .from('bookings')
+    // '*' y no una lista: así trae importe y cobro_confirmado si existen en
+    // este servidor (pedir una columna que no exista tumbaría toda la lista).
+    .select('*, courts(name, sport, gradient)')
+    .eq('date', date)
+    .order('time_slot', { ascending: true });
+  if (error) { console.error('Error cargando reservas:', error); return null; }
+  const rows = bookings || [];
+  if (rows.length === 0) return [];
+  const userIds = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
+  const profileMap = {};
+  if (userIds.length) {
+    const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
+    (profiles || []).forEach(p => { profileMap[p.id] = p; });
+  }
+  return rows.map(b => ({ ...b, profiles: profileMap[b.user_id] || null }));
 }
 
 const editLabel = { display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.04em' };
@@ -479,12 +779,27 @@ const AdminDashboard = () => {
   const [savingSched, setSavingSched] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState(null); // { type: 'ok'|'error', text: string }
+  const [settingsLoadError, setSettingsLoadError] = useState(false); // la carga de site_settings falló → no dejar guardar
+  // Copia de los ajustes tal cual se cargaron: al guardar solo enviamos las
+  // columnas que han cambiado respecto a esto, para no pisar cambios hechos
+  // en otra pestaña/dispositivo mientras tanto.
+  const settingsLoadedRef = useRef(null);
   const [selectedDate, setSelectedDate] = useState(serverToday());
   const [courts, setCourts] = useState([]);
   const [slots, setSlots] = useState({});
   const [activeSlot, setActiveSlot] = useState(null);
   const [loading, setLoading] = useState(true);
   const courtsRef = useRef([]);
+  // Refresco AUTOMÁTICO (los pagos son mutuos con el monitor): cada guardado
+  // de un pago pasa por conGuardado, y un refresco pedido antes o durante un
+  // guardado no se aplica (si no, desharía en pantalla lo recién marcado).
+  // Los contadores deciden qué lectura de la parrilla manda si se cruzan:
+  // una automática solo vale si no ha empezado otra lectura después.
+  const [guardia] = useState(crearGuardiaRefresco);
+  const conGuardado = useCallback((fn) => conGuardia(guardia, fn), [guardia]);
+  const cargaSeqRef = useRef(0);          // toda lectura de la parrilla
+  const cargaExplicitaSeqRef = useRef(0); // solo las pedidas a mano (día, acciones…)
+  const reservasSeqRef = useRef(0);       // lecturas de la pestaña Reservas
   const [allUsers, setAllUsers] = useState([]);
   const [userSearch, setUserSearch] = useState('');
   const [selectedUserId, setSelectedUserId] = useState(null);
@@ -493,6 +808,12 @@ const AdminDashboard = () => {
   const [allDbBookings, setAllDbBookings] = useState([]);
   const [loadingAllBookings, setLoadingAllBookings] = useState(false);
   const [bookingsDate, setBookingsDate] = useState(serverToday());
+  // Pestaña Reservas: hora con la que se decide si un 'pendiente_pago' sigue en
+  // curso (< 15 min) o ya no se completó (= la hora de la última lectura de la
+  // lista: solo avanza al volver a leerla), y si se ven
+  // los intentos de pago no completados (por defecto, ocultos tras un aviso).
+  const [relojReservas, setRelojReservas] = useState(() => Date.now());
+  const [verPagosNoCompletados, setVerPagosNoCompletados] = useState(false);
 
   // Cambio de día a MEDIANOCHE: si el admin estaba mirando "hoy" y la fecha
   // cambia (deja la web abierta o entra a las 00:0x), saltar al día nuevo solo.
@@ -563,6 +884,8 @@ const AdminDashboard = () => {
     return ALL_METHODS;
   };
 
+  const sameMethods = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+
   const togglePaymentMethod = async (courtId, slot, method) => {
     const day = paymentDayFilter;
     const current = getAllowedMethods(courtId, slot, day);
@@ -572,6 +895,36 @@ const AdminDashboard = () => {
 
     const cellKey = `${courtId}-${day}-${slot}-${method}`;
     setSavingPaymentCell(cellKey);
+
+    // Si estamos editando un día concreto y el resultado coincide con lo que se
+    // heredaría de "Todos los días", borramos la fila específica en vez de
+    // duplicar la regla heredada: así la celda vuelve a mostrarse como heredada.
+    const courtRules = paymentRules[courtId];
+    const inherited = courtRules?.[-1]?.[slot] !== undefined ? courtRules[-1][slot] : ALL_METHODS;
+    if (day !== -1 && sameMethods(next, inherited)) {
+      const prevState = paymentRules;
+      // Optimistic: quitar el override del día
+      setPaymentRules(prev => {
+        const c = { ...(prev[courtId] || {}) };
+        const dayRules = { ...(c[day] || {}) };
+        delete dayRules[slot];
+        c[day] = dayRules;
+        return { ...prev, [courtId]: c };
+      });
+      const { error } = await supabase
+        .from('court_payment_rules')
+        .delete()
+        .eq('court_id', courtId)
+        .eq('time_slot', slot)
+        .eq('day_of_week', day);
+      setSavingPaymentCell(null);
+      if (error) {
+        console.error('Error borrando regla de pago:', error);
+        toast('Error al guardar: ' + error.message);
+        setPaymentRules(prevState); // Revert
+      }
+      return;
+    }
 
     // Optimistic update
     setPaymentRules(prev => ({
@@ -604,11 +957,67 @@ const AdminDashboard = () => {
     }
   };
 
+  // "Volver a heredado": borra TODAS las reglas propias de un día para una pista,
+  // de modo que ese día vuelve a regirse por la regla de "Todos los días".
+  const volverAHeredado = async (courtId) => {
+    const day = paymentDayFilter;
+    if (day === -1) return;
+    const dayLabel = DAY_OPTIONS.find(o => o.key === day)?.label || 'ese día';
+    const ok = await confirmDialog(
+      `¿Volver a la regla por defecto (todos los días) para ${dayLabel}? Se borrarán las reglas propias de ese día en esta pista.`,
+      { title: 'Volver a heredado', okText: 'Volver a heredado' }
+    );
+    if (!ok) return;
+    const prevState = paymentRules;
+    setPaymentRules(prev => {
+      const c = { ...(prev[courtId] || {}) };
+      delete c[day];
+      return { ...prev, [courtId]: c };
+    });
+    const { error } = await supabase
+      .from('court_payment_rules')
+      .delete()
+      .eq('court_id', courtId)
+      .eq('day_of_week', day);
+    if (error) {
+      toast('Error al restaurar: ' + error.message, 'error');
+      setPaymentRules(prevState);
+    } else {
+      toast(`${dayLabel} vuelve a usar la regla por defecto`, 'success');
+    }
+  };
+
+  // Releer de BD las reservas vivas (confirmadas + holds de pago aún válidos) de
+  // una pista y día, y decir si alguna SOLAPA con el intervalo [ini, fin] en
+  // minutos. Se usa antes de bloquear/marcar entreno para no pisar una reserva
+  // (la detección es por intervalos, no por igualdad de texto del hueco).
+  const haySolapeConReservas = async (courtId, date, ini, fin) => {
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('time_slot, status, created_at')
+      .eq('court_id', courtId)
+      .eq('date', date)
+      .in('status', ['confirmed', 'pendiente_pago']);
+    if (error) { toast('Error comprobando reservas: ' + error.message, 'error'); return true; }
+    const HOLD_MS = 15 * 60 * 1000;
+    return (data || []).some(b => {
+      if (b.status === 'pendiente_pago' && (Date.now() - new Date(b.created_at).getTime()) >= HOLD_MS) return false;
+      const [a, bb] = parseSlot(b.time_slot);
+      return ini < bb && a < fin;
+    });
+  };
+
   // Marcar el entreno con su duración REAL (puede diferir del hueco de la
   // parrilla; ej.: hueco 19:00-20:30 pero el entreno dura 20:00-21:00).
   const confirmarEntreno = async () => {
     if (!entrenoStart || !entrenoEnd || entrenoEnd <= entrenoStart) { toast('Pon una hora de inicio y una de fin válidas', 'error'); return; }
     const time_slot = `${entrenoStart} - ${entrenoEnd}`;
+    // No pisar una reserva viva de ese día/pista (por solape de intervalos).
+    const [ini, fin] = parseSlot(time_slot);
+    if (await haySolapeConReservas(entrenoModal.courtId, selectedDate, ini, fin)) {
+      toast('Ese horario pisa una reserva de ese día. Muévela o cámbiale la hora al entreno.', 'error');
+      return;
+    }
     const { error } = await supabase.from('blocked_slots').insert({
       court_id: entrenoModal.courtId,
       date: selectedDate,
@@ -677,6 +1086,26 @@ const AdminDashboard = () => {
       return;
     }
     const time_slot = `${customStart} - ${customEnd}`;
+    // No pisar nada ocupado (reservas vivas, bloqueos, entrenos) ni otro hueco
+    // personalizado de ese día en esa pista — por solape de intervalos. Se
+    // consulta a BD porque el hueco puede ser para un día distinto al cargado.
+    const [ni, nf] = parseSlot(time_slot);
+    const [resBk, resBl, resCs] = await Promise.all([
+      supabase.from('bookings').select('time_slot, status, created_at').eq('court_id', customModal.courtId).eq('date', customDate).in('status', ['confirmed', 'pendiente_pago']),
+      supabase.from('blocked_slots').select('time_slot').eq('court_id', customModal.courtId).eq('date', customDate),
+      supabase.from('custom_slots').select('time_slot').eq('court_id', customModal.courtId).eq('date', customDate),
+    ]);
+    if (resBk.error || resBl.error || resCs.error) {
+      toast('Error comprobando disponibilidad: ' + (resBk.error || resBl.error || resCs.error).message, 'error');
+      return;
+    }
+    const HOLD_MS = 15 * 60 * 1000;
+    const solapa = (slotStr) => { const [a, b] = parseSlot(slotStr); return ni < b && a < nf; };
+    const pisaOcupado =
+      (resBk.data || []).some(b => (b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS) && solapa(b.time_slot)) ||
+      (resBl.data || []).some(b => solapa(b.time_slot));
+    if (pisaOcupado) { toast('Esa hora pisa una reserva, bloqueo o entreno de ese día', 'error'); return; }
+    if ((resCs.data || []).some(c => solapa(c.time_slot))) { toast('Ya hay un hueco personalizado que se solapa con esa hora ese día', 'error'); return; }
     const { error } = await supabase.from('custom_slots').insert({
       court_id: customModal.courtId, date: customDate, time_slot, created_by: user.id,
     });
@@ -740,7 +1169,12 @@ const AdminDashboard = () => {
       if (!ok) return;
     }
     setSavingSched(true);
-    const { error } = await supabase.from('site_settings').update({ schedule_config: clean }).eq('id', 1);
+    const { data: savedRows, error } = await supabase.from('site_settings').update({ schedule_config: clean }).eq('id', 1).select('id');
+    if (!error && (!savedRows || savedRows.length === 0)) {
+      setSavingSched(false);
+      toast('No se guardó el horario: sin permiso o fila inexistente', 'error');
+      return;
+    }
     if (!error && huerfanas.length > 0) {
       const { error: delError } = await supabase.from('court_payment_rules').delete().in('time_slot', huerfanas);
       if (delError) toast('El horario se guardó, pero no se pudieron limpiar las reglas de pago antiguas: ' + delError.message, 'error');
@@ -765,35 +1199,73 @@ const AdminDashboard = () => {
     toast('✓ Horario actualizado. La nueva parrilla ya se ofrece a los jugadores.', 'success');
   };
 
-  const loadSlots = useCallback(async (date) => {
-    const [resBookings, resBlocked, resCustoms] = await Promise.all([
+  // auto = refresco automático (cada REFRESCO_AUTO_MS o al volver a primer
+  // plano): no se pide mientras se guarda un pago, no avisa de errores (se
+  // queda lo que había) y lo que traiga solo se aplica si sigue valiendo.
+  const loadSlots = useCallback(async (date, { auto = false } = {}) => {
+    const foto = auto ? guardia.pedir() : null;
+    if (auto && foto == null) return; // guardando: ya tocará en la siguiente vuelta
+    const seq = ++cargaSeqRef.current;
+    const seqExplicita = auto ? null : ++cargaExplicitaSeqRef.current;
+    const [resBookings, resBlocked, resCustoms, resClases] = await Promise.all([
       supabase.from('bookings').select('*').eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
       supabase.from('blocked_slots').select('*').eq('date', date),
       supabase.from('custom_slots').select('*').eq('date', date),
+      // Cobro de los entrenos: lo marcan el monitor y el admin en clases_monitor
+      // (el admin, por RLS, ve todas las filas). Una fila por monitor: user_id
+      // y date hacen falta para marcar los pagos desde el Horario. Si la tabla
+      // no existe aún, data va vacío y los entrenos salen como "el monitor aún
+      // no ha confirmado la clase".
+      supabase.from('clases_monitor').select('user_id, date, court_id, time_slot, personas, pagos').eq('date', date).order('user_id'),
     ]);
 
-    if (resBookings.error) {
+    if (resBookings.error && !auto) {
       console.error('Error cargando reservas:', resBookings.error);
       toast('Error cargando reservas de BD: ' + resBookings.error.message);
     }
 
-    // Holds 'pendiente_pago': bloquean el hueco 15 min (jugador pagando en el banco)
-    const HOLD_MS = 15 * 60 * 1000;
-    let bookings = (resBookings.data || []).filter(b =>
-      b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS
-    );
+    // Holds 'pendiente_pago': bloquean el hueco 15 min (jugador pagando en el
+    // banco); pasado ese tiempo no son reservas y el hueco está libre.
+    let bookings = (resBookings.data || []).filter(b => b.status === 'confirmed' || !pagoCaducado(b));
     const blocked = resBlocked.data || [];
+    const filasClases = resClases.data || [];
 
-    if (bookings.length > 0) {
-      const userIds = [...new Set(bookings.map(b => b.user_id))];
-      const { data: profiles, error: pError } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
+    // Nombres de quienes reservaron y de los monitores de los entrenos (estos,
+    // para separar sus alumnos si coinciden varios en la misma pista y hora).
+    const idsPerfiles = [...new Set([...bookings.map(b => b.user_id), ...filasClases.map(c => c.user_id)].filter(Boolean))];
+    const nombreMonitor = {};
+    let pError = null;
+    if (idsPerfiles.length > 0) {
+      const res = await supabase.from('profiles').select('id, name, email').in('id', idsPerfiles);
+      const profiles = res.data;
+      pError = res.error;
       if (pError) console.error('Error cargando perfiles:', pError);
       if (profiles) {
         const profileMap = {};
-        profiles.forEach(p => profileMap[p.id] = p.name || p.email?.split('@')[0] || 'Cliente');
+        profiles.forEach(p => {
+          profileMap[p.id] = p.name || p.email?.split('@')[0] || 'Cliente';
+          nombreMonitor[p.id] = p.name || p.email?.split('@')[0] || null;
+        });
         bookings = bookings.map(b => ({ ...b, profiles: { name: profileMap[b.user_id] } }));
       }
     }
+
+    // ¿Sigue valiendo esta lectura? A partir de aquí todo es síncrono.
+    if (auto) {
+      // Automática: solo si nadie ha pedido otra lectura después, no se ha
+      // guardado nada desde que se pidió, y no ha fallado nada (con un fallo
+      // de red es mejor dejar lo que había que pintar una parrilla a medias).
+      if (seq !== cargaSeqRef.current || !guardia.vale(foto)) return;
+      if (resBookings.error || resBlocked.error || resCustoms.error || resClases.error || pError) return;
+    } else if (seqExplicita !== cargaExplicitaSeqRef.current) {
+      return; // ya se pidió otra (p. ej. se cambió de día): manda esa
+    }
+
+    // Cobro por entreno (clave court_id|time_slot), con el método de cada
+    // alumno. Si hubiera varios monitores en la misma pista/hora, se suman;
+    // las filas de cada uno van aparte para poder marcar sus pagos.
+    const clasesEntreno = agregarClasesMonitor(filasClases);
+    const filasEntreno = filasPorClase(filasClases.map(c => ({ ...c, nombre: nombreMonitor[c.user_id] || null })));
 
     const newSlots = {};
     courtsRef.current.forEach(court => {
@@ -813,16 +1285,32 @@ const AdminDashboard = () => {
           client: b.status === 'pendiente_pago'
             ? `⏳ ${b.profiles?.name || 'Pago en curso'}`
             : (b.observaciones || b.profiles?.name || 'Cliente'),
-          bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type,
+          bookingId: b.id, metodo: b.metodo_pago, isFree: b.is_free, paymentType: b.payment_type, splitPaid: b.split_paid,
           pagosJugadores: Array.isArray(b.pagos_jugadores) ? b.pagos_jugadores : [],
           cobroConfirmado: !!b.cobro_confirmado,
+          esHold: b.status === 'pendiente_pago',
+          importe: b.importe ?? null,
+          userId: b.user_id,
         };
       }
     });
     blocked?.forEach(b => {
-      if (newSlots[b.court_id]) {
-        newSlots[b.court_id][b.time_slot] = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
+      if (!newSlots[b.court_id]) return;
+      const existing = newSlots[b.court_id][b.time_slot];
+      // Si ya hay una RESERVA a esa misma hora, no la pisamos con el bloqueo:
+      // marcamos el conflicto para que se vea (reserva + bloqueo a la vez).
+      if (existing && existing.status === 'booked') {
+        existing.conflicto = true;
+        return;
       }
+      const cell = { status: 'blocked', blockedId: b.id, tipo: b.tipo || 'bloqueado' };
+      // Entreno: le colgamos lo que ha confirmado el monitor (alumnos y cómo
+      // pagó cada uno). null = el monitor aún no ha confirmado la clase.
+      if (cell.tipo === 'entreno') {
+        cell.entrenoInfo = clasesEntreno[`${b.court_id}|${b.time_slot}`] || null;
+        cell.entrenoFilas = filasEntreno[`${b.court_id}|${b.time_slot}`] || [];
+      }
+      newSlots[b.court_id][b.time_slot] = cell;
     });
 
     // ── Disponibles (idéntico a la vista del jugador) ──
@@ -845,18 +1333,23 @@ const AdminDashboard = () => {
     });
 
     setSlots(newSlots);
-  }, []);
+  }, [guardia]);
 
   // Carga inicial: siempre llama a setLoading(false) pase lo que pase
   useEffect(() => {
     async function init() {
       try {
-        // Cargar ajustes globales
-        const { data: settingsData } = await supabase.from('site_settings').select('*').single();
-        if (settingsData) {
+        // Cargar ajustes globales. supabase-js NO lanza: devuelve {error}. Si
+        // falla, marcamos el error para avisar y bloquear "Guardar Ajustes"
+        // (guardar sobre un estado sin cargar machacaría la fila con valores por defecto).
+        const { data: settingsData, error: settingsErr } = await supabase.from('site_settings').select('*').single();
+        if (settingsErr || !settingsData) {
+          console.error('Error cargando site_settings:', settingsErr);
+          setSettingsLoadError(true);
+        } else {
           const schedCfg = normalizeScheduleConfig(settingsData.schedule_config);
           scheduleCfgRef.current = schedCfg;
-          setSiteSettings({
+          const loadedSettings = {
             booking_window_days: settingsData.booking_window_days,
             court_price: parseFloat(settingsData.court_price),
             slots_release_time: settingsData.slots_release_time || '00:00',
@@ -865,7 +1358,9 @@ const AdminDashboard = () => {
             cancellation_enabled: settingsData.cancellation_enabled ?? true,
             cancellation_hours: settingsData.cancellation_hours ?? 24,
             schedule_config: schedCfg,
-          });
+          };
+          settingsLoadedRef.current = loadedSettings;
+          setSiteSettings(loadedSettings);
         }
 
         const { data } = await supabase.from('courts').select('*').order('name');
@@ -897,6 +1392,31 @@ const AdminDashboard = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ¿El destino de un "Mover reserva" SOLAPA con algo? Comprueba por intervalos
+  // (no por igualdad de texto) contra: reservas vivas (confirmadas + holds de
+  // pago válidos, salvo la que se mueve), bloqueos/entrenos y otros huecos
+  // personalizados de esa pista/fecha (un custom con la MISMA hora destino es el
+  // propio hueco al que se mueve y no cuenta). Devuelve true si hay conflicto.
+  const destinoTieneSolape = async (courtId, date, time, excludeId) => {
+    const [ti, tf] = parseSlot(time);
+    const solapa = (slotStr) => { const [a, b] = parseSlot(slotStr); return ti < b && a < tf; };
+    const [resBk, resBl, resCs] = await Promise.all([
+      supabase.from('bookings').select('id, time_slot, status, created_at').eq('court_id', courtId).eq('date', date).in('status', ['confirmed', 'pendiente_pago']),
+      supabase.from('blocked_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
+      supabase.from('custom_slots').select('time_slot').eq('court_id', courtId).eq('date', date),
+    ]);
+    if (resBk.error || resBl.error || resCs.error) return true; // ante la duda, no dejar mover
+    const HOLD_MS = 15 * 60 * 1000;
+    const bookingConflict = (resBk.data || []).some(b =>
+      b.id !== excludeId &&
+      (b.status === 'confirmed' || (Date.now() - new Date(b.created_at).getTime()) < HOLD_MS) &&
+      solapa(b.time_slot)
+    );
+    const blockedConflict = (resBl.data || []).some(b => solapa(b.time_slot));
+    const customConflict = (resCs.data || []).some(c => c.time_slot !== time && solapa(c.time_slot));
+    return bookingConflict || blockedConflict || customConflict;
+  };
+
   // Comprueba disponibilidad del slot destino al mover una reserva
   useEffect(() => {
     if (!moveTargetDate || !moveTargetCourtId || !moveTargetTime) {
@@ -904,14 +1424,13 @@ const AdminDashboard = () => {
       return;
     }
     setMoveSlotInfo('checking');
-    const check = async () => {
-      const [{ data: existing }, { data: blocked }] = await Promise.all([
-        supabase.from('bookings').select('id').eq('court_id', moveTargetCourtId).eq('date', moveTargetDate).eq('time_slot', moveTargetTime).eq('status', 'confirmed').neq('id', moveBooking?.id || ''),
-        supabase.from('blocked_slots').select('id').eq('court_id', moveTargetCourtId).eq('date', moveTargetDate).eq('time_slot', moveTargetTime),
-      ]);
-      setMoveSlotInfo((existing?.length > 0 || blocked?.length > 0) ? 'conflict' : 'available');
-    };
-    check();
+    let alive = true;
+    (async () => {
+      const conflict = await destinoTieneSolape(moveTargetCourtId, moveTargetDate, moveTargetTime, moveBooking?.id);
+      if (alive) setMoveSlotInfo(conflict ? 'conflict' : 'available');
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moveTargetDate, moveTargetCourtId, moveTargetTime, moveBooking]);
 
   // Recarga slots cuando cambia la fecha
@@ -919,30 +1438,73 @@ const AdminDashboard = () => {
     if (courtsRef.current.length > 0) loadSlots(selectedDate);
   }, [selectedDate, loadSlots]);
 
-  // Carga TODAS las reservas cuando se activa la pestaña Reservas
+  // Carga TODAS las filas del día cuando se activa la pestaña Reservas
+  // (la lista decide cómo pintar cada una: reserva, pago en curso, pago no
+  // completado o cancelada). Si se cambia de día rápido, solo vale la última.
   useEffect(() => {
     if (activeTab !== 'bookings') return;
+    let alive = true;
+    reservasSeqRef.current += 1; // lo que traiga un refresco automático ya en vuelo, no vale
     setLoadingAllBookings(true);
-    (async () => {
-      const { data: bookings, error } = await supabase
-        .from('bookings')
-        .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)')
-        .eq('date', bookingsDate)
-        .order('time_slot', { ascending: true });
-      if (error) { console.error('Error cargando reservas:', error); setLoadingAllBookings(false); return; }
-      const rows = bookings || [];
-      if (rows.length > 0) {
-        const userIds = [...new Set(rows.map(b => b.user_id))];
-        const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', userIds);
-        const profileMap = {};
-        (profiles || []).forEach(p => { profileMap[p.id] = p; });
-        setAllDbBookings(rows.map(b => ({ ...b, profiles: profileMap[b.user_id] || null })));
-      } else {
-        setAllDbBookings([]);
-      }
+    cargarReservasDia(bookingsDate).then(rows => {
+      if (!alive) return;
+      if (rows) setAllDbBookings(rows);
+      setRelojReservas(Date.now());
       setLoadingAllBookings(false);
-    })();
+    });
+    return () => { alive = false; };
   }, [activeTab, bookingsDate]);
+
+  // ── Refresco AUTOMÁTICO ──
+  // Los pagos son MUTUOS con el monitor (lo que marque él en su agenda sale
+  // aquí y al revés), así que mientras la web está visible se relee sola, sin
+  // recargar, cada REFRESCO_AUTO_MS:
+  //   · Horario abierto: la parrilla del día que se ve (colores, y el panel
+  //     abierto de la reserva o el entreno, que se pinta con la celda).
+  //   · Pestaña Reservas abierta: la lista del día. Un "pago en curso" cambia
+  //     solo (se confirma, se cancela o caduca a los 15 min) y la hora con la
+  //     que se clasifica solo avanza al volver a leer la lista (moverla sobre
+  //     la copia vieja pondría una reserva ya pagada como "pago no completado").
+  // Al volver a primer plano se relee en el momento (es el mismo refresco que
+  // había antes, ahora con las mismas protecciones): la parrilla esté en la
+  // pestaña que esté (mientras tanto han podido entrar reservas: riesgo de
+  // bloquear/mover sobre algo ya reservado) y la lista si está abierta.
+  // Al entrar en el Horario desde otra pestaña también se relee al momento.
+  // Nunca enseña "Cargando", no cierra paneles ni ventanas, y no aplica una
+  // lectura que se cruce con un guardado (ver crearGuardiaRefresco).
+  const pestanaAnteriorRef = useRef(activeTab);
+  useEffect(() => {
+    let alive = true;
+    const refrescarHorario = () => {
+      if (courtsRef.current.length > 0) loadSlots(selectedDate, { auto: true });
+    };
+    const refrescarReservas = async () => {
+      const foto = guardia.pedir();
+      if (foto == null) return;
+      const seq = ++reservasSeqRef.current;
+      const rows = await cargarReservasDia(bookingsDate);
+      // si falla, mejor no reclasificar con datos viejos
+      if (!alive || !rows || seq !== reservasSeqRef.current || !guardia.vale(foto)) return;
+      setAllDbBookings(rows);
+      setRelojReservas(Date.now());
+    };
+    const refrescar = (alVolver) => {
+      if (document.visibilityState !== 'visible') return;
+      if (alVolver || activeTab === 'schedule') refrescarHorario();
+      if (activeTab === 'bookings') refrescarReservas();
+    };
+    const vengoDeOtra = pestanaAnteriorRef.current !== activeTab;
+    pestanaAnteriorRef.current = activeTab;
+    if (vengoDeOtra && activeTab === 'schedule') refrescar(false);
+    const id = setInterval(() => refrescar(false), REFRESCO_AUTO_MS);
+    const onVisible = () => refrescar(true);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [activeTab, selectedDate, bookingsDate, loadSlots, guardia]);
 
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -957,8 +1519,13 @@ const AdminDashboard = () => {
       const obs = (bookObs || '').trim();
       const bookUserId = selectedUserId || user.id;
       const bookedUserName = obs || allUsers.find(u => u.id === bookUserId)?.name || user.name || 'Cliente';
-      const courtName = courts.find(c => c.id === courtId)?.name || 'Pista';
-      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true, observaciones: obs || null, metodo_pago: 'manual' });
+      const bookedCourt = courts.find(c => c.id === courtId);
+      const courtName = bookedCourt?.name || 'Pista';
+      // Importe que correspondería cobrar por esta pista: su precio propio o, si
+      // no tiene, el global de site_settings (en euros). La reserva nace gratis
+      // (manual) y pasa a ingreso al marcarla pagada, pero dejamos el importe listo.
+      const importe = Number(bookedCourt?.price != null ? bookedCourt.price : siteSettings.court_price);
+      const { error } = await supabase.from('bookings').insert({ court_id: courtId, user_id: bookUserId, date: selectedDate, time_slot: time, status: 'confirmed', is_free: true, observaciones: obs || null, metodo_pago: 'manual', importe: Number.isFinite(importe) ? importe : null });
       actionError = error;
       if (!error) {
         supabase.functions.invoke('send-push', {
@@ -1001,6 +1568,13 @@ const AdminDashboard = () => {
       setBookObs('');
     } else if (action === 'block') {
       const tipo = opts.tipo === 'entreno' ? 'entreno' : 'bloqueado';
+      // No bloquear sobre una reserva viva (por solape de intervalos, releyendo BD).
+      const [ini, fin] = parseSlot(time);
+      if (await haySolapeConReservas(courtId, selectedDate, ini, fin)) {
+        toast(`No se puede ${tipo === 'entreno' ? 'marcar el entreno' : 'bloquear'}: ese horario pisa una reserva de ese día.`, 'error');
+        setIsProcessing(false);
+        return;
+      }
       const { error } = await supabase.from('blocked_slots').insert({ court_id: courtId, date: selectedDate, time_slot: time, created_by: user.id, tipo, entreno_grupo: tipo === 'entreno' ? (opts.grupo || 'grupo4') : null });
       actionError = error;
     } else if (action === 'cancel') {
@@ -1029,10 +1603,20 @@ const AdminDashboard = () => {
   const handleMoveBooking = async () => {
     if (!moveBooking || !moveTargetDate || !moveTargetCourtId || !moveTargetTime) return;
     setIsProcessing(true);
+    // Revalidar el destino por solape JUSTO antes de mover: entre la comprobación
+    // visual y el clic ha podido entrar una reserva desde la web/app.
+    if (await destinoTieneSolape(moveTargetCourtId, moveTargetDate, moveTargetTime, moveBooking.id)) {
+      setMoveSlotInfo('conflict');
+      toast('Ese destino se acaba de ocupar o solapa con algo. Elige otra franja.', 'error');
+      setIsProcessing(false);
+      return;
+    }
     const { error } = await supabase.from('bookings').update({
       date: moveTargetDate,
       time_slot: moveTargetTime,
       court_id: moveTargetCourtId,
+      // Nueva hora, nuevo recordatorio (send-reminders lo vuelve a planificar).
+      reminder_sent: false,
     }).eq('id', moveBooking.id);
     if (error) {
       toast('Error al mover la reserva: ' + error.message);
@@ -1040,19 +1624,11 @@ const AdminDashboard = () => {
       setMoveBooking(null);
       await loadSlots(selectedDate);
       if (activeTab === 'bookings') {
-        const today = serverToday();
-        // profiles NO se puede incrustar desde bookings (no hay FK): se cargan aparte.
-        const { data } = await supabase.from('bookings')
-          .select('id, date, time_slot, status, is_free, court_id, user_id, courts(name, sport, gradient)')
-          .eq('status', 'confirmed').gte('date', today).order('date').order('time_slot');
-        const rows = data || [];
-        const uids = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
-        let pmap = {};
-        if (uids.length) {
-          const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', uids);
-          (profs || []).forEach(p => { pmap[p.id] = p; });
-        }
-        setAllDbBookings(rows.map(b => ({ ...b, profiles: pmap[b.user_id] || null })));
+        // Recargar el MISMO día que se está viendo en la pestaña Reservas
+        // (antes se cambiaba la lista por todas las confirmadas desde hoy).
+        reservasSeqRef.current += 1; // un refresco automático ya en vuelo, no vale
+        const rows = await cargarReservasDia(bookingsDate);
+        if (rows) { setAllDbBookings(rows); setRelojReservas(Date.now()); }
       }
     }
     setIsProcessing(false);
@@ -1060,8 +1636,15 @@ const AdminDashboard = () => {
 
   const toggleCourt = async (courtId) => {
     const court = courts.find(c => c.id === courtId);
-    await supabase.from('courts').update({ active: !court.active }).eq('id', courtId);
-    const updated = courts.map(c => c.id === courtId ? { ...c, active: !c.active } : c);
+    const nuevo = !court.active;
+    // Confirmar contra BD: .select('id') devuelve la fila tocada; data vacío =
+    // no se guardó (sin permiso o fila inexistente). Solo tocamos la UI si fue bien.
+    const { data, error } = await supabase.from('courts').update({ active: nuevo }).eq('id', courtId).select('id');
+    if (error || !data || data.length === 0) {
+      toast(error ? 'Error: ' + error.message : 'No se guardó: sin permiso o fila inexistente', 'error');
+      return;
+    }
+    const updated = courts.map(c => c.id === courtId ? { ...c, active: nuevo } : c);
     courtsRef.current = updated;
     setCourts(updated);
   };
@@ -1072,17 +1655,36 @@ const AdminDashboard = () => {
     const price = parseFloat(raw);
     if (isNaN(price) || price < 0) return;
     setSavingCourtPrice(courtId);
-    const { error } = await supabase.from('courts').update({ price }).eq('id', courtId);
+    const { data, error } = await supabase.from('courts').update({ price }).eq('id', courtId).select('id');
     setSavingCourtPrice(null);
-    if (error) {
-      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'error', text: error.message } }));
+    if (error || !data || data.length === 0) {
+      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'error', text: error ? error.message : 'No se guardó: sin permiso o fila inexistente' } }));
     } else {
       const updated = courts.map(c => c.id === courtId ? { ...c, price } : c);
       courtsRef.current = updated;
       setCourts(updated);
+      setCourtPriceEdits(prev => { const n = { ...prev }; delete n[courtId]; return n; });
       setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'ok' } }));
       setTimeout(() => setCourtPriceMsg(prev => { const n = { ...prev }; delete n[courtId]; return n; }), 2000);
     }
+  };
+
+  // "Usar precio global": borra el precio propio de la pista (price = null) para
+  // que vuelva a regirse por el precio global de Configuración.
+  const useGlobalPrice = async (courtId) => {
+    setSavingCourtPrice(courtId);
+    const { data, error } = await supabase.from('courts').update({ price: null }).eq('id', courtId).select('id');
+    setSavingCourtPrice(null);
+    if (error || !data || data.length === 0) {
+      setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'error', text: error ? error.message : 'No se guardó: sin permiso o fila inexistente' } }));
+      return;
+    }
+    const updated = courts.map(c => c.id === courtId ? { ...c, price: null } : c);
+    courtsRef.current = updated;
+    setCourts(updated);
+    setCourtPriceEdits(prev => { const n = { ...prev }; delete n[courtId]; return n; });
+    setCourtPriceMsg(prev => ({ ...prev, [courtId]: { type: 'ok' } }));
+    setTimeout(() => setCourtPriceMsg(prev => { const n = { ...prev }; delete n[courtId]; return n; }), 2000);
   };
 
   const handleDateChange = (e) => {
@@ -1091,6 +1693,12 @@ const AdminDashboard = () => {
   };
 
   const handleSaveSettings = async () => {
+    // Si la carga inicial falló, no dejamos guardar (machacaría la fila con
+    // valores por defecto). El botón ya está deshabilitado; esto es por si acaso.
+    if (settingsLoadError) {
+      setSettingsMsg({ type: 'error', text: 'No se pudieron cargar los ajustes, así que no se pueden guardar. Recarga la página.' });
+      return;
+    }
     setSavingSettings(true);
     setSettingsMsg(null);
     // Validar ANTES de guardar: un campo vacío guardaría null y rompería en silencio.
@@ -1106,22 +1714,71 @@ const AdminDashboard = () => {
       setSettingsMsg({ type: 'error', text: 'El precio de la pista debe ser un número (0 o más).' });
       return;
     }
-    const { error } = await supabase.from('site_settings').update({
+    // Antelación mínima para cancelar: solo si la cancelación está activada.
+    // Rechazar vacío/no numérico — antes un campo en blanco guardaba 0 sin querer.
+    let cancellationHours = settingsLoadedRef.current?.cancellation_hours ?? 24;
+    if (siteSettings.cancellation_enabled) {
+      const rawCh = siteSettings.cancellation_hours;
+      if (rawCh === '' || rawCh === null || rawCh === undefined) {
+        setSavingSettings(false);
+        setSettingsMsg({ type: 'error', text: 'Indica la antelación mínima para cancelar (horas). Pon 0 si quieres permitir cancelar hasta el último momento.' });
+        return;
+      }
+      const ch = parseInt(rawCh, 10);
+      if (!Number.isFinite(ch) || ch < 0) {
+        setSavingSettings(false);
+        setSettingsMsg({ type: 'error', text: 'La antelación mínima para cancelar debe ser un número de horas (0 o más).' });
+        return;
+      }
+      cancellationHours = ch;
+    }
+    // Sanear club_hours: null = día desactivado (se respeta); '' (bug) → '00:00'.
+    const sanitizedClubHours = {};
+    Object.entries(siteSettings.club_hours || {}).forEach(([k, v]) => {
+      sanitizedClubHours[k] = v === '' ? '00:00' : v;
+    });
+    const desired = {
       booking_window_days: windowDays,
       court_price: price,
       slots_release_time: siteSettings.slots_release_time || '00:00',
       club_open_time: siteSettings.club_open_time || '00:00',
-      club_hours: siteSettings.club_hours,
+      club_hours: sanitizedClubHours,
       cancellation_enabled: !!siteSettings.cancellation_enabled,
-      cancellation_hours: Math.max(0, parseInt(siteSettings.cancellation_hours, 10) || 0),
-    }).eq('id', 1);
-    setSavingSettings(false);
-    if (error) {
-      console.error(error);
-      setSettingsMsg({ type: 'error', text: 'Error al guardar: ' + error.message });
-    } else {
-      setSettingsMsg({ type: 'ok', text: '✓ Ajustes guardados. Los cambios ya son visibles para los clientes.' });
+      cancellation_hours: cancellationHours,
+    };
+    // Enviar SOLO las columnas que han cambiado respecto a lo que se cargó, para
+    // no pisar cambios hechos en otra pestaña/dispositivo mientras tanto.
+    const loaded = settingsLoadedRef.current || {};
+    const patch = {};
+    Object.keys(desired).forEach(k => {
+      const changed = k === 'club_hours'
+        ? JSON.stringify(desired[k]) !== JSON.stringify(loaded[k])
+        : desired[k] !== loaded[k];
+      if (changed) patch[k] = desired[k];
+    });
+    if (Object.keys(patch).length === 0) {
+      setSavingSettings(false);
+      // Reflejar el saneado de club_hours en la UI aunque no haya cambio en BD.
+      setSiteSettings(s => ({ ...s, club_hours: sanitizedClubHours, cancellation_hours: cancellationHours }));
+      setSettingsMsg({ type: 'ok', text: 'No había cambios que guardar.' });
       setTimeout(() => setSettingsMsg(null), 4000);
+      return;
+    }
+    const { data, error } = await supabase.from('site_settings').update(patch).eq('id', 1).select('id');
+    setSavingSettings(false);
+    if (error || !data || data.length === 0) {
+      console.error(error);
+      setSettingsMsg({ type: 'error', text: error ? 'Error al guardar: ' + error.message : 'No se guardó: sin permiso o fila inexistente.' });
+    } else {
+      settingsLoadedRef.current = { ...settingsLoadedRef.current, ...desired };
+      setSiteSettings(s => ({ ...s, club_hours: sanitizedClubHours, cancellation_hours: cancellationHours }));
+      // Si cambió el precio global, avisar de las pistas con precio propio (que no lo usan).
+      const ownPriceCourts = courts.filter(c => c.price != null);
+      const extraMsg = patch.court_price !== undefined && ownPriceCourts.length > 0
+        ? ` Estas pistas tienen precio propio y no usan el global: ${ownPriceCourts.map(c => c.name).join(', ')}.`
+        : '';
+      setSettingsMsg({ type: 'ok', text: '✓ Ajustes guardados. Los cambios ya son visibles para los clientes.' + extraMsg });
+      setTimeout(() => setSettingsMsg(null), extraMsg ? 7000 : 4000);
     }
   };
 
@@ -1168,13 +1825,15 @@ const AdminDashboard = () => {
 
   return (
     <>
+      {/* Versión nueva de la web subida: la pestaña se recarga sola cuando es seguro. */}
+      <AvisoVersionNueva />
       <style>{`
         .admin-layout { display: flex; min-height: 100vh; background: var(--color-bg-secondary); }
         .admin-sidebar {
           width: min(280px, 85vw); background: white; border-right: 1px solid var(--color-border);
           display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
-          padding-top: env(safe-area-inset-top);
-          padding-bottom: env(safe-area-inset-bottom);
+          padding-top: var(--sa-top);
+          padding-bottom: var(--sa-bottom);
           transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
           overflow-y: auto;
         }
@@ -1189,13 +1848,13 @@ const AdminDashboard = () => {
         .admin-header {
           background: white; border-bottom: 1px solid var(--color-border);
           padding: 0.75rem 1rem;
-          padding-top: calc(0.75rem + env(safe-area-inset-top));
-          padding-left: calc(1rem + env(safe-area-inset-left));
-          padding-right: calc(1rem + env(safe-area-inset-right));
+          padding-top: calc(0.75rem + var(--sa-top));
+          padding-left: calc(1rem + var(--sa-left));
+          padding-right: calc(1rem + var(--sa-right));
           display: flex; align-items: center; justify-content: space-between;
           gap: 0.75rem;
           position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm);
-          min-height: calc(56px + env(safe-area-inset-top));
+          min-height: calc(56px + var(--sa-top));
         }
         .admin-header-title {
           flex: 1;
@@ -1244,7 +1903,7 @@ const AdminDashboard = () => {
           background: linear-gradient(180deg, #16A34A, #4ADE80);
         }
         .admin-logout:hover { border-color: #FECACA !important; color: #DC2626 !important; background: #FEF2F2 !important; }
-        .admin-body { flex: 1; padding: 1.5rem 1rem; max-width: 100%; width: 100%; padding-left: calc(1rem + env(safe-area-inset-left)); padding-right: calc(1rem + env(safe-area-inset-right)); }
+        .admin-body { flex: 1; padding: 1.5rem 1rem; max-width: 100%; width: 100%; padding-left: calc(1rem + var(--sa-left)); padding-right: calc(1rem + var(--sa-right)); }
 
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
         .slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; margin-bottom: 0.625rem; }
@@ -1573,19 +2232,21 @@ const AdminDashboard = () => {
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+                  {/* Leyenda de la rejilla: un color por estado */}
+                  <div style={{ display: 'flex', gap: '0.45rem 0.9rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '1.25rem' }}>
                     {[
                       { label: 'Libre', s: slotColors.available },
-                      { label: '💳 Tarjeta/Bizum', s: slotColors.online },
-                      { label: '🏪 Club / ✍️ Manual', s: slotColors.booked },
-                      { label: '🔒 Bloqueada', s: slotColors.blocked },
-                      { label: '🏋️ Entreno', s: slotColors.entreno },
+                      { label: 'Entreno pendiente de cobro', s: slotColors.entreno },
+                      { label: '✓ Pagado (pista o entreno)', s: slotColors.pagado },
+                      { label: '✕ Reserva sin pagar', s: slotColors.impago },
+                      { label: 'Bloqueada', s: slotColors.blocked },
                     ].map(({ label, s }) => (
-                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                        <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: s.backgroundColor, border: `1.5px solid ${s.borderColor}` }} />
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569' }}>{label}</span>
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <div style={{ width: '14px', height: '14px', borderRadius: '4px', backgroundColor: s.backgroundColor, border: `1.5px solid ${s.borderColor}`, flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: s.color }}>{label}</span>
                       </div>
                     ))}
+                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B' }}>⏳ = pago en curso</span>
                   </div>
 
                   <div className="courts-list">
@@ -1621,18 +2282,20 @@ const AdminDashboard = () => {
                                 const slot = slots[court.id]?.[time];
                                 const esCustom = (customByCourt[court.id] || []).some(cs => cs.time === time);
                                 const isSelected = activeSlot?.courtId === court.id && activeSlot?.time === time;
-                                const c = isSelected ? slotColors.selected
-                                  : slot?.status === 'booked' ? metodoColor(slot.metodo)
-                                  : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? slotColors.entreno : slotColors.blocked)
-                                  : slotColors[slot?.status] || slotColors.available;
+                                // Seleccionada: oscura (se distingue de los 5 colores de estado)
+                                const c = isSelected ? slotColors.selected : colorCelda(slot);
                                 return (
-                                  <button key={time} disabled={!court.active}
+                                  <button key={time} disabled={!court.active} aria-pressed={isSelected}
                                     onClick={() => setActiveSlot(prev => prev?.courtId === court.id && prev?.time === time ? null : { courtId: court.id, time })}
-                                    style={{ padding: '0.5rem 0.2rem', borderRadius: '0.5rem', border: `1.5px ${esCustom ? 'dashed' : 'solid'} ${c.borderColor}`, backgroundColor: c.backgroundColor, color: c.color, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', textAlign: 'center', cursor: court.active ? 'pointer' : 'not-allowed', transition: 'all 0.15s', lineHeight: 1.3 }}
+                                    style={{ padding: '0.5rem 0.2rem', borderRadius: '0.5rem', border: `1.5px ${esCustom ? 'dashed' : 'solid'} ${c.borderColor}`, backgroundColor: c.backgroundColor, color: c.color, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', textAlign: 'center', cursor: court.active ? 'pointer' : 'not-allowed', transition: 'all 0.15s', lineHeight: 1.3, boxShadow: isSelected ? '0 0 0 2px #FFFFFF, 0 0 0 4px #0F172A' : 'none' }}
                                   >
-                                    <div>{esCustom ? '🕐 ' : ''}{time.split(' - ')[0]}</div>
-                                    <div style={{ fontSize: '0.58rem', fontWeight: 500, marginTop: '0.15rem', opacity: 0.85 }}>
-                                      {slot?.status === 'booked' ? slot.client.split(' ')[0] : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? '🏋️ Entreno' : '🔒 Bloqueada') : 'Libre'}
+                                    <div>{slot?.conflicto ? '⚠️ ' : ''}{esCustom ? '🕐 ' : ''}{time.split(' - ')[0]}</div>
+                                    {/* Pagada/sin pagar también con símbolo, no solo color
+                                        (el pago en curso ya lleva ⏳ en el nombre) */}
+                                    <div style={{ fontSize: '0.58rem', fontWeight: 600, marginTop: '0.15rem' }}>
+                                      {slot?.status === 'booked'
+                                        ? (slot.esHold ? '' : reservaPagada(slot) ? '✓ ' : '✕ ') + slot.client.split(' ')[0]
+                                        : slot?.status === 'blocked' ? (slot.tipo === 'entreno' ? etiquetaEntreno(slot) : slot.tipo === 'torneo' ? '🏆 Torneo' : '🔒 Bloqueada') : 'Libre'}
                                     </div>
                                   </button>
                                 );
@@ -1642,38 +2305,63 @@ const AdminDashboard = () => {
                             {isCourtActive && selectedSlotData && (
                               <div style={{ backgroundColor: '#F8FAFC', borderRadius: '0.75rem', border: '1.5px solid #E2E8F0', padding: '0.875rem', marginTop: '0.5rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                                  <div>
+                                  <div style={{ minWidth: 0 }}>
                                     <p style={{ margin: 0, fontWeight: 800, color: '#0F172A', fontSize: '0.875rem' }}>{activeSlot.time}</p>
                                     <p style={{ margin: '0.15rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
-                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Bloqueada para entrenos' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
+                                      {selectedSlotData.status === 'booked' ? `Cliente: ${selectedSlotData.client}` : selectedSlotData.status === 'blocked' ? (selectedSlotData.tipo === 'entreno' ? '🏋️ Entreno' : selectedSlotData.tipo === 'torneo' ? '🏆 Partido de torneo (se mueve solo con el cuadro)' : '🔒 Bloqueada por administrador') : 'Franja disponible'}
+                                      {selectedSlotData.status === 'booked' && selectedSlotData.userId === CLIENTE_ELIMINADO_ID && ' (borró su cuenta)'}
                                     </p>
-                                    {selectedSlotData.status === 'booked' && (
-                                      <p style={{ margin: '0.2rem 0 0', fontSize: '0.775rem', fontWeight: 700, color: '#1B3A6E' }}>
-                                        Pago: {formatMetodoPago(selectedSlotData.metodo, selectedSlotData.isFree)}
+                                    {selectedSlotData.conflicto && (
+                                      <p style={{ margin: '0.3rem 0 0', fontSize: '0.74rem', fontWeight: 800, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0.5rem', padding: '0.3rem 0.5rem' }}>
+                                        ⚠️ Hay un bloqueo o entreno a esta misma hora. Revísalo: la reserva manda.
                                       </p>
                                     )}
                                   </div>
                                   <button onClick={() => { setActiveSlot(null); setBookObs(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.2rem', fontSize: '1rem', lineHeight: 1 }}>✕</button>
                                 </div>
-                                {selectedSlotData.status === 'booked' && selectedSlotData.paymentType === 'split' && (
-                                  <SplitAdmin bookingId={selectedSlotData.bookingId} />
+                                {/* Resumen del pago (reserva) o del cobro (entreno), antes de las acciones */}
+                                {selectedSlotData.status === 'blocked' && selectedSlotData.tipo === 'entreno' && (
+                                  <ResumenEntreno
+                                    key={selectedSlotData.blockedId}
+                                    info={selectedSlotData.entrenoInfo}
+                                    filas={selectedSlotData.entrenoFilas}
+                                    conGuardado={conGuardado}
+                                    onSaved={(fila, pagos) => {
+                                      // Celda y resumen al momento, con lo que devolvió la BD
+                                      const { courtId, time } = activeSlot;
+                                      setSlots(prev => {
+                                        const cel = prev[courtId]?.[time];
+                                        if (!cel?.entrenoFilas) return prev;
+                                        const filas = filasConPagos(cel.entrenoFilas, fila, pagos);
+                                        if (filas === cel.entrenoFilas) return prev; // ya no es esa clase (cambió el día)
+                                        const info = Object.values(agregarClasesMonitor(filas))[0] || null;
+                                        return { ...prev, [courtId]: { ...prev[courtId], [time]: { ...cel, entrenoFilas: filas, entrenoInfo: info } } };
+                                      });
+                                    }}
+                                    onRefrescar={() => loadSlots(selectedDate, { auto: true })}
+                                  />
                                 )}
                                 {selectedSlotData.status === 'booked' && (
-                                  <PagosPistaAdmin
+                                  <PagoReservaAdmin
                                     key={selectedSlotData.bookingId}
-                                    bookingId={selectedSlotData.bookingId}
-                                    initPagos={selectedSlotData.pagosJugadores}
-                                    initCobro={selectedSlotData.cobroConfirmado}
-                                    initIsFree={selectedSlotData.isFree}
-                                    initMetodo={selectedSlotData.metodo}
+                                    reserva={selectedSlotData}
+                                    conGuardado={conGuardado}
                                     onSaved={(patch) => {
                                       // Mantener fresco el mapa de slots del padre
                                       const { courtId, time } = activeSlot;
+                                      // Un pago en curso que ya se confirmó: recargar la rejilla
+                                      // para quitar el ⏳ y poner el nombre de la reserva.
+                                      if (slots[courtId]?.[time]?.esHold && patch.esHold === false) loadSlots(selectedDate);
                                       setSlots(prev => {
                                         const c = prev[courtId];
                                         if (!c?.[time]) return prev;
                                         return { ...prev, [courtId]: { ...c, [time]: { ...c[time], ...patch } } };
                                       });
+                                    }}
+                                    onGone={() => {
+                                      toast('Esta reserva ya no está activa: se canceló o el pago no se completó. Horario actualizado.', 'warning');
+                                      setActiveSlot(null);
+                                      loadSlots(selectedDate);
                                     }}
                                   />
                                 )}
@@ -1806,9 +2494,109 @@ const AdminDashboard = () => {
                 const startDate = new Date(); startDate.setDate(startDate.getDate() - 30);
                 const startDateStr = startDate.getFullYear() + '-' + String(startDate.getMonth()+1).padStart(2,'0') + '-' + String(startDate.getDate()).padStart(2,'0');
                 const fmtDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-                const cancelDbBooking = async (id) => {
-                  await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', id);
-                  setAllDbBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
+                const cancelDbBooking = async (b) => {
+                  const nombre = b.profiles?.name || b.profiles?.email?.split('@')[0] || 'el cliente';
+                  const esReembolsable = b.metodo_pago === 'tarjeta' || b.metodo_pago === 'bizum';
+                  const ok = await confirmDialog(
+                    esReembolsable
+                      ? `¿Cancelar la reserva de ${nombre} (${b.time_slot})? Se pagó por ${b.metodo_pago === 'tarjeta' ? 'tarjeta' : 'Bizum'}: la DEVOLUCIÓN hay que hacerla a mano, esto no la hace.`
+                      : `¿Cancelar la reserva de ${nombre} (${b.time_slot})?`,
+                    { title: 'Cancelar reserva', okText: 'Cancelar reserva', danger: true }
+                  );
+                  if (!ok) return;
+                  // Confirmar contra BD: data vacío = no se canceló (sin permiso o fila inexistente).
+                  // conGuardado: que un refresco automático en vuelo no la "descancele" en pantalla.
+                  const { data, error } = await conGuardado(() => supabase.from('bookings').update({ status: 'cancelled' }).eq('id', b.id).select('id'));
+                  if (error || !data || data.length === 0) {
+                    toast(error ? 'Error al cancelar: ' + error.message : 'No se canceló: sin permiso o fila inexistente', 'error');
+                    return;
+                  }
+                  setAllDbBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'cancelled' } : x));
+                  toast('Reserva cancelada', 'success');
+                  // Avisar al cliente (dueño de la reserva) por email de la cancelación.
+                  if (b.profiles?.email) {
+                    supabase.functions.invoke('send-booking-email', {
+                      body: {
+                        type: 'cancelada',
+                        email: b.profiles.email,
+                        userName: b.profiles.name || 'jugador/a',
+                        courtName: b.courts?.name || 'Pista',
+                        date: b.date,
+                        timeSlot: b.time_slot,
+                      },
+                    }).catch(() => {});
+                  }
+                };
+                // Cada fila según su estado. Un 'pendiente_pago' de más de 15 min,
+                // o un intento online que acabó cancelado sin pagarse, NO es una
+                // reserva (el jugador no terminó de pagar y el hueco quedó libre):
+                // va aparte, atenuado y oculto tras un aviso.
+                const filas = allDbBookings.map(b => ({ b, est: estadoFilaReserva(b, relojReservas) }));
+                const noCompletados = filas.filter(f => f.est === 'pago_no_completado');
+                const visibles = filas.filter(f => f.est !== 'pago_no_completado');
+                const nCanceladas = visibles.filter(f => f.est === 'cancelada').length;
+                const nReservas = visibles.length - nCanceladas;
+                const ESTILO_FILA = {
+                  confirmada:         { bg: 'white',   border: '1px solid #E2E8F0',  opacity: 1 },
+                  pago_en_curso:      { bg: '#FFFBEB', border: '1px solid #FDE68A',  opacity: 1 },
+                  cancelada:          { bg: '#FFF7F7', border: '1px solid #FECACA',  opacity: 0.75 },
+                  pago_no_completado: { bg: '#F8FAFC', border: '1px dashed #CBD5E1', opacity: 0.6 },
+                  otro:               { bg: 'white',   border: '1px solid #E2E8F0',  opacity: 1 },
+                };
+                const ETIQUETA_ESTADO = {
+                  pago_en_curso:      { texto: '⏳ PAGO EN CURSO', bg: '#FEF3C7', color: '#92400E', detalle: 'Pagando en el banco: si no termina en 15 min, se libera el hueco.' },
+                  cancelada:          { texto: '✕ CANCELADA', bg: '#FEE2E2', color: '#B91C1C', detalle: null },
+                  pago_no_completado: { texto: 'PAGO NO COMPLETADO', bg: '#E2E8F0', color: '#475569', detalle: 'No es una reserva: no terminó de pagar y el hueco quedó libre.' },
+                };
+                const renderFila = ({ b, est }) => {
+                  const st = ESTILO_FILA[est] || ESTILO_FILA.otro;
+                  const tag = ETIQUETA_ESTADO[est] || (est === 'otro' ? { texto: String(b.status || '—').toUpperCase(), bg: '#F1F5F9', color: '#475569', detalle: null } : null);
+                  const tachada = est === 'cancelada' || est === 'pago_no_completado';
+                  const conAcciones = est === 'confirmada' || est === 'pago_en_curso' || est === 'otro';
+                  const nombre = b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente';
+                  // Mismo criterio que Finanzas: GRATIS solo la cortesía (una manual
+                  // nace is_free=true pero SIN cobrar) y club/manual sin cobro
+                  // confirmado = pendiente de cobro (como en el Horario).
+                  const esGratis = !tachada && (b.metodo_pago === 'gratis' || (b.is_free && !b.metodo_pago));
+                  const pendienteCobro = !tachada && (b.metodo_pago === 'club' || b.metodo_pago === 'manual') && !b.cobro_confirmado;
+                  return (
+                    <div key={b.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem 0.875rem', backgroundColor: st.bg, borderRadius: '0.875rem', padding: '0.875rem', border: st.border, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: st.opacity }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '0.625rem', background: b.courts?.gradient || 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, filter: est === 'pago_no_completado' ? 'grayscale(1)' : 'none' }}>
+                        <span style={{ fontSize: '1rem' }}>{b.courts?.sport === 'Pádel' ? '🎾' : '🏓'}</span>
+                      </div>
+                      {/* Texto: ocupa lo que pueda; en móvil los botones bajan a otra línea */}
+                      <div style={{ flex: '1 1 10rem', minWidth: 0 }}>
+                        <p style={{ margin: 0, fontWeight: 700, color: '#0F172A', fontSize: '0.875rem' }}>{b.courts?.name || 'Pista'}</p>
+                        <p style={{ margin: '0.1rem 0 0', fontSize: '0.775rem', color: '#64748B', textDecoration: tachada ? 'line-through' : 'none' }}>
+                          {b.time_slot} · {nombre}
+                        </p>
+                        {(tag || esGratis || pendienteCobro || b.user_id === CLIENTE_ELIMINADO_ID) && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.3rem', marginTop: '0.3rem' }}>
+                            {tag && <span style={{ backgroundColor: tag.bg, color: tag.color, padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 800 }}>{tag.texto}</span>}
+                            {esGratis && <span style={{ backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>GRATIS</span>}
+                            {pendienteCobro && <span style={{ backgroundColor: slotColors.impago.backgroundColor, color: slotColors.impago.color, padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>PENDIENTE DE COBRO</span>}
+                            {b.user_id === CLIENTE_ELIMINADO_ID && <span style={{ fontSize: '0.7rem', color: '#64748B' }}>(borró su cuenta)</span>}
+                          </div>
+                        )}
+                        {tag?.detalle && <p style={{ margin: '0.25rem 0 0', fontSize: '0.72rem', color: tag.color, fontWeight: 600, lineHeight: 1.35 }}>{tag.detalle}</p>}
+                      </div>
+                      {conAcciones && <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto', flexShrink: 0 }}>
+                        <button onClick={() => {
+                          setMoveBooking({ id: b.id, courtId: b.court_id, courtName: b.courts?.name || 'Pista', date: b.date, time: b.time_slot, client: nombre });
+                          setMoveTargetDate(b.date);
+                          setMoveTargetCourtId(b.court_id);
+                          setMoveTargetTime(b.time_slot);
+                          setMoveSlotInfo(null);
+                        }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
+                          Mover
+                        </button>
+                        <button onClick={() => cancelDbBooking(b)}
+                          style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
+                          Cancelar
+                        </button>
+                      </div>}
+                    </div>
+                  );
                 };
                 return (
                   <div>
@@ -1819,54 +2607,49 @@ const AdminDashboard = () => {
                         startDate={startDateStr}
                         onSelectDate={setBookingsDate}
                       />
-                      <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#94A3B8', textTransform: 'capitalize', textAlign: 'center' }}>
-                        {fmtDate(bookingsDate)} · {allDbBookings.length} reserva{allDbBookings.length !== 1 ? 's' : ''}
+                      <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#94A3B8', textAlign: 'center' }}>
+                        <span style={{ textTransform: 'capitalize' }}>{fmtDate(bookingsDate)}</span>
+                        {' · '}{nReservas} reserva{nReservas !== 1 ? 's' : ''}
+                        {nCanceladas > 0 && ` · ${nCanceladas} cancelada${nCanceladas !== 1 ? 's' : ''}`}
                       </p>
                     </div>
                     {loadingAllBookings ? (
                       <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>
                         <div style={{ width: '28px', height: '28px', border: '3px solid #DCFCE7', borderTopColor: '#16A34A', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
                       </div>
-                    ) : allDbBookings.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: '#94A3B8' }}>
-                        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 0.875rem', display: 'block' }}>
-                          <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
-                        </svg>
-                        <p style={{ fontWeight: 700, margin: 0, color: '#64748B' }}>No hay reservas este día</p>
-                      </div>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        {allDbBookings.map(b => (
-                                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', backgroundColor: b.status === 'cancelled' ? '#FFF7F7' : 'white', borderRadius: '0.875rem', padding: '0.875rem', border: `1px solid ${b.status === 'cancelled' ? '#FECACA' : '#E2E8F0'}`, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: b.status === 'cancelled' ? 0.7 : 1 }}>
-                                  <div style={{ width: '40px', height: '40px', borderRadius: '0.625rem', background: b.courts?.gradient || 'linear-gradient(135deg,#16A34A,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                    <span style={{ fontSize: '1rem' }}>{b.courts?.sport === 'Pádel' ? '🎾' : '🏓'}</span>
-                                  </div>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <p style={{ margin: 0, fontWeight: 700, color: '#0F172A', fontSize: '0.875rem' }}>{b.courts?.name || 'Pista'}</p>
-                                    <p style={{ margin: '0.1rem 0 0', fontSize: '0.775rem', color: '#64748B' }}>
-                                      {b.time_slot} · {b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente'}
-                                      {b.is_free && <span style={{ marginLeft: '0.4rem', backgroundColor: '#F0FDF4', color: '#15803D', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>GRATIS</span>}
-                                      {b.status === 'cancelled' && <span style={{ marginLeft: '0.4rem', backgroundColor: '#FEF2F2', color: '#DC2626', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>CANCELADA</span>}
-                                    </p>
-                                  </div>
-                                  {b.status !== 'cancelled' && <>
-                                    <button onClick={() => {
-                                      setMoveBooking({ id: b.id, courtId: b.court_id, courtName: b.courts?.name || 'Pista', date: b.date, time: b.time_slot, client: b.profiles?.name || b.profiles?.email?.split('@')[0] || 'Cliente' });
-                                      setMoveTargetDate(b.date);
-                                      setMoveTargetCourtId(b.court_id);
-                                      setMoveTargetTime(b.time_slot);
-                                      setMoveSlotInfo(null);
-                                    }} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #2563EB', backgroundColor: '#EFF6FF', color: '#2563EB', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
-                                      Mover
-                                    </button>
-                                    <button onClick={() => cancelDbBooking(b.id)}
-                                      style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: 'none', backgroundColor: '#FEF2F2', color: '#DC2626', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0 }}>
-                                      Cancelar
-                                    </button>
-                                  </>}
-                                </div>
-                        ))}
-                      </div>
+                      <>
+                        {visibles.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: '#94A3B8' }}>
+                            <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 0.875rem', display: 'block' }}>
+                              <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+                            </svg>
+                            <p style={{ fontWeight: 700, margin: 0, color: '#64748B' }}>No hay reservas este día</p>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            {visibles.map(renderFila)}
+                          </div>
+                        )}
+                        {noCompletados.length > 0 && (
+                          <div style={{ marginTop: '0.875rem' }}>
+                            <button onClick={() => setVerPagosNoCompletados(v => !v)} aria-expanded={verPagosNoCompletados}
+                              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.6rem', textAlign: 'left', background: '#F8FAFC', border: '1px dashed #CBD5E1', borderRadius: '0.75rem', padding: '0.7rem 0.875rem', cursor: 'pointer', fontFamily: 'inherit', color: '#475569' }}>
+                              <span style={{ fontSize: '1rem', flexShrink: 0 }}>ℹ️</span>
+                              <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', lineHeight: 1.4 }}>
+                                <strong>{noCompletados.length === 1 ? '1 intento de pago no completado' : `${noCompletados.length} intentos de pago no completados`}</strong>
+                                {' '}— no {noCompletados.length === 1 ? 'es una reserva' : 'son reservas'}: el jugador no terminó de pagar y el hueco quedó libre.
+                              </span>
+                              <span style={{ fontSize: '0.75rem', fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0 }}>{verPagosNoCompletados ? 'Ocultar ▲' : 'Ver ▼'}</span>
+                            </button>
+                            {verPagosNoCompletados && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                {noCompletados.map(renderFila)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );
@@ -1885,8 +2668,15 @@ const AdminDashboard = () => {
               {activeTab === 'settings' && (
                 <div style={{ maxWidth: '600px' }}>
                   <p className="section-label" style={{ marginBottom: '1.5rem' }}>Ajustes Generales del Club</p>
-                  
-                  <div style={{ backgroundColor: 'white', padding: '1.75rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+                  {settingsLoadError && (
+                    <div style={{ marginBottom: '1.25rem', padding: '0.875rem 1rem', borderRadius: '0.75rem', fontSize: '0.875rem', fontWeight: 600, backgroundColor: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      No se pudieron cargar los ajustes. No se pueden guardar cambios hasta recargar la página (si no, se machacarían con valores por defecto).
+                    </div>
+                  )}
+
+                  <div style={{ backgroundColor: 'white', padding: '1.75rem', borderRadius: '1.25rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '1.5rem', opacity: settingsLoadError ? 0.6 : 1, pointerEvents: settingsLoadError ? 'none' : 'auto' }}>
                     <div>
                       <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, color: '#1E293B', fontSize: '0.9rem' }}>
                         Días de antelación permitidos para reservar
@@ -2040,7 +2830,7 @@ const AdminDashboard = () => {
                                   <input
                                     type="time"
                                     value={val || '00:00'}
-                                    onChange={(e) => updateHours(e.target.value)}
+                                    onChange={(e) => updateHours(e.target.value || '00:00')}
                                     className="ch-time-input"
                                   />
                                   {val === '00:00' && <span style={{ fontSize: '0.72rem', color: '#16A34A', fontWeight: 700, whiteSpace: 'nowrap' }}>siempre</span>}
@@ -2109,10 +2899,10 @@ const AdminDashboard = () => {
                         {settingsMsg.text}
                       </div>
                     )}
-                    <button 
+                    <button
                       onClick={handleSaveSettings}
-                      disabled={savingSettings}
-                      style={{ marginTop: '0.5rem', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: '#16A34A', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: savingSettings ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
+                      disabled={savingSettings || settingsLoadError}
+                      style={{ marginTop: '0.5rem', padding: '0.875rem', borderRadius: '0.75rem', border: 'none', backgroundColor: (savingSettings || settingsLoadError) ? '#94A3B8' : '#16A34A', color: 'white', fontWeight: 700, fontSize: '1rem', cursor: (savingSettings || settingsLoadError) ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
                     >
                       {savingSettings ? 'Guardando cambios...' : 'Guardar Ajustes'}
                     </button>
@@ -2173,6 +2963,16 @@ const AdminDashboard = () => {
                                 {savingCourtPrice === court.id ? '...' : 'Guardar'}
                               </button>
                             )}
+                            {court.price != null && (
+                              <button
+                                onClick={() => useGlobalPrice(court.id)}
+                                disabled={savingCourtPrice === court.id}
+                                title="Quitar el precio propio y usar el global de Configuración"
+                                style={{ padding: '0.35rem 0.75rem', borderRadius: '0.5rem', border: '1.5px solid #CBD5E1', backgroundColor: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.78rem', cursor: savingCourtPrice === court.id ? 'not-allowed' : 'pointer' }}
+                              >
+                                Usar precio global
+                              </button>
+                            )}
                             {msg?.type === 'ok' && <span style={{ fontSize: '0.78rem', color: '#16A34A', fontWeight: 700 }}>✓ Guardado</span>}
                             {msg?.type === 'error' && <span style={{ fontSize: '0.78rem', color: '#DC2626', fontWeight: 700 }}>Error: {msg.text}</span>}
                             {court.price == null && !isDirty && (
@@ -2229,11 +3029,22 @@ const AdminDashboard = () => {
                                     );
                                   })}
                                 </div>
-                                <p style={{ margin: '0 0 0.625rem', fontSize: '0.7rem', color: paymentDayFilter === -1 ? '#1D4ED8' : '#15803D', fontWeight: 700 }}>
-                                  {paymentDayFilter === -1
-                                    ? 'Editando regla por defecto (todos los días)'
-                                    : `Editando solo ${DAY_OPTIONS.find(o => o.key === paymentDayFilter)?.label}`}
-                                </p>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', margin: '0 0 0.625rem' }}>
+                                  <p style={{ margin: 0, fontSize: '0.7rem', color: paymentDayFilter === -1 ? '#1D4ED8' : '#15803D', fontWeight: 700 }}>
+                                    {paymentDayFilter === -1
+                                      ? 'Editando regla por defecto (todos los días)'
+                                      : `Editando solo ${DAY_OPTIONS.find(o => o.key === paymentDayFilter)?.label}`}
+                                  </p>
+                                  {paymentDayFilter !== -1 && paymentRules[court.id]?.[paymentDayFilter] && Object.keys(paymentRules[court.id][paymentDayFilter]).length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => volverAHeredado(court.id)}
+                                      style={{ padding: '0.3rem 0.65rem', borderRadius: '999px', border: '1.5px solid #CBD5E1', background: 'white', color: '#475569', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.68rem', cursor: 'pointer' }}
+                                    >
+                                      ↺ Volver a heredado
+                                    </button>
+                                  )}
+                                </div>
 
                                 <div style={{ overflowX: 'auto' }}>
                                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', minWidth: '360px' }}>

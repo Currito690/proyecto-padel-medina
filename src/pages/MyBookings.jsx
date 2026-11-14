@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { toast, confirmDialog } from '../utils/notify';
+import { origenPublico } from '../utils/origen';
+import AvisoRecordatorios from '../components/AvisoRecordatorios';
 
 // Fecha YYYY-MM-DD en hora LOCAL (toISOString es UTC: de 00:00 a 02:00 en
 // España devolvería el día anterior).
@@ -19,7 +21,7 @@ function SplitInfo({ booking, tokens }) {
   const waLink = (t) => {
     let p = (t.phone || '').replace(/\D/g, '');
     if (p.length === 9) p = '34' + p; // móvil español sin prefijo
-    const payUrl = `${window.location.origin}/pago-compartido?token=${t.token}`;
+    const payUrl = `${origenPublico()}/pago-compartido?token=${t.token}`;
     const msg = `¡Hola! Te toca pagar tu parte de la pista de pádel (${courtName} · ${dateStr} · ${booking.time_slot}): ${Number(t.amount).toFixed(2).replace('.', ',')} €. Paga aquí 👉 ${payUrl}`;
     return `https://wa.me/${p}?text=${encodeURIComponent(msg)}`;
   };
@@ -61,29 +63,12 @@ const MyBookings = () => {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagoOk, setPagoOk] = useState(false);
+  const [offline, setOffline] = useState(false); // sin conexión: mostramos la copia guardada
   const [cancelSettings, setCancelSettings] = useState({ enabled: true, hours: 24 });
   const [splitTokens, setSplitTokens] = useState({}); // booking_id -> [tokens] (pago compartido)
   // Reserva recién pagada en Redsys: se pinta AL INSTANTE al volver del banco,
   // y se sustituye por la fila real de la BD en cuanto el webhook la crea.
   const [optimistic, setOptimistic] = useState(null);
-
-  const sendConfirmationEmail = (booking) => {
-    if (!user?.email) return;
-    // Va con la sesión del usuario (invoke añade apikey y token): la función
-    // ahora exige un llamador autenticado.
-    supabase.functions.invoke('send-booking-email', {
-      body: {
-        type: 'confirmation',
-        email: user.email,
-        userName: user.name,
-        courtName: booking.courts?.name || 'Pista',
-        date: booking.date,
-        timeSlot: booking.time_slot,
-      },
-    })
-      .then(r => console.log('Email result:', r.data ?? r.error))
-      .catch(e => console.error('Email error:', e));
-  };
 
   useEffect(() => {
     const isPayOk = searchParams.get('pago') === 'ok';
@@ -101,39 +86,40 @@ const MyBookings = () => {
           try { localStorage.removeItem('pendingBooking'); } catch { /* noop */ }
         };
 
+        let pending = null;
+        try { pending = raw ? JSON.parse(raw) : null; } catch { pending = null; }
+
+        // Ignorar un pago a medias viejo: una tarjeta cancelada hace rato NO debe
+        // "resucitar" como pagada al volver de otra reserva (reserva fantasma).
+        if (pending && pending.ts && Date.now() - pending.ts > 30 * 60 * 1000) {
+          clearPending();
+          pending = null;
+        }
+
         // Pintar la reserva INMEDIATAMENTE (optimista) con los datos guardados
-        // antes de ir al banco, mientras llega la fila real del webhook. Así, al
-        // salir de Redsys la reserva ya se ve, sin esperas.
-        if (raw) {
-          const p = JSON.parse(raw);
+        // antes de ir al banco, mientras llega la fila real del webhook.
+        if (pending) {
           setOptimistic({
             id: 'optimista',
             optimistic: true,
-            court_id: p.courtId,
-            date: p.date,
-            time_slot: p.timeSlot,
+            court_id: pending.courtId,
+            date: pending.date,
+            time_slot: pending.timeSlot,
             is_free: false,
-            courts: { name: p.courtName || 'Pista', sport: p.sport || 'Pádel', location: p.location || '', gradient: p.gradient },
-          });
-          // Email de confirmación inmediato con los datos disponibles
-          sendConfirmationEmail({
-            courts: { name: p.courtName || 'Pista' },
-            date: p.date,
-            time_slot: p.timeSlot,
+            courts: { name: pending.courtName || 'Pista', sport: pending.sport || 'Pádel', location: pending.location || '', gradient: pending.gradient },
           });
         }
 
         let data = await loadBookings();
 
-        if (!raw) {
+        if (!pending) {
           // Pago en el club y reservas gratuitas: el correo de confirmación ya lo
-          // manda la pasarela al crear la reserva. Antes se enviaba aquí otro por
-          // cada reserva de los últimos 5 minutos, así que llegaba duplicado.
+          // manda la pasarela al crear la reserva (no se manda otro aquí).
           return;
         }
 
-        // Redsys/Bizum: esperar a que redsys-notify cree la reserva (para UI)
-        const { bookingId, courtId, date, timeSlot, metodo, isSplit } = JSON.parse(raw);
+        // Redsys/Bizum: esperar a que redsys-notify confirme el hold (para la UI).
+        const { bookingId, courtId, date, timeSlot, isSplit } = pending;
         for (let i = 0; i < 6; i++) {
           const found = data.find(b => b.court_id === courtId && b.date === date && b.time_slot === timeSlot);
           if (found) { clearPending(); setOptimistic(null); return; }
@@ -146,24 +132,16 @@ const MyBookings = () => {
         // Pago compartido: NO crear fallback (perdería los tokens/teléfonos del split). Solo esperar.
         if (isSplit) { clearPending(); setOptimistic(null); return; }
 
-        // Fallback: redsys-notify no llegó → confirmar el hold pre-creado (flujo
-        // tolerancia cero) o, si el pago venía del flujo antiguo, crear la fila.
+        // Fallback si el aviso de Redsys tardó: confirmar SOLO un hold que siga
+        // 'pendiente_pago' (el .eq evita resucitar una reserva cancelada). Si no
+        // hay bookingId, no creamos nada: la alerta 'COBRO SIN RESERVA' del
+        // servidor cubre el caso raro de un cobro sin hold.
         if (bookingId) {
           const { error } = await supabase.from('bookings')
             .update({ status: 'confirmed' })
             .eq('id', bookingId)
-            .eq('user_id', user.id);
-          if (!error) await fetchBookingsSilent();
-        } else {
-          const { error } = await supabase.from('bookings').insert({
-            court_id: courtId,
-            user_id: user.id,
-            date,
-            time_slot: timeSlot,
-            status: 'confirmed',
-            is_free: false,
-            metodo_pago: metodo || 'tarjeta',
-          });
+            .eq('user_id', user.id)
+            .eq('status', 'pendiente_pago');
           if (!error) await fetchBookingsSilent();
         }
         clearPending();
@@ -202,9 +180,26 @@ const MyBookings = () => {
       .eq('user_id', user.id)
       .eq('status', 'confirmed')
       .order('created_at', { ascending: false });
-    if (error) console.error('fetchBookings error:', error.message);
+    if (error) {
+      console.error('fetchBookings error:', error.message);
+      // Sin conexión: mostrar la última copia guardada de las reservas, para que
+      // puedas ver si tienes pista aunque te quedes sin internet.
+      try {
+        const raw = localStorage.getItem('pm_bookings_cache');
+        const cache = raw ? JSON.parse(raw) : null;
+        if (cache && cache.userId === user.id && Array.isArray(cache.rows)) {
+          setBookings(cache.rows);
+          setOffline(true);
+          return cache.rows;
+        }
+      } catch { /* sin copia guardada */ }
+      return [];
+    }
+    setOffline(false);
     if (data) {
       setBookings(data);
+      // Guardar una copia para poder verla sin conexión la próxima vez.
+      try { localStorage.setItem('pm_bookings_cache', JSON.stringify({ userId: user.id, rows: data })); } catch { /* almacenamiento lleno */ }
       // Cargar los tokens de pago compartido de las reservas 'split' (para los enlaces WhatsApp).
       const splitIds = data.filter(b => b.payment_type === 'split').map(b => b.id);
       if (splitIds.length) {
@@ -301,6 +296,13 @@ const MyBookings = () => {
     <div className="dashboard-container">
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
 
+      {/* ── Aviso sin conexión ── */}
+      {offline && (
+        <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span>📴</span> Sin conexión. Mostrando tus reservas guardadas la última vez.
+        </div>
+      )}
+
       {/* ── Banner pago OK ── */}
       {pagoOk && (
         <div style={{ background: 'linear-gradient(135deg,#16A34A,#059669)', borderRadius: '1.25rem', padding: '1.25rem 1.25rem 1.25rem 1.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', boxShadow: '0 8px 24px rgba(22,163,74,.35)' }}>
@@ -322,6 +324,9 @@ const MyBookings = () => {
           </button>
         </div>
       )}
+
+      {/* ── Invitación a activar los recordatorios (si tiene partido pendiente) ── */}
+      {upcomingList.length > 0 && <AvisoRecordatorios />}
 
       <header style={{ marginBottom: '2rem' }}>
         <h1 style={{ fontSize: '1.875rem', fontWeight: 900, letterSpacing: '-.03em', margin: '0 0 .25rem' }}>Tus Reservas</h1>

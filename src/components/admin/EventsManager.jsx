@@ -2,12 +2,16 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
 import { toast, confirmDialog } from '../../utils/notify';
+import { origenPublico } from '../../utils/origen';
 
 const fmt = (dateStr) => {
   if (!dateStr) return null;
   const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
 };
+
+// Último error al subir un cartel, para enseñarlo en el aviso.
+let ultimoErrorCartel = '';
 
 export default function EventsManager() {
   const { user } = useAuth();
@@ -84,6 +88,17 @@ export default function EventsManager() {
   const handlePosterChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.type)) {
+      toast('El cartel debe ser una imagen JPG, PNG, WebP o GIF.', 'error');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast('El cartel es demasiado grande. El máximo son 5 MB.', 'error');
+      e.target.value = '';
+      return;
+    }
     setPosterFile(file);
     setPosterPreview(URL.createObjectURL(file));
     // Reset encuadre al cambiar de imagen — la posición de la anterior no
@@ -140,9 +155,15 @@ export default function EventsManager() {
     const { error } = await supabase.storage
       .from('event-posters')
       .upload(path, posterFile, { upsert: true, contentType: posterFile.type });
-    if (error) { console.error('Poster upload error:', error); return null; }
+    if (error) {
+      console.error('Poster upload error:', error);
+      ultimoErrorCartel = error.message || String(error);
+      return null;
+    }
     const { data: { publicUrl } } = supabase.storage.from('event-posters').getPublicUrl(path);
-    return publicUrl;
+    // Parámetro de versión: la ruta del cartel se reutiliza (upsert), así que
+    // sin esto el navegador sigue mostrando la imagen vieja desde la caché.
+    return `${publicUrl}?v=${Date.now()}`;
   };
 
   const handleSave = async (e) => {
@@ -171,6 +192,8 @@ export default function EventsManager() {
         if (up) {
           posterUrl = up;
           await supabase.from('events').update({ poster_url: posterUrl }).eq('id', editingEvent.id);
+        } else {
+          toast(`El evento se guardó pero el cartel no se pudo subir: ${ultimoErrorCartel}`, 'error');
         }
       }
       setEvents(prev => prev.map(ev => ev.id === editingEvent.id ? { ...data, poster_url: posterUrl } : ev));
@@ -181,7 +204,11 @@ export default function EventsManager() {
       let posterUrl = null;
       if (posterFile) {
         posterUrl = await uploadPoster(data.id);
-        if (posterUrl) await supabase.from('events').update({ poster_url: posterUrl }).eq('id', data.id);
+        if (posterUrl) {
+          await supabase.from('events').update({ poster_url: posterUrl }).eq('id', data.id);
+        } else {
+          toast(`El evento se guardó pero el cartel no se pudo subir: ${ultimoErrorCartel}`, 'error');
+        }
       }
       setEvents(prev => [{ ...data, poster_url: posterUrl }, ...prev]);
     }
@@ -205,13 +232,16 @@ export default function EventsManager() {
   const notifyPlayers = async (ev) => {
     setNotifying(ev.id);
     try {
-      await supabase.functions.invoke('send-push', {
+      const { error } = await supabase.functions.invoke('send-push', {
         body: {
           title: `Nuevo evento: ${ev.title}`,
           body: ev.description || '¡Hay un nuevo evento en Padel Medina!',
           url: ev.registration_url || '/perfil',
+          // Sin esto send-push solo avisa a los administradores.
+          audiencia: 'jugadores',
         },
       });
+      if (error) throw error;
       toast('Notificación push enviada a todos los jugadores suscritos.');
     } catch (err) {
       console.error(err);
@@ -240,7 +270,9 @@ export default function EventsManager() {
 
     // Cartel: borrar solo si la fila se eliminó de verdad
     if (ev?.poster_url) {
-      const path = ev.poster_url.split('/event-posters/').pop();
+      // La URL del cartel lleva un ?v=… para romper la caché; hay que quitarlo
+      // antes de calcular la ruta real dentro del bucket.
+      const path = ev.poster_url.split('/event-posters/').pop()?.split('?')[0];
       if (path) await supabase.storage.from('event-posters').remove([decodeURIComponent(path)]);
     }
     setEvents(prev => prev.filter(e => e.id !== evId));
@@ -422,7 +454,7 @@ export default function EventsManager() {
                 )}
                 {registrationUrl && (
                   <p style={{ margin: '0.35rem 0 0', fontSize: '0.72rem', color: '#16A34A', fontWeight: 600 }}>
-                    ✓ Link: {window.location.origin}{registrationUrl}
+                    ✓ Link: {origenPublico()}{registrationUrl}
                   </p>
                 )}
               </div>

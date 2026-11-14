@@ -1,0 +1,501 @@
+// Parrilla y agenda del programador de partidos de un torneo (panel del admin).
+//
+// Antes el programador contaba cada partido como UNA hora de pista aunque
+// durase hora y media (dos partidos de 90 min a las 16:00 y a las 17:00 en la
+// misma pista se pisaban), trataba las horas en las que una pareja dijo que
+// NO podía como simple preferencia, y si no encontraba hueco mandaba el
+// partido a la semana siguiente sin avisar. Aquí todo va en MINUTOS de verdad:
+//   · un partido ocupa su duración entera en la pista;
+//   · los bloqueos y reservas del club (SNP, entrenos, socios) cuentan con sus
+//     minutos exactos;
+//   · una pareja nunca juega a una hora que marcó como no disponible, ni dos
+//     partidos solapados en categorías distintas, ni sin su descanso;
+//   · solo se programa DENTRO de los días y horas del torneo; si un partido no
+//     cabe, se devuelve null y el panel lo dice (sinHueco);
+//   · con un corte (crearParrilla(..., { desdeMs })), nada automático antes de
+//     ese instante: en pleno torneo, nunca en horas que ya han pasado.
+//
+// Formatos (los mismos que guarda la app): slot "dd/mm HH:00", hora de partido
+// "dd/mm HH:00 - Pista N", reglas de no disponibilidad { day, slots: ['dd/mm HH:00'] }.
+// Las horas son de reloj de Madrid (la hora del club).
+
+export const HORAS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
+
+// "HH:00" de la hora entera h. Pasada la medianoche sigue contando: "24:00"
+// son las 12 de la noche y "25:00" la una, del MISMO día del torneo.
+export const etiquetaHora = (h) => `${String(h).padStart(2, '0')}:00`;
+
+export const toMin = (t) => {
+  const [h, m] = String(t || '').split(':').map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+};
+
+// Fin de la jornada de un día ("dd/mm"), en minutos: tConfig.endHourByDay[dia]
+// si el club ha alargado (o acortado) ese día, si no endHour. Puede pasar de
+// la medianoche: con "25:00" ese día tiene partidos a las 23:00 y a las 24:00
+// (las 12 de la noche, el mismo minuto que las 00:00 del día siguiente).
+export function finDeJornada(tConfig, dia) {
+  const general = toMin(tConfig?.endHour || '22:00');
+  const propio = tConfig?.endHourByDay?.[dia];
+  if (!propio || !/^\d{1,2}:\d{2}$/.test(String(propio))) return general;
+  const fin = toMin(propio);
+  return fin > 0 && fin <= 48 * 60 ? fin : general;
+}
+
+// Horas enteras de inicio de un día del torneo (idx: su posición en el
+// torneo; el primero abre a firstDayStartHour): de la apertura a antes del fin.
+export function horasDeInicio(tConfig, dia, idx) {
+  const abre = toMin(idx === 0 && tConfig?.firstDayStartHour ? tConfig.firstDayStartHour : (tConfig?.startHour || '09:00'));
+  const fin = finDeJornada(tConfig, dia);
+  const out = [];
+  for (let h = Math.ceil(abre / 60); h * 60 < fin && h < 48; h++) out.push(etiquetaHora(h));
+  return out;
+}
+
+export const etiquetaDia = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+// Días del torneo ("dd/mm"), de startDate a endDate inclusive.
+export function diasActivos(startDate, endDate) {
+  if (!startDate || !endDate) return [];
+  const out = [];
+  const d = new Date(startDate + 'T12:00:00');
+  const fin = new Date(endDate + 'T12:00:00');
+  while (d <= fin && out.length < 60) {
+    out.push(etiquetaDia(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+export const esParejaReal = (p) => !!p && !p.isBye && !p.isPlaceholder && !p.isPrelimPlaceholder;
+
+// "dd/mm HH:00 - Pista N" → { slot, dia, hora, pista } (null si no hay hora).
+export function parsearTiempo(time) {
+  if (!time || typeof time !== 'string') return null;
+  const m = time.match(/^(\d{2}\/\d{2}) (\d{2}:\d{2}) - Pista (\d+)$/);
+  if (!m) return null;
+  return { slot: `${m[1]} ${m[2]}`, dia: m[1], hora: m[2], pista: parseInt(m[3], 10) };
+}
+
+export const textoTiempo = (hueco) => `${hueco.slot} - Pista ${hueco.pista}`;
+
+// Minuto absoluto del torneo (el mismo `abs` de la parrilla: nº de día × 1440
+// + minuto del día) del instante `ms`, con el reloj de MADRID, esté donde esté
+// el dispositivo. Redondea al minuto siguiente si sobran segundos. Antes del
+// primer día sale negativo; después del último, mayor que cualquier hueco.
+// null si falta la fecha de inicio o el instante.
+export function minutoDelTorneo(startDate, ms) {
+  const [y0, m0, d0] = String(startDate || '').split('-').map(Number);
+  if (!y0 || !m0 || !d0 || !Number.isFinite(ms)) return null;
+  let p;
+  try {
+    p = {};
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Madrid', hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(new Date(ms)).forEach(({ type, value }) => { p[type] = Number(value); });
+    p.hour %= 24;
+  } catch {
+    // Navegador sin zonas horarias: la hora del dispositivo (la del club).
+    const d = new Date(ms);
+    p = { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds() };
+  }
+  const dias = Math.round((Date.UTC(p.year, p.month - 1, p.day) - Date.UTC(y0, m0 - 1, d0)) / 86400000);
+  return dias * 1440 + p.hour * 60 + p.minute + (p.second > 0 ? 1 : 0);
+}
+
+// Parrilla: los huecos de inicio posibles (horas enteras) de cada día del torneo.
+//   desdeMs (opcional): instante (ms) desde el que se puede programar SOLO. Los
+//   huecos que empiezan antes siguen en la parrilla (las horas guardadas, el
+//   editor manual y finalSlots los usan), pero elegirHueco, huecosComunes y la
+//   afinidad no los eligen ni los cuentan: `corte` es su minuto absoluto.
+//   Sin desdeMs, o si es antes del torneo, no se corta nada (como siempre).
+//   Cada hueco lleva `fin`: el fin de la jornada de SU día (un partido tiene
+//   que acabar antes). Un día alargado pasada la medianoche (endHourByDay)
+//   tiene huecos a las "24:00": cuentan como de ese día del torneo.
+export function crearParrilla(tConfig, { desdeMs } = {}) {
+  const dias = diasActivos(tConfig.startDate, tConfig.endDate);
+  const idxDe = Object.fromEntries(dias.map((d, i) => [d, i]));
+  const finDe = (dia) => finDeJornada(tConfig, dia);
+  // El fin más tardío de todos los días (para quien no mira el día).
+  const finDia = Math.max(toMin(tConfig.endHour || '22:00'), ...dias.map(finDe));
+  const inicioDia = (idx) => toMin(idx === 0 && tConfig.firstDayStartHour ? tConfig.firstDayStartHour : (tConfig.startHour || '09:00'));
+  const abs = (dia, hora) => (idxDe[dia] == null ? null : idxDe[dia] * 1440 + toMin(hora));
+  const slots = [];
+  dias.forEach((dia, idx) => {
+    const fin = finDe(dia);
+    for (const hora of horasDeInicio(tConfig, dia, idx)) {
+      const ini = toMin(hora);
+      slots.push({ slot: `${dia} ${hora}`, dia, idxDia: idx, hora, ini, fin, abs: idx * 1440 + ini });
+    }
+  });
+  // En orden cronológico aunque un día alargado llegue al siguiente.
+  slots.sort((a, b) => a.abs - b.abs);
+  const minCorte = desdeMs == null ? null : minutoDelTorneo(tConfig.startDate, desdeMs);
+  const corte = Number.isFinite(minCorte) ? minCorte : -Infinity;
+  return {
+    dias, idxDe, slots, finDia, finDe, inicioDia, abs, corte,
+    // Minuto absoluto de una hora de partido guardada (null si no es de un día del torneo).
+    absDeTiempo(time) {
+      const t = parsearTiempo(time);
+      return t ? abs(t.dia, t.hora) : null;
+    },
+    // Primer minuto del día idx (para "la final no antes del último día").
+    absInicioDia(idx) {
+      const dia = dias[idx];
+      return dia == null ? 0 : idx * 1440 + inicioDia(idx);
+    },
+  };
+}
+
+// Horas "dd/mm HH:00" en las que una pareja NO puede jugar.
+export const horasBloqueadas = (p) => new Set((p?.prefRules || []).flatMap((r) => r?.slots || []));
+
+// ¿Puede la pareja jugar de ini a fin (minutos del día) ese día? Se miran
+// TODAS las horas que pisa el partido, no solo la de inicio.
+// Pasada la medianoche (un día alargado con endHourByDay) nadie pudo marcar
+// nada al inscribirse, porque la hoja llega como mucho a las 23:00: quien no
+// puede a las 23:00 tampoco puede más tarde ese mismo día.
+export function disponibleEn(bloqueadas, dia, ini, fin) {
+  if (!bloqueadas || bloqueadas.size === 0) return true;
+  for (let h = Math.floor(ini / 60); h < 48 && h * 60 < fin; h++) {
+    if (bloqueadas.has(`${dia} ${etiquetaHora(h)}`)) return false;
+    if (h >= 24 && bloqueadas.has(`${dia} 23:00`)) return false;
+  }
+  return true;
+}
+
+// Nº de huecos de la parrilla en los que pueden las dos parejas (para
+// programar primero a quien menos opciones tiene). Solo los que quedan desde
+// el corte: en pleno torneo, una hora que ya ha pasado no es una opción.
+export function huecosComunes(parrilla, dur, ...parejas) {
+  const sets = parejas.filter(esParejaReal).map(horasBloqueadas);
+  const corte = parrilla.corte ?? -Infinity;
+  return parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= (s.fin ?? parrilla.finDia) && sets.every((b) => disponibleEn(b, s.dia, s.ini, s.ini + dur))).length;
+}
+
+// Bloqueos y reservas del club → { 'dd/mm': { pista: [[ini, fin]] } } con sus
+// minutos exactos. filas: [{ date:'YYYY-MM-DD', time_slot:'HH:MM - HH:MM', pistas:[n] }].
+export function intervalosExternos(filas) {
+  const out = {};
+  for (const f of filas || []) {
+    const [, mm, dd] = String(f.date || '').split('-');
+    const [ini, fin] = String(f.time_slot || '').split(' - ');
+    if (!dd || !mm || !ini) continue;
+    const a = toMin(ini);
+    const b = fin ? toMin(fin) : a + 60;
+    if (!(b > a)) continue;
+    const dia = `${dd}/${mm}`;
+    for (const pista of f.pistas || []) {
+      ((out[dia] = out[dia] || {})[pista] = out[dia][pista] || []).push([a, b]);
+    }
+  }
+  return out;
+}
+
+// Lo que queda libre de un tramo [ini, fin) (minutos del día) quitándole los
+// tramos ocupados que lo pisan, en orden. Para bloquear solo la parte de un
+// partido que no tapa ya otra cosa (un bloqueo del club que acaba a mitad del
+// partido, un entreno, una reserva…).
+export function restarTramos([ini, fin], ocupados = []) {
+  let libres = fin > ini ? [[ini, fin]] : [];
+  for (const [a, b] of ocupados) {
+    if (!(b > a)) continue;
+    libres = libres.flatMap(([x, y]) => {
+      if (b <= x || y <= a) return [[x, y]];
+      const quedan = [];
+      if (x < a) quedan.push([x, a]);
+      if (b < y) quedan.push([b, y]);
+      return quedan;
+    });
+  }
+  return libres;
+}
+
+const solapa = (a1, b1, a2, b2) => a1 < b2 && a2 < b1;
+
+// Agenda: qué hay en cada pista (minutos del día) y cuándo juega cada pareja
+// (minutos absolutos del torneo). externos = intervalosExternos(...).
+export function crearAgenda(externos = {}) {
+  const pistas = {};
+  Object.entries(externos || {}).forEach(([dia, porPista]) => {
+    Object.entries(porPista || {}).forEach(([pista, ivs]) => {
+      pistas[`${dia}|${pista}`] = (ivs || []).map(([a, b]) => [a, b, 'club']);
+    });
+  });
+  return { pistas, parejas: {} };
+}
+
+export const pistaLibre = (agenda, dia, pista, ini, fin) =>
+  !(agenda.pistas[`${dia}|${pista}`] || []).some(([a, b]) => solapa(ini, fin, a, b));
+
+// agenda.vinculos (opcional) = { idPareja: [ids] }: parejas distintas que
+// comparten un jugador (p. ej. Iván juega en C con uno y en D con otro). Una
+// pareja no está libre si cualquiera de sus vinculadas juega a esa hora (con
+// el mismo descanso), porque ese jugador no puede estar en dos pistas.
+export const parejaLibre = (agenda, id, absIni, absFin, descanso = 0) =>
+  [id, ...((agenda.vinculos && agenda.vinculos[id]) || [])].every((k) =>
+    !(agenda.parejas[k] || []).some(([a, b]) => absIni < b + descanso && a < absFin + descanso));
+
+// Apunta un partido en la agenda. etiqueta: id del partido (para poder liberarlo).
+export function ocupar(agenda, parrilla, { dia, hora, pista, dur, parejas = [], etiqueta = null }) {
+  const ini = toMin(hora);
+  const fin = ini + dur;
+  (agenda.pistas[`${dia}|${pista}`] = agenda.pistas[`${dia}|${pista}`] || []).push([ini, fin, etiqueta]);
+  const abs = parrilla.abs(dia, hora);
+  if (abs == null) return;
+  parejas.filter(esParejaReal).forEach((p) => {
+    (agenda.parejas[p.id] = agenda.parejas[p.id] || []).push([abs, abs + dur, etiqueta]);
+  });
+}
+
+export function liberar(agenda, etiqueta) {
+  if (!etiqueta) return;
+  Object.keys(agenda.pistas).forEach((k) => { agenda.pistas[k] = agenda.pistas[k].filter((iv) => iv[2] !== etiqueta); });
+  Object.keys(agenda.parejas).forEach((k) => { agenda.parejas[k] = agenda.parejas[k].filter((iv) => iv[2] !== etiqueta); });
+}
+
+// Apunta un partido ya programado (con su hora guardada) si la tiene.
+export function ocuparPartido(agenda, parrilla, match, dur) {
+  const t = parsearTiempo(match?.time);
+  if (!t) return false;
+  ocupar(agenda, parrilla, { dia: t.dia, hora: t.hora, pista: t.pista, dur, parejas: [match.p1, match.p2], etiqueta: match.id });
+  return true;
+}
+
+// Agenda con todo lo ya programado en varios cuadros ({ cat: [[match]] }).
+//   cuadros: [{ obj: rounds, cons: false }, { obj: consRounds, cons: true }]
+//   durDe(cat): minutos por partido de la categoría.
+//   omitir(cat, cons): true para no contar ese cuadro (p. ej. el que se regenera).
+//   incluir(match): false para no contar un partido (p. ej. los provisionales
+//   entre parejas aún desconocidas, que solo reservan sitio).
+export function agendaDeCuadros(parrilla, externos, cuadros, durDe, omitir = () => false, incluir = () => true) {
+  const agenda = crearAgenda(externos);
+  for (const { obj, cons } of cuadros) {
+    Object.entries(obj || {}).forEach(([cat, catRounds]) => {
+      if (omitir(cat, cons)) return;
+      (catRounds || []).forEach((round) => (round || []).forEach((m) => { if (incluir(m)) ocuparPartido(agenda, parrilla, m, durDe(cat)); }));
+    });
+  }
+  return agenda;
+}
+
+// El primer hueco válido: dentro del torneo, en orden cronológico y en la
+// pista de número más bajo. Devuelve { slot, dia, hora, pista, abs } o null.
+//   desdeAbs:  no antes de este minuto absoluto (orden entre rondas); nunca
+//              antes del corte de la parrilla (parrilla.corte)
+//   dur:       duración del partido; descanso: mínimo entre partidos de una pareja
+//   pistas:    nº de pista permitidos, en orden de preferencia
+//   parejas:   [p1, p2] (las no reales no restringen nada)
+//   courtStartHours: { pista: 'HH:00' } hora de apertura de cada pista
+export function elegirHueco(agenda, parrilla, { desdeAbs = 0, dur, descanso = 0, pistas, parejas = [], courtStartHours = {} }) {
+  const reales = parejas.filter(esParejaReal);
+  const bloq = reales.map((p) => horasBloqueadas(p));
+  const desde = Math.max(desdeAbs, parrilla.corte ?? -Infinity);
+  for (const s of parrilla.slots) {
+    if (s.abs < desde) continue;
+    const fin = s.ini + dur;
+    if (fin > (s.fin ?? parrilla.finDia)) continue;
+    if (bloq.some((b) => !disponibleEn(b, s.dia, s.ini, fin))) continue;
+    if (reales.some((p) => !parejaLibre(agenda, p.id, s.abs, s.abs + dur, descanso))) continue;
+    for (const c of pistas) {
+      const abre = courtStartHours?.[c] || courtStartHours?.[String(c)];
+      if (abre && s.hora < abre) continue;
+      if (!pistaLibre(agenda, s.dia, c, s.ini, fin)) continue;
+      return { slot: s.slot, dia: s.dia, hora: s.hora, pista: c, abs: s.abs };
+    }
+  }
+  return null;
+}
+
+// Como elegirHueco, pero para un partido entre parejas aún POR DECIDIR (una
+// semifinal cuyos cuartos no se han jugado): de los huecos válidos devuelve
+// el que más `candidatas` (las parejas que pueden acabar jugándolo) tienen
+// libre; a igualdad, el más temprano. Así la hora provisional tiene muchas
+// más papeletas de valer cuando se sepa quién juega.
+//   hastaAbs: no desde este minuto en adelante (p. ej. dejar el último día
+//   para las finales); si con el tope no hay hueco, quien llama lo repite sin él.
+export function elegirHuecoCobertura(agenda, parrilla, opts, candidatas = []) {
+  const { desdeAbs = 0, hastaAbs = Infinity, dur, descanso = 0, pistas, parejas = [], courtStartHours = {} } = opts;
+  const reales = parejas.filter(esParejaReal);
+  const bloq = reales.map((p) => horasBloqueadas(p));
+  const cand = candidatas.filter(esParejaReal).map((c) => [c, horasBloqueadas(c)]);
+  const desde = Math.max(desdeAbs, parrilla.corte ?? -Infinity); // como elegirHueco
+  let mejor = null;
+  for (const s of parrilla.slots) {
+    if (s.abs < desde) continue;
+    if (s.abs >= hastaAbs) break;
+    const fin = s.ini + dur;
+    if (fin > (s.fin ?? parrilla.finDia)) continue;
+    if (bloq.some((b) => !disponibleEn(b, s.dia, s.ini, fin))) continue;
+    if (reales.some((p) => !parejaLibre(agenda, p.id, s.abs, s.abs + dur, descanso))) continue;
+    let pista = null;
+    for (const c of pistas) {
+      const abre = courtStartHours?.[c] || courtStartHours?.[String(c)];
+      if (abre && s.hora < abre) continue;
+      if (!pistaLibre(agenda, s.dia, c, s.ini, fin)) continue;
+      pista = c;
+      break;
+    }
+    if (pista == null) continue;
+    const cobertura = cand.filter(([c, b]) => disponibleEn(b, s.dia, s.ini, fin) && parejaLibre(agenda, c.id, s.abs, s.abs + dur, descanso)).length;
+    if (!mejor || cobertura > mejor.cobertura) mejor = { slot: s.slot, dia: s.dia, hora: s.hora, pista, abs: s.abs, cobertura };
+    if (mejor.cobertura === cand.length) break; // no se puede mejorar
+  }
+  return mejor;
+}
+
+// ── Sorteo por afinidad horaria ─────────────────────────────────────────────
+// El club pidió que, al generar el cuadro, las parejas que se pueden cruzar
+// tengan horarios compatibles. No solo las del primer partido (1 vs 2), sino
+// el bloque de cuatro (1-2 y 3-4) y así hasta la final: quien gane de esas cuatro sigue adelante,
+// y los perdedores de 1-2 y 3-4 se cruzan en la consolación (es espejo).
+//
+// hojas: una entrada por plaza del cuadro principal (potencia de 2), con las
+// parejas que pueden llegar a esa plaza: [] (bye), [pareja] o [p1, p2] (las
+// dos parejas de una ronda previa). movibles: [[plaza, k], …] las posiciones
+// que se pueden intercambiar (las parejas sin cabeza de serie). Las demás
+// (cabezas de serie, byes) se quedan fijas, pero cuentan: a una cabeza de
+// serie le caen al lado parejas que encajan con ella.
+//
+// Las horas en común se cuentan SOLO en los días en que se jugaría ese cruce
+// (diaMinimo: { previa, niveles: [día mínimo de cada ronda del cuadro] }, con
+// el mismo reparto de días que usa el programador). Dos parejas con muchas
+// horas en común el viernes pero ninguna el domingo no "encajan" para una
+// final de domingo. Sin diaMinimo se cuentan todos los días del torneo.
+//
+// Se parte del orden que llega (sorteo al azar) y se intercambian parejas
+// mientras mejore: entre colocaciones igual de buenas manda el azar.
+// Modifica hojas y devuelve { antes, despues } (coste; menos es mejor).
+const costeHorasComunes = (c) => (c === 0 ? 100 : Math.max(0, 6 - c) ** 2);
+// Pesos por ronda: primer cruce, segundo (y consolación), y después cuartos,
+// semifinal y final: el club quiere que cada pareja encaje con TODAS las que
+// se puede encontrar hasta la final, no solo con las de su bloque.
+const PESO_RONDA = [4, 3, 3, 3];
+// Cada cruce posible SIN ninguna hora en común los días de su ronda (ese
+// partido no se podría jugar) suma esto aparte, sin promediar: en la final de
+// un cuadro de 16 hay 49 finales posibles y, con solo la media, una imposible
+// apenas pesaba. Como cada par de parejas solo se puede cruzar en una ronda,
+// esto empuja a que las parejas que solo coinciden los primeros días se crucen
+// pronto (sin diaMinimo no cambia nada: el total de imposibles es fijo).
+const PENALIZA_IMPOSIBLE = 30;
+
+export function colocarPorAfinidad(hojas, movibles, parrilla, dur, { azar = Math.random, diaMinimo = {} } = {}) {
+  const N = hojas.length;
+  if (!movibles.length || N < 2) return { antes: 0, despues: 0 };
+
+  // Disponibilidad de cada pareja: huecos de la parrilla en los que puede
+  // (desde el corte: en pleno torneo, las horas pasadas ya no cuentan).
+  const corte = parrilla.corte ?? -Infinity;
+  const huecos = parrilla.slots.filter((s) => s.abs >= corte && s.ini + dur <= (s.fin ?? parrilla.finDia));
+  const idx = new Map();
+  const mascaras = [];
+  hojas.flat().forEach((p) => {
+    if (!p || idx.has(p.id)) return;
+    const b = horasBloqueadas(p);
+    idx.set(p.id, mascaras.length);
+    mascaras.push(huecos.map((s) => disponibleEn(b, s.dia, s.ini, s.ini + dur)));
+  });
+  const n = mascaras.length;
+  // Coste de cada par de parejas contando solo los huecos desde el día d
+  // (una matriz por día mínimo distinto; se calculan cuando hacen falta).
+  const porDia = new Map();
+  const matriz = (d) => {
+    if (porDia.has(d)) return porDia.get(d);
+    const ks = [];
+    huecos.forEach((s, k) => { if ((s.idxDia ?? 0) >= d) ks.push(k); });
+    const coste = Array.from({ length: n }, () => new Float64Array(n));
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let c = 0;
+        for (const k of ks) if (mascaras[i][k] && mascaras[j][k]) c++;
+        coste[i][j] = coste[j][i] = costeHorasComunes(c);
+      }
+    }
+    porDia.set(d, coste);
+    return coste;
+  };
+  const IMPOSIBLE = costeHorasComunes(0);
+  const diaPrevia = diaMinimo.previa ?? 0;
+  const diaNivel = (nivel) => diaMinimo.niveles?.[nivel] ?? 0;
+
+  const puntuar = () => {
+    let t = 0;
+    // Partido de ronda previa (las dos parejas de la plaza).
+    const Mp = matriz(diaPrevia);
+    for (const h of hojas) {
+      if (h.length !== 2) continue;
+      const v = Mp[idx.get(h[0].id)][idx.get(h[1].id)];
+      t += PESO_RONDA[0] * v + (v >= IMPOSIBLE ? PENALIZA_IMPOSIBLE : 0);
+    }
+    // Cruces posibles por ronda: mitad izquierda contra mitad derecha de cada bloque.
+    for (let b = 2, nivel = 0; b <= N; b *= 2, nivel++) {
+      const peso = PESO_RONDA[nivel] ?? 3;
+      const M = matriz(diaNivel(nivel));
+      for (let s = 0; s < N; s += b) {
+        let suma = 0;
+        let cruces = 0;
+        let imposibles = 0;
+        for (let x = s; x < s + b / 2; x++) {
+          if (!hojas[x].length) continue;
+          for (let y = s + b / 2; y < s + b; y++) {
+            if (!hojas[y].length) continue;
+            let m = 0;
+            for (const a of hojas[x]) {
+              for (const c of hojas[y]) {
+                const v = M[idx.get(a.id)][idx.get(c.id)];
+                m += v;
+                if (v >= IMPOSIBLE) imposibles++;
+              }
+            }
+            suma += m / (hojas[x].length * hojas[y].length);
+            cruces++;
+          }
+        }
+        if (cruces) t += (peso * suma) / cruces + PENALIZA_IMPOSIBLE * imposibles;
+      }
+    }
+    return t;
+  };
+
+  const leer = ([h, k]) => hojas[h][k];
+  const poner = ([h, k], v) => { hojas[h][k] = v; };
+  const cambiar = (a, b) => { const v = leer(a); poner(a, leer(b)); poner(b, v); };
+  const escalar = () => {
+    let actual = puntuar();
+    for (let mejora = true, vueltas = 0; mejora && vueltas < 50; vueltas++) {
+      mejora = false;
+      for (let i = 0; i < movibles.length; i++) {
+        for (let j = i + 1; j < movibles.length; j++) {
+          cambiar(movibles[i], movibles[j]);
+          const s = puntuar();
+          if (s < actual - 1e-9) { actual = s; mejora = true; } else cambiar(movibles[i], movibles[j]);
+        }
+      }
+    }
+    return actual;
+  };
+
+  const antes = puntuar();
+  let mejor = escalar();
+  let mejorOrden = movibles.map(leer);
+  // Varios intentos desde otros sorteos. Con los cuadros del club cada uno
+  // tarda milisegundos, y con 6 se quedaba 1 de cada 5 veces en una colocación
+  // mala que solo se arregla moviendo dos parejas a la vez (una final femenina
+  // imposible el domingo). Con cuadros enormes se limita por tiempo para no
+  // dejar el panel colgado.
+  const intentos = movibles.length > 40 ? 2 : 30;
+  const limite = Date.now() + 2000;
+  for (let r = 0; r < intentos && Date.now() < limite; r++) {
+    const vals = movibles.map(leer);
+    for (let i = vals.length - 1; i > 0; i--) {
+      const j = Math.floor(azar() * (i + 1));
+      [vals[i], vals[j]] = [vals[j], vals[i]];
+    }
+    movibles.forEach((m, i) => poner(m, vals[i]));
+    const s = escalar();
+    if (s < mejor - 1e-9) { mejor = s; mejorOrden = movibles.map(leer); }
+  }
+  movibles.forEach((m, i) => poner(m, mejorOrden[i]));
+  return { antes, despues: mejor };
+}

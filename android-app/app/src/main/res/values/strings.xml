@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Padel Medina</string>
+    <string name="title_activity_main">Padel Medina</string>
+    <string name="package_name">com.padelmedina.app</string>
+    <string name="custom_url_scheme">com.padelmedina.app</string>
+</resources>

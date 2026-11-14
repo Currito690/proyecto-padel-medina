@@ -1,11 +1,14 @@
 import { useEffect, Suspense, lazy, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { supabase } from './services/supabase';
-import { subscribeAdminToPush } from './services/pushNotifications';
+import { subscribeAdminToPush, activarAvisos } from './services/pushNotifications';
+import { metaDeRuta, aplicarMeta } from './utils/metaRuta';
 import MainLayout from './components/layout/MainLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import InstallPrompt from './components/InstallPrompt';
+import TelefonoObligatorio from './components/TelefonoObligatorio';
 
 const BookingDashboard = lazy(() => import('./pages/BookingDashboard'));
 const MyBookings = lazy(() => import('./pages/MyBookings'));
@@ -23,6 +26,35 @@ const DeleteAccount = lazy(() => import('./pages/DeleteAccount'));
 const Tournaments = lazy(() => import('./pages/Tournaments'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const MonitorView = lazy(() => import('./pages/MonitorView'));
+const Inicio = lazy(() => import('./pages/Inicio'));
+
+// Pantallas sueltas (sin la cabecera de MainLayout): en la app de iPhone la web
+// llega hasta el borde de arriba, así que les damos el margen de la zona de la
+// hora/batería para que nada quede tapado. En web/Android env() vale 0.
+const SafeTop = ({ children }) => (
+  <div style={{ paddingTop: 'var(--sa-top)' }}>{children}</div>
+);
+
+// Color de los iconos de la barra de estado (hora/batería) en la app nativa:
+// blancos sobre la cabecera azul del login; oscuros sobre las cabeceras blancas
+// del resto de la app.
+const StatusBarSync = () => {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    import('@capacitor/status-bar')
+      .then(({ StatusBar, Style }) => StatusBar.setStyle({ style: pathname === '/login' ? Style.Dark : Style.Light }))
+      .catch(() => {});
+  }, [pathname]);
+  return null;
+};
+
+// Título, descripción y canónica de cada página (lo que lee Google).
+const MetaRuta = () => {
+  const { pathname } = useLocation();
+  useEffect(() => { aplicarMeta(metaDeRuta(pathname)); }, [pathname]);
+  return null;
+};
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -39,27 +71,26 @@ function App() {
   const [maintenanceShake, setMaintenanceShake] = useState(false);
 
   useEffect(() => {
-    if (user?.role !== 'admin') return;
+    if (!user?.id) return;
 
-    subscribeAdminToPush(supabase, user.id);
+    // Admin en la web: registramos/refrescamos su suscripción push (pide permiso
+    // al cargar, como siempre). El aviso "Nueva reserva" lo manda cada ruta de
+    // reserva por su cuenta; disparar aquí desde el canal Realtime duplicaba
+    // avisos (y avisaba de holds sin pagar y de las propias reservas del admin),
+    // así que se ha quitado.
+    if (user.role === 'admin' && !Capacitor.isNativePlatform()) {
+      subscribeAdminToPush(supabase, user.id);
+      return;
+    }
 
-    const triggerPush = async (title, body) => {
-      await supabase.functions.invoke('send-push', {
-        body: { title, body, url: '/admin' },
-        headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY }
-      });
-    };
-
-    const channel = supabase.channel('admin-push-channel')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bookings' }, () => {
-        triggerPush('Nueva reserva', `Se ha realizado una nueva reserva`);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user]);
+    // Admin en el iPhone: igual que en la web, se pide el permiso al entrar (no
+    // ve Mis reservas ni el perfil, donde está el botón "Activar avisos").
+    // Resto (jugadores en web/Android y en iPhone): refresco silencioso. Solo
+    // registra el dispositivo si ya dio permiso; nunca muestra el diálogo (eso
+    // lo hace el botón "Activar avisos" de Mis reservas o del perfil).
+    activarAvisos(supabase, user.id, { preguntar: user.role === 'admin' });
+    // El rol se afina en segundo plano (AuthContext): al cambiar, se repite.
+  }, [user?.id, user?.role]);
 
   // === MODO MANTENIMIENTO ===
   const MAINTENANCE_MODE = false;
@@ -238,18 +269,20 @@ function App() {
 
   return (
     <div className="app-container">
+      <StatusBarSync />
+      <MetaRuta />
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={!user ? <Login /> : <Navigate to="/" replace />} />
-          <Route path="/torneos/:id" element={<TournamentRegistration />} />
-          <Route path="/torneos/:id/cuadro" element={<TournamentBracket />} />
-          <Route path="/pago-compartido" element={<SharedPayment />} />
-          <Route path="/privacidad" element={<PrivacyPolicy />} />
-          <Route path="/aviso-legal" element={<LegalNotice />} />
-          <Route path="/eliminar-cuenta" element={<DeleteAccount />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/torneos/:id" element={<SafeTop><TournamentRegistration /></SafeTop>} />
+          <Route path="/torneos/:id/cuadro" element={<SafeTop><TournamentBracket /></SafeTop>} />
+          <Route path="/pago-compartido" element={<SafeTop><SharedPayment /></SafeTop>} />
+          <Route path="/privacidad" element={<SafeTop><PrivacyPolicy /></SafeTop>} />
+          <Route path="/aviso-legal" element={<SafeTop><LegalNotice /></SafeTop>} />
+          <Route path="/eliminar-cuenta" element={<SafeTop><DeleteAccount /></SafeTop>} />
+          <Route path="/reset-password" element={<SafeTop><ResetPassword /></SafeTop>} />
 
           {/* Admin Routes */}
           {user?.role === 'admin' && (
@@ -263,7 +296,7 @@ function App() {
 
           {/* Client Routes - No Layout */}
           {user?.role === 'client' && (
-            <Route path="/checkout" element={<PaymentGateway />} />
+            <Route path="/checkout" element={<SafeTop><PaymentGateway /></SafeTop>} />
           )}
 
           {/* Client Routes - With Layout */}
@@ -278,14 +311,26 @@ function App() {
             </Route>
           )}
 
+          {/* Portada pública del club (solo en la web: es lo que ve Google). En
+              las apps, sin sesión se va directo a /login como siempre. */}
+          {!user && !Capacitor.isNativePlatform() && (
+            <Route path="/" element={<Inicio />} />
+          )}
+
           {/* Catch-all fallback */}
           {!user && (
             <Route path="*" element={<Navigate to="/login" replace />} />
           )}
         </Routes>
       </Suspense>
+      {/* Jugador sin teléfono válido en su ficha: ventana que tapa toda la app
+          hasta que lo guarde (el club lo quiere obligatorio). */}
+      {user?.role === 'client' && <TelefonoObligatorio />}
       </ErrorBoundary>
-      <InstallPrompt />
+      {/* El banner "Instala Padel Medina" es para la web en el móvil. En la app
+          de iPhone/Android ya está instalada: allí el WebView parece Safari y el
+          banner pedía "Compartir > Añadir a pantalla de inicio". */}
+      {!Capacitor.isNativePlatform() && <InstallPrompt />}
     </div>
   );
 }

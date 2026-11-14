@@ -3,12 +3,42 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { sanitizeInput } from '../utils/sanitize';
 import { VERSION_TEXTOS_LEGALES } from '../utils/legal';
+import { normalizarTelefono, MSG_TELEFONO_INVALIDO } from '../utils/telefono';
+import { Capacitor } from '@capacitor/core';
+import { googleNativoListo } from '../utils/googleNativo';
+
+// En la app de iPhone: "Continuar con Apple" y "Continuar con Google", los dos
+// nativos (sin navegador). En la app de Android: Google nativo. En la web: solo
+// Google (OAuth normal).
+const ES_NATIVO = Capacitor.isNativePlatform();
+// "Continuar con Apple" solo en el iPhone (en Android no hay inicio de sesión
+// nativo de Apple, y Apple solo lo exige en sus dispositivos).
+const APPLE_LISTO = Capacitor.getPlatform() === 'ios';
+// Google en las apps sale cuando su ID de cliente está puesto (ver utils/googleNativo.js).
+const GOOGLE_NATIVO = ES_NATIVO && googleNativoListo();
+const NOMBRE_SOCIAL = !ES_NATIVO ? 'Google'
+  : (APPLE_LISTO && GOOGLE_NATIVO) ? 'Apple o Google'
+  : APPLE_LISTO ? 'Apple' : 'Google';
 
 const MSG_ACEPTAR = 'Para registrarte tienes que aceptar la Política de Privacidad y el Aviso legal.';
 
+// Los errores de Supabase llegan en inglés. Los traducimos a algo claro.
+const traduceError = (err) => {
+  const code = err?.code || '';
+  const msg = (err?.message || '').toLowerCase();
+  if (code === 'invalid_credentials' || msg.includes('invalid login')) return 'Correo o contraseña incorrectos.';
+  if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) return 'Tu correo aún no está confirmado. Revisa tu bandeja o reenvía el código más abajo.';
+  if (code === 'user_already_exists' || msg.includes('already registered')) return 'Este correo ya está registrado. Entra con tu contraseña o recupérala.';
+  if (code === 'over_email_send_rate_limit' || msg.includes('rate limit') || msg.includes('for security purposes')) return 'Demasiados intentos. Espera un minuto y vuelve a probar.';
+  if (code === 'weak_password' || msg.includes('password should be')) return 'La contraseña es demasiado débil: usa al menos 6 caracteres.';
+  if (msg.includes('network') || msg.includes('failed to fetch')) return 'Sin conexión. Comprueba tu internet e inténtalo de nuevo.';
+  return err?.message || 'Ha ocurrido un error. Inténtalo de nuevo.';
+};
+
 const Login = () => {
-  const { loginWithGoogle, loginWithPassword, signupWithEmail, verifySignupOtp, resetPassword } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
+  const { loginWithGoogle, loginWithApple, loginWithPassword, signupWithEmail, verifySignupOtp, resendSignupCode, resetPassword } = useAuth();
+  // /login?registro (botón "Reservar pista" de la portada) abre directamente el registro.
+  const [isLogin, setIsLogin] = useState(() => !new URLSearchParams(window.location.search).has('registro'));
   const [step, setStep] = useState(1); // 1 = formulario, 2 = código OTP (solo registro)
   const [forgotMode, setForgotMode] = useState(false); // recuperar contraseña
   const [name, setName] = useState('');
@@ -22,6 +52,7 @@ const Login = () => {
   // Aceptación de la Política de Privacidad y el Aviso legal (obligatoria para registrarse)
   const [aceptaLegal, setAceptaLegal] = useState(false);
   const [avisarLegal, setAvisarLegal] = useState(false);
+  const [puedeReenviar, setPuedeReenviar] = useState(false); // mostrar "reenviar código" tras un login con correo sin confirmar
 
   // Enviar formulario de login o registro
   const handleSubmit = async (e) => {
@@ -29,6 +60,12 @@ const Login = () => {
     if (!isLogin && !aceptaLegal) {
       setAvisarLegal(true);
       setError(MSG_ACEPTAR);
+      return;
+    }
+    // El teléfono es obligatorio y tiene que valer (el club lo quiere de todos).
+    const telefono = isLogin ? null : normalizarTelefono(phone);
+    if (!isLogin && !telefono) {
+      setError(MSG_TELEFONO_INVALIDO);
       return;
     }
     setLoading(true);
@@ -44,14 +81,36 @@ const Login = () => {
           sanitizeInput(email),
           password,
           sanitizeInput(name),
-          sanitizeInput(phone),
+          telefono,
           { aceptadoAt: new Date().toISOString(), version: VERSION_TEXTOS_LEGALES }
         );
         setSuccessMsg(`¡Cuenta creada! Hemos enviado un código de verificación a ${email}. Introdúcelo para activar tu cuenta.`);
         setStep(2);
       }
     } catch (err) {
-      setError(err.message || 'Error al procesar la solicitud');
+      setError(traduceError(err));
+      // Si el correo no está confirmado, dejamos reenviar el código al instante.
+      if (err?.code === 'email_not_confirmed' || (err?.message || '').toLowerCase().includes('email not confirmed')) {
+        setPuedeReenviar(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Reenviar el código de verificación de registro (al correo escrito).
+  const handleResend = async () => {
+    if (!email) { setError('Escribe tu correo para reenviar el código.'); return; }
+    setLoading(true);
+    setError(null);
+    setSuccessMsg('');
+    try {
+      await resendSignupCode(sanitizeInput(email));
+      setSuccessMsg(`Te hemos reenviado un código a ${email}.`);
+      setPuedeReenviar(false);
+      setStep(2);
+    } catch (err) {
+      setError(traduceError(err));
     } finally {
       setLoading(false);
     }
@@ -67,20 +126,58 @@ const Login = () => {
       await resetPassword(sanitizeInput(email));
       setSuccessMsg(`Si existe una cuenta con ${email}, te hemos enviado un email con un enlace para restablecer tu contraseña.`);
     } catch (err) {
-      setError(err.message || 'No se pudo enviar el email de recuperación');
+      setError(traduceError(err));
     } finally {
       setLoading(false);
     }
   };
 
   // Google también crea cuentas: en la pestaña de registro exige la casilla
-  const handleGoogle = () => {
+  // En iPhone la ventana es nativa: si el usuario la cierra no mostramos error.
+  const handleGoogle = async () => {
     if (!isLogin && !aceptaLegal) {
       setAvisarLegal(true);
       setError(MSG_ACEPTAR);
       return;
     }
-    loginWithGoogle();
+    if (!ES_NATIVO) { loginWithGoogle(); return; }
+    setError(null);
+    setLoading(true);
+    try {
+      await loginWithGoogle();
+    } catch (err) {
+      const msg = (err?.message || '').toLowerCase();
+      const cancelado = msg.includes('cancel') || String(err?.code) === '-5';
+      if (!cancelado) setError(traduceError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Iniciar sesión con Apple (nativo, solo iPhone). Si el usuario cancela el
+  // diálogo de Apple no mostramos error.
+  const handleApple = async () => {
+    if (!isLogin && !aceptaLegal) {
+      setAvisarLegal(true);
+      setError(MSG_ACEPTAR);
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      await loginWithApple();
+    } catch (err) {
+      // El plugin rechaza solo con el texto de iOS, sin código: al cancelar llega
+      // "…AuthorizationError error 1001." (sin la palabra "cancel").
+      const msg = (err?.message || '').toLowerCase();
+      const cancelado = msg.includes('cancel') || msg.includes('error 1001') || err?.code === '1001' || err?.code === 1001;
+      if (cancelado) return;
+      setError(msg.includes('authorizationerror')
+        ? 'No se ha podido iniciar sesión con Apple. Comprueba que tienes tu Apple ID en Ajustes del iPhone e inténtalo de nuevo.'
+        : traduceError(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Verificar el código OTP de registro
@@ -138,7 +235,8 @@ const Login = () => {
         /* Brand panel (hero) */
         .login-brand {
           background: linear-gradient(150deg, #1B3A6E 0%, #15326A 55%, #0F2550 100%);
-          padding: 2.5rem 1.5rem 3rem;
+          /* + zona de la hora/batería en iPhone (la cabecera azul llega al borde) */
+          padding: calc(2.5rem + var(--sa-top)) 1.5rem 3rem;
           text-align: center;
           position: relative;
           overflow: hidden;
@@ -309,6 +407,19 @@ const Login = () => {
         }
         .login-google:hover { background: #F8FAFC; border-color: #CBD5E1; }
 
+        /* Apple (app de iPhone): botón negro oficial */
+        .login-apple {
+          width: 100%; padding: 0.875rem;
+          background: #000; color: #fff;
+          border: none; border-radius: 0.625rem;
+          font-family: inherit; font-size: 0.95rem; font-weight: 700;
+          display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+          cursor: pointer; transition: opacity 0.2s;
+        }
+        .login-apple:hover { opacity: 0.88; }
+        .login-apple:disabled { opacity: 0.6; cursor: default; }
+        .login-apple + .login-google { margin-top: 0.625rem; }
+
         /* Aceptación de textos legales */
         .login-consent {
           display: flex; align-items: flex-start; gap: 0.625rem;
@@ -418,6 +529,14 @@ const Login = () => {
               </div>
             )}
 
+            {puedeReenviar && (
+              <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+                <button type="button" disabled={loading} onClick={handleResend} style={{ background: 'transparent', border: 'none', color: '#1B3A6E', fontSize: '0.85rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', textDecoration: 'underline' }}>
+                  Reenviar código de confirmación a mi correo
+                </button>
+              </div>
+            )}
+
             {successMsg && (
               <div style={{ background: '#F0FDF4', color: '#15803D', padding: '0.875rem 1rem', borderRadius: '0.625rem', marginBottom: '1rem', fontSize: '0.875rem', fontWeight: 500, border: '1px solid #BBF7D0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -464,7 +583,7 @@ const Login = () => {
                 {!isLogin && (
                   <div className="login-input-group">
                     <label className="login-label">Teléfono</label>
-                    <input className="login-input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="+34 600 000 000" />
+                    <input className="login-input" type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="6XX XXX XXX" />
                   </div>
                 )}
 
@@ -538,7 +657,10 @@ const Login = () => {
                 <button type="submit" disabled={loading} className="login-submit">
                   {loading ? 'Verificando...' : '✓ Verificar y crear cuenta'}
                 </button>
-                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <button type="button" disabled={loading} onClick={handleResend} style={{ background: 'transparent', border: 'none', color: '#1B3A6E', fontSize: '0.85rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', textDecoration: 'underline' }}>
+                    ¿No te llega? Reenviar código
+                  </button>
                   <button type="button" onClick={() => { setStep(1); setError(null); setSuccessMsg(''); setOtpCode(''); }} style={{ background: 'transparent', border: 'none', color: '#64748B', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline' }}>
                     ← Volver
                   </button>
@@ -546,24 +668,36 @@ const Login = () => {
               </form>
             )}
 
-            {step === 1 && !forgotMode && (
+            {step === 1 && !forgotMode && (ES_NATIVO ? (APPLE_LISTO || GOOGLE_NATIVO) : true) && (
               <>
                 <div className="login-divider">
                   <hr /><span>o</span><hr />
                 </div>
 
-                <button type="button" onClick={handleGoogle} disabled={loading} className="login-google">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                  </svg>
-                  Continuar con Google
-                </button>
+                {ES_NATIVO && APPLE_LISTO && (
+                    <button type="button" onClick={handleApple} disabled={loading} className="login-apple">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M16.37 1.43c.06 1.06-.33 2.08-1 2.84-.69.78-1.82 1.38-2.9 1.29-.09-1.03.4-2.1 1.04-2.82.71-.8 1.95-1.4 2.86-1.31zM19.6 17.3c-.52 1.2-.77 1.74-1.44 2.8-.94 1.48-2.26 3.32-3.9 3.33-1.46.02-1.83-.95-3.81-.94-1.98.01-2.39.96-3.85.94-1.64-.02-2.89-1.68-3.83-3.16C-.1 15.9-.37 10.86 1.3 8.18 2.49 6.28 4.36 5.17 6.12 5.17c1.79 0 2.92 1.08 4.38 1.08 1.42 0 2.28-1.08 4.34-1.08 1.56 0 3.21.85 4.39 2.32-3.86 2.12-3.23 7.63.37 9.81z"/>
+                      </svg>
+                      Continuar con Apple
+                    </button>
+                )}
+
+                {(!ES_NATIVO || GOOGLE_NATIVO) && (
+                    <button type="button" onClick={handleGoogle} disabled={loading} className="login-google">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                      </svg>
+                      Continuar con Google
+                    </button>
+                )}
+
                 {isLogin && (
                   <p className="login-legal-hint">
-                    Si aún no tienes cuenta, al continuar con Google se creará una y aceptas la{' '}
+                    Si aún no tienes cuenta, al continuar con {NOMBRE_SOCIAL} se creará una y aceptas la{' '}
                     <a href="/privacidad" target="_blank" rel="noopener noreferrer">Política de Privacidad</a>
                     {' '}y el{' '}
                     <a href="/aviso-legal" target="_blank" rel="noopener noreferrer">Aviso legal</a>.

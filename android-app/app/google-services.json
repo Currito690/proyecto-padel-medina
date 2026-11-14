@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "224476163257",
+    "project_id": "padel-medina-eaca8",
+    "storage_bucket": "padel-medina-eaca8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:224476163257:android:931fe99eac31a060bd7f68",
+        "android_client_info": {
+          "package_name": "com.padelmedina.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAof4VysyCcCtizEk34rUlwSSzb20X4RtQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

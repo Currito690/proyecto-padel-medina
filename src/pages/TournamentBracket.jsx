@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabase';
+import CuadroArbol from '../components/CuadroArbol';
 
 // getRoundName: si pasas el array de rondas, detectamos si hay ronda
 // previa (round 0 con isPrelim) y la llamamos "Ronda Previa" en vez de
@@ -42,6 +43,55 @@ const parseScore = (scoreStr, pIdx) => {
     const p = s.split('-');
     return p.length === 2 ? p[pIdx] : null;
   }).filter(n => n !== null);
+};
+
+// Clasificación de liguilla con desempates. Orden: puntos → enfrentamiento
+// directo → diferencia de sets → diferencia de juegos → partidos ganados.
+// Lee los juegos de match.score ("6-4 7-6(5)" = p1 6/7, p2 4/6). MISMA lógica
+// en el panel del admin y en la página pública del cuadro.
+const computeLiguillaStandings = (catRounds) => {
+  const setToken = (raw) => {
+    const s = String(raw).replace(/\(.*?\)/g, '').replace(/[[\]]/g, '');
+    const m = s.match(/^(\d+)-(\d+)$/);
+    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+  };
+  const map = {};
+  const h2h = {}; // h2h[ganadorId][perdedorId] = true
+  (catRounds || []).forEach(round => (round || []).forEach(m => {
+    [m.p1, m.p2].forEach(p => {
+      if (p && !p.isBye && !map[p.id]) {
+        map[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0, sf: 0, sa: 0, gf: 0, ga: 0 };
+      }
+    });
+    if (m.winner && m.p1 && m.p2 && !m.p1.isBye && !m.p2.isBye && map[m.p1.id] && map[m.p2.id]) {
+      const a = map[m.p1.id], b = map[m.p2.id];
+      a.pj++; b.pj++;
+      if (m.winner.id === m.p1.id) { a.pg++; a.pts += 2; b.pp++; }
+      else { b.pg++; b.pts += 2; a.pp++; }
+      let w1 = 0, w2 = 0;
+      String(m.score || '').trim().split(/\s+/).forEach(raw => {
+        const set = setToken(raw);
+        if (!set) return;
+        a.gf += set[0]; a.ga += set[1];
+        b.gf += set[1]; b.ga += set[0];
+        if (set[0] > set[1]) w1++; else if (set[1] > set[0]) w2++;
+      });
+      a.sf += w1; a.sa += w2;
+      b.sf += w2; b.sa += w1;
+      const win = m.winner.id, lose = m.winner.id === m.p1.id ? m.p2.id : m.p1.id;
+      (h2h[win] = h2h[win] || {})[lose] = true;
+    }
+  }));
+  return Object.values(map).sort((x, y) => {
+    if (y.pts !== x.pts) return y.pts - x.pts;
+    if (h2h[x.pair.id]?.[y.pair.id]) return -1;
+    if (h2h[y.pair.id]?.[x.pair.id]) return 1;
+    const xs = x.sf - x.sa, ys = y.sf - y.sa;
+    if (ys !== xs) return ys - xs;
+    const xg = x.gf - x.ga, yg = y.gf - y.ga;
+    if (yg !== xg) return yg - xg;
+    return y.pg - x.pg;
+  });
 };
 
 // Reemplaza "Pista N" por su nombre custom (config.courtNames[N]) si existe.
@@ -137,6 +187,8 @@ export default function TournamentBracket() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(null);
+  // 'arbol' = el cuadro entero como se cuelga en el club (por defecto); 'lista' = partido a partido.
+  const [vista, setVista] = useState('arbol');
 
   useEffect(() => {
     const fetchTournament = async () => {
@@ -162,6 +214,30 @@ export default function TournamentBracket() {
       setLoading(false);
     };
     fetchTournament();
+  }, [id]);
+
+  // "Cuadro en vivo": el cuadro cambia durante el torneo (resultados, horarios).
+  // Volvemos a consultar al pasar la pestaña a primer plano y cada 60 s mientras
+  // esté visible, para que la etiqueta "en vivo" sea cierta sin recargar.
+  useEffect(() => {
+    let cancelled = false;
+    const refetch = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const { data } = await supabase
+        .from('tournaments')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (!cancelled && data && data.config?.bracketPublished === true) setTournament(data);
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refetch(); };
+    const interval = setInterval(refetch, 60000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [id]);
 
   if (loading) {
@@ -203,7 +279,7 @@ export default function TournamentBracket() {
       <div style={{ background: 'linear-gradient(135deg, #1B3A6E 0%, #152D57 100%)', color: 'white', padding: 'clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2rem)', boxShadow: '0 4px 20px rgba(27,58,110,0.3)' }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => (window.history.length <= 1 ? navigate('/') : navigate(-1))}
             style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.75)', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', marginBottom: '1rem', padding: 0, transition: 'color 0.15s' }}
             onMouseOver={e => e.currentTarget.style.color = 'white'}
             onMouseOut={e => e.currentTarget.style.color = 'rgba(255,255,255,0.75)'}
@@ -232,6 +308,17 @@ export default function TournamentBracket() {
       </div>
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: 'clamp(1rem, 3vw, 2rem) clamp(0.75rem, 3vw, 1.5rem)' }}>
+
+        {/* Aviso del club (config.avisoPublico): lo ve cualquiera que entre al torneo. */}
+        {typeof cfg.avisoPublico === 'string' && cfg.avisoPublico.trim() && (
+          <div role="status" style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '1rem 1.1rem', marginBottom: '1.25rem', backgroundColor: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: '1rem', color: '#78350F' }}>
+            <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1 }}>⚠️</span>
+            <div>
+              <p style={{ margin: 0, fontWeight: 800, fontSize: '0.95rem' }}>Aviso del club</p>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.95rem', lineHeight: 1.5, whiteSpace: 'pre-line' }}>{cfg.avisoPublico.trim()}</p>
+            </div>
+          </div>
+        )}
 
         {!hasBracket ? (
           <div style={{ textAlign: 'center', padding: '4rem 2rem', backgroundColor: 'white', borderRadius: '1.5rem', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
@@ -281,22 +368,8 @@ export default function TournamentBracket() {
               const isLiguilla = catRounds[0]?.[0]?.isRR;
 
               if (isLiguilla) {
-                // Standings computation
-                const standingsMap = {};
-                catRounds.forEach(round => round.forEach(m => {
-                  [m.p1, m.p2].forEach(p => {
-                    if (p && !standingsMap[p.id]) standingsMap[p.id] = { pair: p, pj: 0, pg: 0, pp: 0, pts: 0 };
-                  });
-                  if (m.winner) {
-                    standingsMap[m.p1.id].pj++; standingsMap[m.p2.id].pj++;
-                    if (m.winner.id === m.p1.id) {
-                      standingsMap[m.p1.id].pg++; standingsMap[m.p1.id].pts += 2; standingsMap[m.p2.id].pp++;
-                    } else {
-                      standingsMap[m.p2.id].pg++; standingsMap[m.p2.id].pts += 2; standingsMap[m.p1.id].pp++;
-                    }
-                  }
-                }));
-                const standings = Object.values(standingsMap).sort((a, b) => b.pts - a.pts || b.pg - a.pg);
+                // Clasificación con desempates (misma lógica que el panel).
+                const standings = computeLiguillaStandings(catRounds);
 
                 return (
                   <div key={cat}>
@@ -380,24 +453,27 @@ export default function TournamentBracket() {
                 );
               }
 
-              // Eliminatoria (main + optional consolation)
+              // Eliminatoria (principal + consolación): el cuadro ENTERO en
+              // forma de árbol (se ajusta a la pantalla y se amplía con dos
+              // dedos) o, si se prefiere, la lista partido a partido.
               return (
                 <div key={cat}>
+                  <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.25rem' }}>
+                    {[['arbol', '🏆 Cuadro entero'], ['lista', '☰ Lista de partidos']].map(([v, etiqueta]) => (
+                      <button key={v} type="button" onClick={() => setVista(v)}
+                        style={{ padding: '0.5rem 0.9rem', minHeight: '40px', borderRadius: '0.75rem', border: `1.5px solid ${vista === v ? '#1B3A6E' : '#E2E8F0'}`, backgroundColor: vista === v ? '#1B3A6E' : 'white', color: vista === v ? 'white' : '#475569', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+                        {etiqueta}
+                      </button>
+                    ))}
+                  </div>
                   {[
                     { title: 'Cuadro Principal', data: catRounds, isCons: false },
                     { title: 'Cuadro de Consolación', data: catCons, isCons: true },
                   ].map(bracket => {
                     if (!bracket.data || bracket.data.length === 0) return null;
-                    // Para diferenciar visualmente la consolación del cuadro
-                    // principal, la pintamos invertida: el primer round queda
-                    // a la derecha (mobile: abajo) y la final a la izquierda
-                    // (mobile: arriba). Mantenemos el índice original en
-                    // getRoundName para que la etiqueta siga siendo correcta.
-                    const indexed = bracket.data.map((round, originalIdx) => ({ round, originalIdx }));
-                    const renderedRounds = bracket.isCons ? [...indexed].reverse() : indexed;
                     return (
-                      <div key={bracket.title} style={{ marginBottom: '3rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                      <div key={bracket.title} style={{ marginBottom: '2.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                           <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: bracket.isCons ? '#D97706' : '#0F172A' }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
                               <span style={{ display: 'inline-flex', width: '18px', height: '18px', borderRadius: '50%', backgroundColor: bracket.isCons ? '#D97706' : '#1B3A6E', alignItems: 'center', justifyContent: 'center' }}>
@@ -405,53 +481,34 @@ export default function TournamentBracket() {
                                   <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M18 2H6v7a6 6 0 0 0 12 0V2z"/>
                                 </svg>
                               </span>
-                              {bracket.title}{bracket.isCons && <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#92400E', marginLeft: '0.4rem', backgroundColor: '#FFFBEB', padding: '0.15rem 0.5rem', borderRadius: '999px', border: '1px solid #FDE68A' }}>Vista invertida</span>}
+                              {bracket.title}
                             </span>
                           </h3>
                           <div style={{ flex: 1, height: '2px', backgroundColor: bracket.isCons ? '#FDE68A' : '#E2E8F0', borderRadius: '1px' }} />
                         </div>
 
-                        {/* Mobile: vertical list */}
-                        <div className="bracket-mobile">
-                          {renderedRounds.map(({ round: roundMatches, originalIdx }) => {
-                            const visibleMatches = roundMatches.filter(m => !isHiddenMatch(m));
-                            if (visibleMatches.length === 0) return null;
-                            return (
-                              <div key={originalIdx} style={{ marginBottom: '1.25rem' }}>
-                                <div style={{ display: 'inline-block', padding: '0.3rem 0.875rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#EBF0FA', color: bracket.isCons ? '#92400E' : '#1B3A6E', borderRadius: '2rem', fontWeight: 800, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
-                                  {getRoundName(originalIdx, bracket.data)}
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                  {visibleMatches.map(match => (
-                                    <MatchCard key={match.id} match={match} isCons={bracket.isCons} courtNames={cfg.courtNames} />
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Desktop: horizontal bracket */}
-                        <div className="bracket-desktop" style={{ overflowX: 'auto', paddingBottom: '1rem' }}>
-                          <div style={{ display: 'flex', gap: '1.5rem', minWidth: 'max-content', alignItems: 'stretch', paddingRight: '0.5rem' }}>
-                            {renderedRounds.map(({ round: roundMatches, originalIdx }) => {
+                        {vista === 'arbol' ? (
+                          <CuadroArbol rondas={bracket.data} esCons={bracket.isCons} courtNames={cfg.courtNames} altoMax="75vh" />
+                        ) : (
+                          <div>
+                            {bracket.data.map((roundMatches, originalIdx) => {
                               const visibleMatches = roundMatches.filter(m => !isHiddenMatch(m));
-                              if (visibleMatches.length === 0 && originalIdx > 0) return null;
+                              if (visibleMatches.length === 0) return null;
                               return (
-                                <div key={originalIdx} style={{ display: 'flex', flexDirection: 'column', width: '210px', flexShrink: 0 }}>
-                                  <div style={{ textAlign: 'center', padding: '0.4rem 0.75rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#EBF0FA', color: bracket.isCons ? '#92400E' : '#1B3A6E', borderRadius: '0.5rem', fontWeight: 800, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.875rem', whiteSpace: 'nowrap', border: `1px solid ${bracket.isCons ? '#FDE68A' : '#C3D4F5'}` }}>
+                                <div key={originalIdx} style={{ marginBottom: '1.25rem' }}>
+                                  <div style={{ display: 'inline-block', padding: '0.3rem 0.875rem', backgroundColor: bracket.isCons ? '#FFFBEB' : '#EBF0FA', color: bracket.isCons ? '#92400E' : '#1B3A6E', borderRadius: '2rem', fontWeight: 800, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
                                     {getRoundName(originalIdx, bracket.data)}
                                   </div>
-                                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', gap: '0.75rem' }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.5rem' }}>
                                     {visibleMatches.map(match => (
-                                      <MatchCard key={match.id} match={match} isCons={bracket.isCons} compact courtNames={cfg.courtNames} />
+                                      <MatchCard key={match.id} match={match} isCons={bracket.isCons} courtNames={cfg.courtNames} />
                                     ))}
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
-                        </div>
+                        )}
                       </div>
                     );
                   })}
@@ -462,14 +519,6 @@ export default function TournamentBracket() {
         )}
       </div>
 
-      <style>{`
-        .bracket-mobile { display: block; }
-        .bracket-desktop { display: none; }
-        @media (min-width: 768px) {
-          .bracket-mobile { display: none; }
-          .bracket-desktop { display: block; }
-        }
-      `}</style>
     </div>
   );
 }
